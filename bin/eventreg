@@ -1,0 +1,29 @@
+#!/usr/bin/env julia
+
+"""
+EventRegistrations CLI (legacy wrapper)
+
+This script provides backward compatibility for the old bin/eventreg approach.
+The modern approach is to use Julia's @main app system.
+
+For development: This script works when running from the package directory.
+For production: Install via `Pkg.Apps.add()` to get a native executable in ~/.julia/bin/
+
+The CLI expects to be run from the directory where your database and configuration are stored.
+Working directory should contain:
+- events.duckdb (or your database file)
+- config/ (configuration directory with fields.toml, events/, templates/)
+"""
+
+using Pkg
+
+# Activate the package environment
+pkg_dir = abspath(joinpath(@__DIR__, ".."))
+Pkg.activate(pkg_dir; io=devnull)
+
+# Load the EventRegistrations module
+push!(LOAD_PATH, joinpath(pkg_dir, "src"))
+using EventRegistrations
+
+# Call the @main entry point
+exit(EventRegistrations.main(ARGS))
