@@ -148,17 +148,22 @@ function init_database(db_path::AbstractString)
 
     # =========================================================================
     # CONFIRMATION EMAILS TABLE
-    # Track sent confirmation emails
+    # Track sent confirmation emails with resending support
     # =========================================================================
     DBInterface.execute(db, """
         CREATE TABLE IF NOT EXISTS confirmation_emails (
             id INTEGER PRIMARY KEY,
             registration_id INTEGER NOT NULL REFERENCES registrations(id),
+            email_type VARCHAR NOT NULL,  -- 'confirmation', 'payment_reminder', 'payment_confirmation', etc.
             sent_at TIMESTAMP NOT NULL,
             email_to VARCHAR NOT NULL,
-            cost_sent DECIMAL(10,2),
+            cost_at_send DECIMAL(10,2),     -- computed_cost at time of sending
+            remaining_at_send DECIMAL(10,2), -- remaining balance at time of sending
             reference_sent VARCHAR,
-            status VARCHAR DEFAULT 'sent'
+            status VARCHAR DEFAULT 'sent',   -- 'sent', 'failed', 'pending'
+            error_message VARCHAR,           -- Error details if failed
+            resend_reason VARCHAR,           -- Why this email was resent (if applicable)
+            supersedes_id INTEGER            -- ID of previous email this replaces (for resends)
         )
     """)
 

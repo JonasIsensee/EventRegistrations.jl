@@ -46,6 +46,7 @@ include("Schema.jl")
 include("Config.jl")
 include("Templates.jl")
 include("EmailParser.jl")
+include("EmailDownload.jl")
 include("ReferenceNumbers.jl")
 include("CostCalculator.jl")
 include("Validation.jl")
@@ -319,9 +320,16 @@ export get_payment_history, get_payment_discrepancies
 # Re-export from ConfirmationEmails
 using .ConfirmationEmails: send_confirmation_email!, send_pending_confirmations!
 using .ConfirmationEmails: get_unsent_confirmations, preview_email, export_emails_to_files
-using .ConfirmationEmails: configure! as configure_email!
+using .ConfirmationEmails: configure! as configure_email!, load_email_config_from_file!
+using .ConfirmationEmails: get_registrations_needing_resend, resend_changed_balances!
 export send_confirmation_email!, send_pending_confirmations!
-export get_unsent_confirmations, preview_email, export_emails_to_files, configure_email!
+export get_unsent_confirmations, preview_email, export_emails_to_files
+export configure_email!, load_email_config_from_file!
+export get_registrations_needing_resend, resend_changed_balances!
+
+# Re-export from EmailDownload
+using .EmailDownload: download_emails!, load_email_credentials
+export download_emails!, load_email_credentials
 
 # Re-export from ReferenceNumbers (for manual use)
 using .ReferenceNumbers: find_reference_in_text, parse_reference_number

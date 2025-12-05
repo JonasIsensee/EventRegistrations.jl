@@ -1,0 +1,24 @@
+Liebe/r {first_name},
+
+wir möchten dich freundlich daran erinnern, dass die Zahlung für {event_name}
+noch aussteht.
+
+Referenznummer: {reference_number}
+Offener Betrag: {remaining} €
+
+{registration_fields}
+
+Bankverbindung:
+{bank_details}
+
+Bitte verwende als Verwendungszweck ausschließlich: {reference_number}
+
+{qr_hint}
+
+Falls du bereits überwiesen hast, ignoriere bitte diese Nachricht.
+Es kann einige Tage dauern, bis die Zahlung bei uns eingeht.
+
+{additional_info}
+
+Viele Grüße,
+{sender_name}

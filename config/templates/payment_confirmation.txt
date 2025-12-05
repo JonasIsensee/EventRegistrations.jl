@@ -1,0 +1,11 @@
+Liebe/r {first_name},
+
+vielen Dank! Wir haben deine Zahlung für {event_name} erhalten.
+
+Referenznummer: {reference_number}
+Bezahlt: {amount_paid} €
+
+Wir freuen uns auf dich!
+
+Viele Grüße,
+{sender_name}

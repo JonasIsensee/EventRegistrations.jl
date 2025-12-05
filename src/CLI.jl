@@ -57,6 +57,76 @@ function cmd_process_emails(email_folder::String="emails"; db_path::String="even
 end
 
 """
+Download emails from POP3 server.
+"""
+function cmd_download_emails(;
+    credentials_path::String="config/email_credentials.toml",
+    emails_dir::String="emails",
+    config_dir::String="config")
+
+    # Check if credentials file exists, if not check alternative locations
+    if !isfile(credentials_path)
+        alternative_paths = [
+            joinpath(config_dir, "credentials.toml"),
+            "credentials.toml",
+            "email_credentials.toml"
+        ]
+
+        found = false
+        for alt_path in alternative_paths
+            if isfile(alt_path)
+                credentials_path = alt_path
+                found = true
+                break
+            end
+        end
+
+        if !found
+            println("❌ Error: Credentials file not found!")
+            println("\nSearched locations:")
+            println("  - config/email_credentials.toml")
+            println("  - config/credentials.toml")
+            println("  - credentials.toml")
+            println("  - email_credentials.toml")
+            println("\nCreate a credentials file with the following format:")
+            println("""
+            [email]
+            server = "mail.example.com"
+            username = "user@example.com"
+            password = "yourpassword"
+            port = 995  # optional, defaults to 995
+            """)
+            return 1
+        end
+    end
+
+    println("Downloading emails from POP3 server...")
+    println("  Credentials: $credentials_path")
+    println("  Download to: $emails_dir")
+
+    result = download_emails!(
+        credentials_path=credentials_path,
+        emails_dir=emails_dir,
+        verbose=true
+    )
+
+    if result.error_count > 0
+        println("\n⚠ Download completed with errors!")
+        println("  New emails: $(result.new_count)")
+        println("  Already downloaded: $(result.skipped_count)")
+        println("  Errors: $(result.error_count)")
+        println("  Total on server: $(result.total_on_server)")
+        return 1
+    else
+        println("\n✓ Email download complete!")
+        println("  New emails: $(result.new_count)")
+        println("  Already downloaded: $(result.skipped_count)")
+        println("  Total on server: $(result.total_on_server)")
+        return 0
+    end
+end
+
+"""
 Generate field configuration from existing data.
 """
 function cmd_generate_field_config(;
@@ -621,6 +691,214 @@ function cmd_verify_database(; db_path::String="events.duckdb", verbose::Bool=fa
 end
 
 """
+Comprehensive sync command that does the full workflow.
+"""
+function cmd_sync(;
+    db_path::String="events.duckdb",
+    config_dir::String="config",
+    emails_dir::String="emails",
+    bank_dir::String="bank_transfers",
+    credentials_path::String="config/email_credentials.toml",
+    dry_run_emails="true",
+    event_id::Union{String,Nothing}=nothing)
+    dry_run_emails = parse(Bool, dry_run_emails)
+    println("=== EventRegistrations Sync ===\n")
+
+    # Step 1: Initialize database if necessary
+    if !isfile(db_path)
+        println("[1/10] Initializing database...")
+        db = init_project(db_path, config_dir)
+        DBInterface.close!(db)
+    else
+        println("[1/10] Database exists: $db_path")
+    end
+
+    # Step 2: Download emails (if credentials exist)
+    println("\n[2/10] Checking for new emails...")
+    if isfile(credentials_path) || isfile("credentials.toml") || isfile("config/credentials.toml")
+        result = download_emails!(
+            credentials_path=credentials_path,
+            emails_dir=emails_dir,
+            verbose=false
+        )
+        if result.error_count == 0
+            println("  Downloaded: $(result.new_count) new, $(result.skipped_count) already local")
+        else
+            println("  ⚠ Downloaded with errors: $(result.new_count) new, $(result.error_count) errors")
+        end
+    else
+        println("  Skipping (no credentials file found)")
+    end
+
+    # Step 3: Process emails
+    println("\n[3/10] Processing emails...")
+    with_database(db_path) do db
+        if isdir(emails_dir)
+            stats = process_email_folder!(db, emails_dir)
+            println("  Processed: $(stats.processed), New: $(stats.new_registrations), Updates: $(stats.updates)")
+            if stats.no_cost_config > 0
+                println("  ⚠ $(stats.no_cost_config) registrations need cost configuration")
+            end
+        else
+            println("  No emails directory found")
+        end
+    end
+
+    # Step 4: Check config sync
+    println("\n[4/10] Checking configuration sync...")
+    with_database(db_path) do db
+        unsynced = get_unsynced_configs(db, config_dir)
+        if !isempty(unsynced)
+            println("  ⚠ $(length(unsynced)) config files need syncing:")
+            for file in unsynced
+                println("    - $file")
+            end
+            println("  Running sync...")
+            sync_event_configs_to_db!(db, config_dir)
+            println("  ✓ Configuration synced")
+        else
+            println("  ✓ All configurations in sync")
+        end
+    end
+
+    # Step 5-6: Recalculate costs if needed
+    println("\n[5/10] Checking cost calculations...")
+    with_database(db_path) do db
+        # Get events
+        events = list_events(db)
+        needs_recalc = false
+
+        for event_row in events
+            evt_id = event_row[1]
+
+            # Check if event has registrations without costs but has config
+            check = DBInterface.execute(db, """
+                SELECT COUNT(*)
+                FROM registrations r
+                JOIN events e ON e.event_id = r.event_id
+                WHERE r.event_id = ? AND r.computed_cost IS NULL AND e.cost_rules IS NOT NULL
+            """, [evt_id])
+            count = first(collect(check))[1]
+
+            if count > 0
+                println("  Recalculating costs for $evt_id ($count registrations)...")
+                recalculate_costs!(db, evt_id)
+                needs_recalc = true
+            end
+        end
+
+        if !needs_recalc
+            println("  ✓ All costs up to date")
+        end
+    end
+
+    # Step 7: Import bank transfers
+    println("\n[6/10] Checking for bank transfers...")
+    if isdir(bank_dir)
+        csv_files = filter(f -> endswith(lowercase(f), ".csv"), readdir(bank_dir))
+        if !isempty(csv_files)
+            println("  Found $(length(csv_files)) CSV files")
+            with_database(db_path) do db
+                for csv_file in csv_files
+                    full_path = joinpath(bank_dir, csv_file)
+                    result = import_bank_csv!(db, full_path; delimiter=';', decimal_comma=true)
+                    if result.new > 0
+                        println("    $csv_file: $(result.new) new transfers")
+                    end
+                end
+            end
+        else
+            println("  No CSV files found in $bank_dir")
+        end
+    else
+        println("  No bank transfers directory ($bank_dir)")
+    end
+
+    # Step 8: Match transfers
+    println("\n[7/10] Matching bank transfers...")
+    with_database(db_path) do db
+        if event_id !== nothing
+            result = match_transfers!(db; event_id=event_id)
+            println("  Matched: $(result.matched), Unmatched: $(length(result.unmatched))")
+        else
+            # Match for all events
+            events = list_events(db)
+            total_matched = 0
+            for event_row in events
+                evt_id = event_row[1]
+                result = match_transfers!(db; event_id=evt_id)
+                total_matched += result.matched
+            end
+            println("  Total matched: $total_matched")
+        end
+    end
+
+    # Step 9: Load email configuration
+    println("\n[8/10] Loading email configuration...")
+    if isfile(credentials_path)
+        success = load_email_config_from_file!(credentials_path; dry_run=dry_run_emails)
+        if success
+            println("  ✓ Email configuration loaded (dry_run=$(dry_run_emails))")
+        else
+            println("  ⚠ Failed to load email configuration")
+        end
+    else
+        println("  No email credentials found - emails will be skipped")
+    end
+
+    # Step 10: Send/resend emails
+    println("\n[9/10] Checking for emails to send...")
+    with_database(db_path) do db
+        target_events = if event_id !== nothing
+            [event_id]
+        else
+            [row[1] for row in list_events(db)]
+        end
+
+        total_sent = 0
+        for evt_id in target_events
+            # Check for changed balances
+            result = resend_changed_balances!(db, evt_id; template_name="payment_reminder", dry_run=dry_run_emails)
+            total_sent += result.sent
+        end
+
+        if total_sent > 0
+            println("  $(dry_run_emails ? "Would send" : "Sent") $total_sent emails")
+        else
+            println("  ✓ No emails need to be sent")
+        end
+    end
+
+    # Step 11: Summary
+    println("\n[10/10] Generating summary...")
+    with_database(db_path) do db
+        target_event = if event_id !== nothing
+            event_id
+        else
+            get_most_recent_event(db)
+        end
+
+        if target_event !== nothing
+            overview = event_overview(db, target_event)
+            if overview !== nothing
+                println("\n=== Event Overview: $(overview.event_id) ===")
+                println("  Registrations: $(overview.registrations)")
+                println("  Fully Paid: $(overview.fully_paid)")
+                println("  Partially Paid: $(overview.partially_paid)")
+                println("  Unpaid: $(overview.unpaid)")
+                println("  Expected: €$(overview.total_expected)")
+                println("  Received: €$(overview.total_received)")
+                println("  Subsidies: €$(overview.total_subsidies)")
+                println("  Outstanding: €$(overview.outstanding)")
+            end
+        end
+    end
+
+    println("\n=== Sync Complete ===\n")
+    return 0
+end
+
+"""
 Create a backup of the database.
 """
 function cmd_backup(; db_path::String="events.duckdb", suffix::String="manual")
@@ -1090,6 +1368,8 @@ function run_cli(args::Vector{String})
         elseif command == "process-emails"
             email_folder = isempty(positional) ? "emails" : positional[1]
             return cmd_process_emails(email_folder; options...)
+        elseif command == "download-emails"
+            return cmd_download_emails(; options...)
         elseif command == "generate-field-config"
             return cmd_generate_field_config(; options...)
         elseif command == "create-event-config"
@@ -1163,6 +1443,8 @@ function run_cli(args::Vector{String})
             return cmd_validate_config(event_id; options...)
         elseif command == "verify-database"
             return cmd_verify_database(; options...)
+        elseif command == "sync"
+            return cmd_sync(; options...)
         elseif command == "backup"
             return cmd_backup(; options...)
         else

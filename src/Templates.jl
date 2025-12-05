@@ -33,12 +33,12 @@ Returns the template content as a string, or nothing if not found.
 """
 function load_template(name::AbstractString)
     path = get_template_path(name)
-    
+
     if !isfile(path)
         @warn "Template not found" name=name path=path
         return nothing
     end
-    
+
     return read(path, String)
 end
 
@@ -50,7 +50,7 @@ function list_templates()
     if !isdir(dir)
         return String[]
     end
-    
+
     return [splitext(f)[1] for f in readdir(dir) if endswith(f, ".txt")]
 end
 
@@ -66,12 +66,12 @@ Example:
 """
 function render_template(template::AbstractString, vars::Dict)
     result = template
-    
+
     for (key, value) in vars
         placeholder = "{$key}"
         result = replace(result, placeholder => string(value))
     end
-    
+
     return result
 end
 
@@ -96,22 +96,19 @@ Liebe/r {first_name},
 
 vielen Dank für deine Anmeldung zum {event_name}!
 
-Hier sind deine Anmeldedaten:
-
 Referenznummer: {reference_number}
-Zu zahlen: {cost} €
+Zu zahlender Betrag: {cost} €
 
-Bitte überweise den Betrag auf folgendes Konto:
+{registration_fields}
+
+Bankverbindung:
 {bank_details}
 
-Verwendungszweck: {reference_number}
+Bitte verwende als Verwendungszweck ausschließlich: {reference_number}
 
-WICHTIG: Bitte gib unbedingt die Referenznummer als Verwendungszweck an,
-damit wir deine Zahlung zuordnen können.
+{qr_hint}
 
 {additional_info}
-
-Bei Fragen kannst du dich gerne an uns wenden.
 
 Viele Grüße,
 {sender_name}
@@ -120,21 +117,25 @@ Viele Grüße,
     "payment_reminder" => """
 Liebe/r {first_name},
 
-wir möchten dich freundlich daran erinnern, dass die Zahlung für {event_name} 
+wir möchten dich freundlich daran erinnern, dass die Zahlung für {event_name}
 noch aussteht.
 
 Referenznummer: {reference_number}
 Offener Betrag: {remaining} €
 
-Bitte überweise den Betrag auf folgendes Konto:
+{registration_fields}
+
+Bankverbindung:
 {bank_details}
 
-Verwendungszweck: {reference_number}
+Bitte verwende als Verwendungszweck ausschließlich: {reference_number}
+
+{qr_hint}
 
 Falls du bereits überwiesen hast, ignoriere bitte diese Nachricht.
 Es kann einige Tage dauern, bis die Zahlung bei uns eingeht.
 
-Bei Fragen kannst du dich gerne an uns wenden.
+{additional_info}
 
 Viele Grüße,
 {sender_name}
@@ -170,7 +171,7 @@ Bitte überweise den verbleibenden Betrag auf folgendes Konto:
 
 Verwendungszweck: {reference_number}
 
-Bei Fragen kannst du dich gerne an uns wenden.
+{additional_info}
 
 Viele Grüße,
 {sender_name}
@@ -186,7 +187,7 @@ Neuer Betrag: {cost} €
 
 {cost_change_note}
 
-Bei Fragen kannst du dich gerne an uns wenden.
+{additional_info}
 
 Viele Grüße,
 {sender_name}
@@ -199,9 +200,9 @@ Creates any missing template files with default content.
 """
 function ensure_default_templates(templates_dir::AbstractString=TEMPLATES_DIR[])
     mkpath(templates_dir)
-    
+
     created = String[]
-    
+
     for (name, content) in DEFAULT_TEMPLATES
         path = joinpath(templates_dir, "$name.txt")
         if !isfile(path)
@@ -209,11 +210,11 @@ function ensure_default_templates(templates_dir::AbstractString=TEMPLATES_DIR[])
             push!(created, name)
         end
     end
-    
+
     if !isempty(created)
         @info "Created default templates" templates=created directory=templates_dir
     end
-    
+
     return created
 end
 
@@ -224,7 +225,7 @@ function reset_template_to_default(name::AbstractString)
     if !haskey(DEFAULT_TEMPLATES, name)
         error("No default template for: $name")
     end
-    
+
     path = get_template_path(name)
     write(path, DEFAULT_TEMPLATES[name])
     @info "Reset template to default" name=name
@@ -237,11 +238,11 @@ function get_template_placeholders(template_type::AbstractString)
     placeholders = Dict(
         "confirmation_email" => [
             "first_name", "last_name", "event_name", "reference_number",
-            "cost", "bank_details", "additional_info", "sender_name"
+            "cost", "registration_fields", "bank_details", "qr_hint", "additional_info", "sender_name"
         ],
         "payment_reminder" => [
             "first_name", "last_name", "event_name", "reference_number",
-            "remaining", "bank_details", "sender_name"
+            "remaining", "registration_fields", "bank_details", "qr_hint", "additional_info", "sender_name"
         ],
         "payment_confirmation" => [
             "first_name", "last_name", "event_name", "reference_number",
@@ -249,15 +250,57 @@ function get_template_placeholders(template_type::AbstractString)
         ],
         "subsidy_notification" => [
             "first_name", "last_name", "event_name", "reference_number",
-            "subsidy_amount", "subsidy_reason", "remaining", "bank_details", "sender_name"
+            "subsidy_amount", "subsidy_reason", "remaining", "bank_details", "additional_info", "sender_name"
         ],
         "registration_update" => [
             "first_name", "last_name", "event_name", "reference_number",
-            "cost", "cost_change_note", "sender_name"
+            "cost", "cost_change_note", "additional_info", "sender_name"
         ],
     )
-    
+
     return get(placeholders, template_type, String[])
 end
+
+"""
+Format registration fields as a nice list for email display.
+Takes a Dict of field names and values, returns formatted string.
+
+Optionally filter out fields that should be excluded (like internal IDs).
+"""
+function format_registration_fields(fields::Dict;
+                                     exclude::Vector{String}=String[],
+                                     max_width::Int=40)
+    if isempty(fields)
+        return ""
+    end
+
+    # Common fields to exclude from display
+    default_exclude = ["Vorname", "Nachname", "E-Mail", "Email", "First Name", "Last Name"]
+    all_exclude = vcat(default_exclude, exclude)
+
+    entries = String[]
+
+    for key in sort(collect(keys(fields)))
+        if key ∈ all_exclude
+            continue
+        end
+
+        raw_value = string(fields[key])
+        if isempty(strip(raw_value))
+            continue
+        end
+
+        clean_value = replace(raw_value, r"\s*\n\s*" => ", ")
+        push!(entries, "• $(key): $(clean_value)")
+    end
+
+    if isempty(entries)
+        return ""
+    end
+
+    return "Deine Angaben:\n" * join(entries, "\n")
+end
+
+export format_registration_fields
 
 end # module

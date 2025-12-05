@@ -1,0 +1,20 @@
+Liebe/r {first_name},
+
+vielen Dank für deine Anmeldung zum {event_name}!
+
+Referenznummer: {reference_number}
+Zu zahlender Betrag: {cost} €
+
+{registration_fields}
+
+Bankverbindung:
+{bank_details}
+
+Bitte verwende als Verwendungszweck ausschließlich: {reference_number}
+
+{qr_hint}
+
+{additional_info}
+
+Viele Grüße,
+{sender_name}

@@ -166,7 +166,7 @@ function detect_columns(header::Vector)
             col_map[:amount] = i
         elseif col_map[:reference] == 0 &&
                (occursin("verwendungszweck", col_lower) || occursin("reference", col_lower) ||
-                occursin("beschreibung", col_lower) || occursin("buchungstext", col_lower))
+                occursin("beschreibung", col_lower))
             col_map[:reference] = i
         elseif col_map[:sender_name] == 0 &&
                (occursin("auftraggeber", col_lower) || occursin("name", col_lower) ||
