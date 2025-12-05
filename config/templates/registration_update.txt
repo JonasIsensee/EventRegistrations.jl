@@ -1,4 +1,4 @@
-Liebe/r {first_name},
+Liebe*r {first_name},
 
 wir haben deine aktualisierte Anmeldung für {event_name} erhalten.
 

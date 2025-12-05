@@ -7,6 +7,9 @@ using JSON
 using Dates
 using SHA
 
+# Import from parent module
+import ..EventRegistrations: with_transaction_safe
+
 export load_field_aliases, generate_field_config, resolve_field_name
 export load_event_config, load_event_aliases, generate_event_config_template
 export get_config_dir, ensure_config_dirs
@@ -54,29 +57,15 @@ const FIELD_ALIASES = Dict{String, String}()
 const REVERSE_ALIASES = Dict{String, String}()
 
 """
-Load field aliases from config/fields.toml
-Returns Dict mapping alias -> actual field name
+Load field aliases (DEPRECATED - now uses event-specific aliases only).
+This function is kept for backward compatibility but does nothing.
+Field aliases are now defined in event-specific config files only.
 """
 function load_field_aliases(config_dir::AbstractString=CONFIG_DIR[])
-    path = joinpath(config_dir, "fields.toml")
-
-    if !isfile(path)
-        @warn "Field aliases file not found" path=path
-        return Dict{String, String}()
-    end
-
-    config = TOML.parsefile(path)
-    aliases = get(config, "aliases", Dict())
-
-    # Update cache
+    # Clear global caches - we only use event-specific aliases now
     empty!(FIELD_ALIASES)
     empty!(REVERSE_ALIASES)
-    for (alias, actual) in aliases
-        FIELD_ALIASES[alias] = actual
-        REVERSE_ALIASES[actual] = alias
-    end
-
-    return FIELD_ALIASES
+    return Dict{String, String}()
 end
 
 """
@@ -299,9 +288,8 @@ end
 Load event configuration from config/events/{event_id}.toml
 
 This function:
-1. Loads event-specific field aliases if present (takes precedence over global)
-2. Falls back to global aliases from fields.toml
-3. Converts cost rules, resolving all field aliases to actual field names
+1. Loads event-specific field aliases from the event config
+2. Converts cost rules, resolving all field aliases to actual field names
 """
 function load_event_config(event_id::AbstractString, config_dir::AbstractString=CONFIG_DIR[])
     path = joinpath(config_dir, "events", "$event_id.toml")
@@ -639,18 +627,12 @@ end
 Sync event configs from TOML files to database.
 """
 function sync_event_configs_to_db!(db::DuckDB.DB, config_dir::AbstractString=CONFIG_DIR[])
-    # First load field aliases
-    load_field_aliases(config_dir)
-
-    # Record fields.toml sync
-    fields_path = joinpath(config_dir, "fields.toml")
-    if isfile(fields_path)
-        record_config_sync(db, fields_path)
-    end
-
+    # Load event configs (event-specific aliases only)
     configs = load_all_event_configs(config_dir)
 
-    for (event_id, config) in configs
+    # Wrap all syncs in a transaction for atomicity (safe for nesting)
+    with_transaction_safe(db) do
+        for (event_id, config) in configs
         event_name = get(config, "event_name", nothing)
         base_cost = get(config, "base", 0.0)
 
@@ -676,7 +658,8 @@ function sync_event_configs_to_db!(db::DuckDB.DB, config_dir::AbstractString=CON
         if isfile(event_config_path)
             record_config_sync(db, event_config_path)
         end
-    end
+        end  # End for loop
+    end  # End with_transaction_safe
 
     @info "Synced event configs to database" count=length(configs)
 end
@@ -770,19 +753,10 @@ end
 
 """
 Get list of all config files that need syncing.
-Checks fields.toml and all event configs.
+Checks all event configs (fields.toml is deprecated).
 """
 function get_unsynced_configs(db::DuckDB.DB, config_dir::AbstractString=CONFIG_DIR[])::Vector{ConfigSyncStatus}
     unsynced = ConfigSyncStatus[]
-
-    # Check fields.toml
-    fields_path = joinpath(config_dir, "fields.toml")
-    if isfile(fields_path)
-        status = check_config_sync(db, fields_path)
-        if status.needs_sync
-            push!(unsynced, status)
-        end
-    end
 
     # Check all event configs
     events_dir = joinpath(config_dir, "events")
@@ -808,13 +782,7 @@ Returns a vector of (path, synced, needs_sync) tuples.
 function get_all_config_sync_status(db::DuckDB.DB, config_dir::AbstractString=CONFIG_DIR[])
     statuses = ConfigSyncStatus[]
 
-    # Check fields.toml
-    fields_path = joinpath(config_dir, "fields.toml")
-    if isfile(fields_path)
-        push!(statuses, check_config_sync(db, fields_path))
-    end
-
-    # Check all event configs
+    # Check all event configs (fields.toml is deprecated)
     events_dir = joinpath(config_dir, "events")
     if isdir(events_dir)
         for file in readdir(events_dir)

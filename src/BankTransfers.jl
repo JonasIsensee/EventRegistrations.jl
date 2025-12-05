@@ -7,6 +7,9 @@ using Dates
 using SHA
 using DelimitedFiles
 
+# Import from parent module
+import ..EventRegistrations: with_transaction_safe
+
 # Import from parent module's submodule
 using ..ReferenceNumbers
 
@@ -59,11 +62,12 @@ function import_bank_csv!(db::DuckDB.DB, csv_path::AbstractString;
         error("Could not detect required columns (date, amount) in CSV")
     end
 
-    # Process data rows
+    # Process data rows - wrap in transaction for atomicity (safe for nesting)
     new_count = 0
     skip_count = 0
 
-    for line in lines[header_idx+1:end]
+    with_transaction_safe(db) do
+        for line in lines[header_idx+1:end]
         # Skip empty lines
         if isempty(strip(line))
             continue
@@ -134,7 +138,8 @@ function import_bank_csv!(db::DuckDB.DB, csv_path::AbstractString;
               reference, raw_json, filename, now()])
 
         new_count += 1
-    end
+        end  # End for loop
+    end  # End with_transaction_safe
 
     @info "Imported bank transfers" new=new_count skipped=skip_count file=filename
 
@@ -258,7 +263,9 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
     matched = 0
     unmatched_list = []
 
-    for transfer in transfers
+    # Wrap all matching operations in a transaction (safe for nesting)
+    with_transaction_safe(db) do
+        for transfer in transfers
         transfer_id, reference_text, amount, sender_name = transfer
         # Convert amount to Float64 to avoid DuckDB binding issues with FixedDecimal
         amount = Float64(amount)
@@ -283,7 +290,12 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                 expected_cost = rows[1][3]
 
                 # Check amount matches (within tolerance)
-                amount_match = abs(amount - expected_cost) < 0.01
+                # Handle NULL cost (no cost config exists)
+                amount_match = if expected_cost !== nothing
+                    abs(amount - expected_cost) < 0.01
+                else
+                    false  # Can't verify amount if cost is not configured
+                end
 
                 final_confidence = amount_match ? confidence : confidence * 0.8
                 match_type = final_confidence >= 0.8 ? "auto" : "auto_uncertain"
@@ -309,12 +321,22 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
 
             if length(name_parts) >= 1
                 # Look for registrations with matching name and amount
-                result = DBInterface.execute(db, """
+                # Use parameterized query to prevent SQL injection
+                query = if event_id !== nothing
+                    """
+                    SELECT id, reference_number, first_name, last_name, email, computed_cost
+                    FROM registrations
+                    WHERE computed_cost = ? AND event_id = ?
+                    """
+                else
+                    """
                     SELECT id, reference_number, first_name, last_name, email, computed_cost
                     FROM registrations
                     WHERE computed_cost = ?
-                    $(event_id !== nothing ? "AND event_id = '$event_id'" : "")
-                """, [amount])
+                    """
+                end
+                params = event_id !== nothing ? [amount, event_id] : [amount]
+                result = DBInterface.execute(db, query, params)
 
                 for row in result
                     reg_id, ref, first_name, last_name, email, cost = row
@@ -350,7 +372,8 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                 sender_name=sender_name
             ))
         end
-    end
+        end  # End for loop
+    end  # End with_transaction_safe
 
     @info "Transfer matching complete" matched=matched unmatched=length(unmatched_list)
 

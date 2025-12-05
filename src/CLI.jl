@@ -22,11 +22,10 @@ function cmd_init(; db_path::String="events.duckdb", config_dir::String="config"
     println("\n✓ Project initialized successfully!")
     println("\nNext steps:")
     println("  1. Place .eml files in an 'emails' directory")
-    println("  2. Run: eventreg process-emails")
-    println("  3. Run: eventreg generate-field-config")
-    fields_path = joinpath(config_dir, "fields.toml")
-    println("  4. Edit $fields_path")
-    println("  5. Create event config: eventreg create-event-config <EVENT_ID>")
+    println("  2. Run: eventreg sync")
+    println("     (This will process emails and auto-generate event configs)")
+    println("  3. Edit generated config files in config/events/")
+    println("  4. Run: eventreg sync again to apply cost rules")
     return 0
 end
 
@@ -127,21 +126,29 @@ function cmd_download_emails(;
 end
 
 """
-Generate field configuration from existing data.
+Generate field configuration (DEPRECATED - now auto-generated per event).
+This command is kept for backward compatibility but now recommends using event-specific configs.
 """
 function cmd_generate_field_config(;
     db_path::String="events.duckdb",
     config_dir::String="config",
     output::String=joinpath("config", "fields.toml"))
 
-    return with_database(db_path) do db
-        println("Generating field configuration...")
-        generate_field_config(db, output)
+    println("⚠ DEPRECATION NOTICE:")
+    println("The global fields.toml file is deprecated.")
+    println("Event-specific configurations are now automatically generated.")
+    println("")
+    println("Recommended workflow:")
+    println("  1. Run: eventreg sync")
+    println("     (Processes emails and auto-generates event configs)")
+    println("  2. Edit config files in: config/events/")
+    println("  3. Run: eventreg sync again to apply changes")
+    println("")
+    println("Each event config (config/events/<EVENT_ID>.toml) contains:")
+    println("  • [aliases] - Field name mappings specific to that event")
+    println("  • [costs] - Cost calculation rules using those aliases")
 
-        println("\n✓ Field configuration generated: $output")
-        println("\nPlease edit the file to customize field aliases.")
-        return 0
-    end
+    return 0
 end
 
 """
@@ -166,9 +173,6 @@ function cmd_create_event_config(event_id::String;
     # Try to use database for smart template generation
     if isfile(db_path)
         with_database(db_path) do db
-            # Also load any global aliases as fallback
-            load_field_aliases(config_dir)
-
             fields = generate_event_config_template(event_id, output_path;
                                                     event_name=name,
                                                     db=db,
@@ -255,9 +259,8 @@ Sync configuration files to database.
 Creates a backup before making changes.
 
 This loads:
-1. Global field aliases from config/fields.toml (if present)
-2. Event-specific aliases from config/events/{event_id}.toml [aliases] sections
-3. Cost rules from event config files
+1. Event-specific aliases from config/events/{event_id}.toml [aliases] sections
+2. Cost rules from event config files
 """
 function cmd_sync_config(;
     db_path::String="events.duckdb",
@@ -274,15 +277,7 @@ function cmd_sync_config(;
     end
 
     return with_database(db_path) do db
-        # Load global field aliases (if present, for backward compatibility)
-        fields_path = joinpath(config_dir, "fields.toml")
-        if isfile(fields_path)
-            println("Loading global field aliases from: $fields_path")
-            load_field_aliases(config_dir)
-        end
-
         println("Syncing event configurations to database...")
-        println("  (Event-specific aliases from [aliases] sections take precedence)")
         sync_event_configs_to_db!(db, config_dir)
 
         println("\n✓ Configuration synced successfully!")
@@ -744,14 +739,59 @@ function cmd_sync(;
         end
     end
 
-    # Step 4: Check config sync
+    # Step 3.5: Auto-generate event configs for new events
+    println("\n[3.5/10] Checking for new events without configuration...")
+    with_database(db_path) do db
+        # Get all events from registrations
+        events_result = DBInterface.execute(db, """
+            SELECT DISTINCT event_id FROM registrations
+            ORDER BY event_id
+        """)
+
+        events_dir_path = joinpath(config_dir, "events")
+        mkpath(events_dir_path)
+
+        generated_count = 0
+        for row in events_result
+            evt_id = row[1]
+            config_path = joinpath(events_dir_path, "$(evt_id).toml")
+
+            if !isfile(config_path)
+                println("  • Generating config for new event: $evt_id")
+                try
+                    generate_event_config_template(evt_id, config_path; db=db, config_dir=config_dir)
+                    println("    ✓ Created: $config_path")
+                    generated_count += 1
+                catch e
+                    println("    ✗ Failed to generate config: $e")
+                end
+            end
+        end
+
+        if generated_count > 0
+            println("  ✓ Generated $(generated_count) event config(s)")
+            println("  → Edit the config files and re-run sync to apply cost rules")
+        else
+            println("  ✓ All events have configurations")
+        end
+    end
+
+    # Step 4: Check config sync and track which events changed
     println("\n[4/10] Checking configuration sync...")
+    changed_event_ids = String[]
     with_database(db_path) do db
         unsynced = get_unsynced_configs(db, config_dir)
         if !isempty(unsynced)
             println("  ⚠ $(length(unsynced)) config files need syncing:")
             for file in unsynced
-                println("    - $file")
+                println("    - $(file.path)")
+                # Extract event_id from event config paths
+                if occursin("/events/", file.path) && endswith(file.path, ".toml")
+                    event_id_match = match(r"/events/(.+)\.toml$", file.path)
+                    if event_id_match !== nothing
+                        push!(changed_event_ids, event_id_match.captures[1])
+                    end
+                end
             end
             println("  Running sync...")
             sync_event_configs_to_db!(db, config_dir)
@@ -761,15 +801,38 @@ function cmd_sync(;
         end
     end
 
-    # Step 5-6: Recalculate costs if needed
-    println("\n[5/10] Checking cost calculations...")
+    # Step 5-6: Recalculate costs for changed events and NULL costs
+    println("\n[5/10] Recalculating costs...")
     with_database(db_path) do db
-        # Get events
-        events = list_events(db)
-        needs_recalc = false
+        recalculated = String[]
 
+        # First, recalculate for events with changed configs
+        if !isempty(changed_event_ids)
+            println("  Events with configuration changes:")
+            for evt_id in changed_event_ids
+                # Count registrations for this event
+                count_result = DBInterface.execute(db, """
+                    SELECT COUNT(*) FROM registrations WHERE event_id = ?
+                """, [evt_id])
+                count = first(collect(count_result))[1]
+
+                if count > 0
+                    println("    • Recalculating $evt_id ($count registrations)...")
+                    recalculate_costs!(db, evt_id)
+                    push!(recalculated, evt_id)
+                end
+            end
+        end
+
+        # Then check for other events with NULL costs but existing config
+        events = list_events(db)
         for event_row in events
             evt_id = event_row[1]
+
+            # Skip if we already recalculated this event
+            if evt_id in recalculated
+                continue
+            end
 
             # Check if event has registrations without costs but has config
             check = DBInterface.execute(db, """
@@ -781,14 +844,16 @@ function cmd_sync(;
             count = first(collect(check))[1]
 
             if count > 0
-                println("  Recalculating costs for $evt_id ($count registrations)...")
+                println("  Recalculating costs for $evt_id ($count NULL costs)...")
                 recalculate_costs!(db, evt_id)
-                needs_recalc = true
+                push!(recalculated, evt_id)
             end
         end
 
-        if !needs_recalc
+        if isempty(recalculated)
             println("  ✓ All costs up to date")
+        else
+            println("  ✓ Recalculated costs for $(length(recalculated)) event(s)")
         end
     end
 

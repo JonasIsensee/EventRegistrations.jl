@@ -1,4 +1,4 @@
-Liebe/r {first_name},
+Liebe*r {first_name},
 
 gute Nachrichten! Dir wurde ein Zuschuss für {event_name} gewährt.
 

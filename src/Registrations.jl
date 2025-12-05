@@ -5,6 +5,9 @@ using DBInterface
 using JSON
 using Dates
 
+# Import from parent module
+import ..EventRegistrations: with_transaction_safe
+
 # Import from parent module's submodules
 using ..EmailParser
 using ..ReferenceNumbers
@@ -147,14 +150,16 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString)
     is_update = false
     no_cost_config = false
 
-    # Record that we processed this email
-    DBInterface.execute(db, """
-        INSERT INTO processed_emails (file_hash, filename, processed_at, has_submission, event_id)
-        VALUES (?, ?, ?, ?, ?)
-    """, [file_hash, filename, now(), has_submission,
-          has_submission ? submission.event_id : nothing])
+    # Wrap all database modifications in a transaction (safe for nesting)
+    with_transaction_safe(db) do
+        # Record that we processed this email
+        DBInterface.execute(db, """
+            INSERT INTO processed_emails (file_hash, filename, processed_at, has_submission, event_id)
+            VALUES (?, ?, ?, ?, ?)
+        """, [file_hash, filename, now(), has_submission,
+              has_submission ? submission.event_id : nothing])
 
-    if has_submission
+        if has_submission
         # Parse email date
         email_date = haskey(parsed.headers, "date") ?
             EmailParser.parse_email_date(parsed.headers["date"]) : now()
@@ -239,7 +244,8 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString)
                 @info "Updated registration (resubmission)" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
             end
         end
-    end
+        end  # End if has_submission
+    end  # End with_transaction_safe
 
     return (has_submission=has_submission, is_new=is_new, is_update=is_update, skipped=false, no_cost_config=no_cost_config)
 end
@@ -529,12 +535,14 @@ function recalculate_costs!(db::DuckDB.DB, event_id::AbstractString;
                 warnings=length(all_warnings), details=updates)
     end
 
-    # Apply all updates
-    for upd in updates
-        DBInterface.execute(db, """
-            UPDATE registrations SET computed_cost = ?, updated_at = ?
-            WHERE id = ?
-        """, [upd.new_cost, now(), upd.id])
+    # Apply all updates in a transaction (safe for nesting)
+    with_transaction_safe(db) do
+        for upd in updates
+            DBInterface.execute(db, """
+                UPDATE registrations SET computed_cost = ?, updated_at = ?
+                WHERE id = ?
+            """, [upd.new_cost, now(), upd.id])
+        end
     end
 
     @info "Recalculated costs for event" event_id=event_id count=length(registrations) warnings=length(all_warnings)
@@ -542,4 +550,4 @@ function recalculate_costs!(db::DuckDB.DB, event_id::AbstractString;
     return (success=true, updated=length(updates), warnings=length(all_warnings), details=updates)
 end
 
-end # module
+end # module Registrations

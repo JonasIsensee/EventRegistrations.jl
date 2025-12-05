@@ -1,20 +1,20 @@
-Liebe/r {first_name},
+Liebe*r {first_name},
 
 vielen Dank für deine Anmeldung zum {event_name}!
 
-Referenznummer: {reference_number}
-Zu zahlender Betrag: {cost} €
+Bitte überweise deine Teilnahmegebühr zeitnah und vor Beginn des Probenwochenendes an:
 
-{registration_fields}
-
-Bankverbindung:
 {bank_details}
 
-Bitte verwende als Verwendungszweck ausschließlich: {reference_number}
+oder scanne den QRcode mit deiner Banking-App:
 
 {qr_hint}
 
+Deine hinterlegten Anmeldedaten sind:
+
 {additional_info}
+
+Solltest du daran etwas ändern wollen, fülle das Formular bitte mit gleichem Namen und E-Mail Adresse neu aus.
 
 Viele Grüße,
 {sender_name}

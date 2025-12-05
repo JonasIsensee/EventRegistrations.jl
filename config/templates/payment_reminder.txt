@@ -1,24 +1,27 @@
-Liebe/r {first_name},
+Liebe*r {first_name},
 
-wir möchten dich freundlich daran erinnern, dass die Zahlung für {event_name}
-noch aussteht.
+vielen Dank für deine Anmeldung zum {event_name}!
 
-Referenznummer: {reference_number}
-Offener Betrag: {remaining} €
+Solltest du eine ähnliche Email bereits einmal bekommen haben, kann das verschiedene Gründe haben:
+ - Du hast deine Anmeldung aktualisiert
+ - Die Kostenkalkulation für das Probenwochenende musste angepasst werden
+ - Wir haben eine anteilige Zahlung erhalten
+ - Es ist einige Zeit verstrichen seit deiner Anmeldung und wir haben noch kein Geld erhalten und möchten dich hiermit freundlich an die Überweisung erinnern
 
-{registration_fields}
+Bitte überweise deine Teilnahmegebühr zeitnah und vor Beginn des Probenwochenendes an:
 
-Bankverbindung:
 {bank_details}
 
-Bitte verwende als Verwendungszweck ausschließlich: {reference_number}
+oder scanne den QRcode mit deiner Banking-App:
 
 {qr_hint}
 
-Falls du bereits überwiesen hast, ignoriere bitte diese Nachricht.
-Es kann einige Tage dauern, bis die Zahlung bei uns eingeht.
+Deine hinterlegten Anmeldedaten sind:
 
 {additional_info}
 
+Solltest du daran etwas ändern wollen, fülle das Formular bitte mit gleichem Namen und E-Mail Adresse neu aus.
+
 Viele Grüße,
 {sender_name}
+

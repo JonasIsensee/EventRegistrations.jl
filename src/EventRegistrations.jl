@@ -40,6 +40,7 @@ using DBInterface
 using JSON
 using Dates
 using TOML
+using Base: ScopedValues
 
 # Include all submodules
 include("Schema.jl")
@@ -124,6 +125,9 @@ function with_database(f::Function, db_path::AbstractString)
 end
 export with_database
 
+# Scoped value to track if we're currently in a transaction
+const IN_TRANSACTION = ScopedValues.ScopedValue(false)
+
 """
     with_transaction(f, db::DuckDB.DB)
 
@@ -139,11 +143,16 @@ with_transaction(db) do
     # If any fail, all are rolled back
 end
 ```
+
+⚠️ Note: This will fail if called within an existing transaction (DuckDB doesn't support nested transactions).
+Use `with_transaction_safe` for automatic nested transaction handling.
 """
 function with_transaction(f::Function, db::DuckDB.DB)
     DBInterface.execute(db, "BEGIN TRANSACTION")
     try
-        result = f()
+        result = ScopedValues.with(IN_TRANSACTION => true) do
+            f()
+        end
         DBInterface.execute(db, "COMMIT")
         return result
     catch e
@@ -156,6 +165,37 @@ function with_transaction(f::Function, db::DuckDB.DB)
     end
 end
 export with_transaction
+
+"""
+    with_transaction_safe(f, db::DuckDB.DB)
+
+Execute function `f` within a database transaction, but only if not already in one.
+
+If already in a transaction (detected via scoped value), simply executes `f` without
+starting a new transaction. This allows safe nesting of transactional operations.
+
+# Example
+```julia
+# This works even if called from within another transaction
+with_transaction_safe(db) do
+    # Operations here
+    some_other_function_that_also_uses_with_transaction_safe(db)
+end
+```
+
+This is the preferred method for functions that should be atomic but may be called
+from contexts that already have transactions.
+"""
+function with_transaction_safe(f::Function, db::DuckDB.DB)
+    if IN_TRANSACTION[]
+        # Already in a transaction, just execute
+        return f()
+    else
+        # Start a new transaction
+        return with_transaction(f, db)
+    end
+end
+export with_transaction_safe
 
 """
     backup_database(db_path::AbstractString; suffix::String="")
@@ -425,7 +465,11 @@ Export payment status to CSV file.
 Shows computed cost, payments, subsidies, total credits, and remaining amount.
 """
 function export_payment_status_csv(db::DuckDB.DB, event_id::AbstractString, output_path::AbstractString)
-    DBInterface.execute(db, """
+    # Sanitize path by escaping single quotes to prevent SQL injection
+    sanitized_path = replace(output_path, "'" => "''")
+
+    # Use prepared statement for event_id, but path must be literal in COPY TO
+    stmt = DBInterface.prepare(db, """
         COPY (
             WITH payment_totals AS (
                 SELECT
@@ -463,10 +507,11 @@ function export_payment_status_csv(db::DuckDB.DB, event_id::AbstractString, outp
             FROM registrations r
             LEFT JOIN payment_totals pt ON pt.registration_id = r.id
             LEFT JOIN subsidy_totals st ON st.registration_id = r.id
-            WHERE r.event_id = '$event_id'
+            WHERE r.event_id = ?
             ORDER BY r.last_name, r.first_name
-        ) TO '$output_path' (HEADER, DELIMITER ';')
+        ) TO '$sanitized_path' (HEADER, DELIMITER ';')
     """)
+    DBInterface.execute(stmt, [event_id])
     @info "Exported payment status" event_id=event_id path=output_path
 end
 export export_payment_status_csv
@@ -493,9 +538,15 @@ function export_registrations_csv(db::DuckDB.DB, event_id::AbstractString, outpu
         fields = sort(collect(all_fields))
     end
 
-    field_extracts = join(["json_extract_string(fields, '\$.$f') as \"$f\"" for f in fields], ", ")
+    # Sanitize field names to prevent SQL injection (remove quotes and backticks)
+    sanitized_fields = [replace(replace(f, "\"" => ""), "`" => "") for f in fields]
+    field_extracts = join(["json_extract_string(fields, '\$.$f') as \"$f\"" for f in sanitized_fields], ", ")
 
-    DBInterface.execute(db, """
+    # Sanitize path by escaping single quotes
+    sanitized_path = replace(output_path, "'" => "''")
+
+    # Use prepared statement for event_id, but path must be literal in COPY TO
+    stmt = DBInterface.prepare(db, """
         COPY (
             SELECT
                 reference_number as "Referenz",
@@ -507,10 +558,11 @@ function export_registrations_csv(db::DuckDB.DB, event_id::AbstractString, outpu
                 registration_date as "Anmeldedatum",
                 $field_extracts
             FROM registrations
-            WHERE event_id = '$event_id'
+            WHERE event_id = ?
             ORDER BY last_name, first_name
-        ) TO '$output_path' (HEADER, DELIMITER ';')
+        ) TO '$sanitized_path' (HEADER, DELIMITER ';')
     """)
+    DBInterface.execute(stmt, [event_id])
     @info "Exported registrations" event_id=event_id path=output_path
 end
 export export_registrations_csv
@@ -606,34 +658,11 @@ export grant_subsidies_from_csv!
 """
 Set up the project directory structure with config files.
 Creates:
-- config/fields.toml (empty template)
-- config/events/ directory
+- config/events/ directory (for event-specific configs)
 - config/templates/ directory with default templates
 """
 function setup_project!(config_dir::AbstractString="config")
     ensure_config_dirs(config_dir)
-
-    # Create fields.toml template if it doesn't exist
-    fields_path = joinpath(config_dir, "fields.toml")
-    if !isfile(fields_path)
-        write(fields_path, """
-# Field Aliases Configuration
-# Maps short, easy-to-use aliases to actual field names from form submissions
-#
-# Usage: In cost rules (config/events/*.toml), use the alias instead of the full field name
-# Run generate_field_config(db, "$fields_path") to auto-generate from existing data
-
-[aliases]
-# Examples (uncomment and edit after running generate_field_config):
-# vorname = "Vorname"
-# nachname = "Nachname"
-# email = "E-Mail"
-# uebernachtung_fr = "Übernachtung Freitag"
-# uebernachtung_sa = "Übernachtung Samstag"
-# zimmer = "Wie möchte ich übernachten?"
-""")
-        @info "Created fields.toml template" path=fields_path
-    end
 
     # Create default templates
     templates_dir = joinpath(config_dir, "templates")
@@ -642,11 +671,12 @@ function setup_project!(config_dir::AbstractString="config")
 
     @info "Project setup complete" config_dir=config_dir
     println("\nNext steps:")
-    println("1. Process some emails to populate the database")
-    println("2. Run: generate_field_config(db, \"$fields_path\")")
-    println("3. Edit $fields_path to customize field aliases")
-    println("4. Create event configs in $(joinpath(config_dir, "events"))/")
-    println("5. Edit templates in $templates_dir/")
+    println("1. Place .eml files in an 'emails' directory")
+    println("2. Run: eventreg sync")
+    println("   (Processes emails and auto-generates event configs)")
+    println("3. Edit generated configs in $(joinpath(config_dir, "events"))/")
+    println("4. Run: eventreg sync again to apply cost rules")
+    println("5. Customize email templates in $templates_dir/ if needed")
 
     return config_dir
 end

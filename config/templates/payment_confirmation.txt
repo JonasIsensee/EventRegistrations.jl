@@ -1,4 +1,4 @@
-Liebe/r {first_name},
+Liebe*r {first_name},
 
 vielen Dank! Wir haben deine Zahlung für {event_name} erhalten.
 

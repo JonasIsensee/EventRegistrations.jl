@@ -587,7 +587,8 @@ function send_confirmation_email!(db::DuckDB.DB, registration_id::Integer;
             end
         end
         println("--- END PREVIEW ---\n")
-        success = true
+        # DRY RUN: Don't record in database
+        return true
     else
         # Actually send email using SMTP
         try
@@ -619,7 +620,7 @@ function send_confirmation_email!(db::DuckDB.DB, registration_id::Integer;
         end
     end
 
-    # Record the email attempt
+    # Record the email attempt (only in non-dry-run mode)
     status = success ? "sent" : "failed"
     DBInterface.execute(db, """
         INSERT INTO confirmation_emails (
