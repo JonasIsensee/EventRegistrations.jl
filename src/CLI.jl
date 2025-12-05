@@ -32,7 +32,9 @@ end
 """
 Process registration emails from a folder.
 """
-function cmd_process_emails(email_folder::String="emails"; db_path::String="events.duckdb")
+function cmd_process_emails(email_folder::String="emails";
+                            db_path::String="events.duckdb",
+                            nonstop::Bool=false)
     if !isdir(email_folder)
         println("❌ Error: Email folder not found: $email_folder")
         return 1
@@ -40,9 +42,14 @@ function cmd_process_emails(email_folder::String="emails"; db_path::String="even
 
     return with_database(db_path) do db
         println("Processing emails from: $email_folder")
-        stats = process_email_folder!(db, email_folder)
+    stats = process_email_folder!(db, email_folder;
+                      prompt_for_new_events=!nonstop)
 
-        println("\n✓ Email processing complete!")
+        if stats.terminated
+            println("\n⚠ Processing halted by user request to edit configuration.")
+        else
+            println("\n✓ Email processing complete!")
+        end
         println("  Processed: $(stats.processed)")
         println("  Submissions: $(stats.submissions)")
         println("  New registrations: $(stats.new_registrations)")
@@ -695,7 +702,8 @@ function cmd_sync(;
     bank_dir::String="bank_transfers",
     credentials_path::String="config/email_credentials.toml",
     dry_run_emails="true",
-    event_id::Union{String,Nothing}=nothing)
+    event_id::Union{String,Nothing}=nothing,
+    nonstop::Bool=false)
     dry_run_emails = parse(Bool, dry_run_emails)
     println("=== EventRegistrations Sync ===\n")
 
@@ -727,9 +735,13 @@ function cmd_sync(;
 
     # Step 3: Process emails
     println("\n[3/10] Processing emails...")
+    stats_ref = Ref{Any}(nothing)
     with_database(db_path) do db
         if isdir(emails_dir)
-            stats = process_email_folder!(db, emails_dir)
+            stats = process_email_folder!(db, emails_dir;
+                                          config_dir=config_dir,
+                                          prompt_for_new_events=!nonstop)
+            stats_ref[] = stats
             println("  Processed: $(stats.processed), New: $(stats.new_registrations), Updates: $(stats.updates)")
             if stats.no_cost_config > 0
                 println("  ⚠ $(stats.no_cost_config) registrations need cost configuration")
@@ -737,6 +749,12 @@ function cmd_sync(;
         else
             println("  No emails directory found")
         end
+    end
+
+    stats = stats_ref[]
+    if stats !== nothing && stats.terminated
+        println("\nSync terminated by user to allow configuration edits.")
+        return 0
     end
 
     # Step 3.5: Auto-generate event configs for new events
@@ -923,7 +941,7 @@ function cmd_sync(;
         total_sent = 0
         for evt_id in target_events
             # Check for changed balances
-            result = resend_changed_balances!(db, evt_id; template_name="payment_reminder", dry_run=dry_run_emails)
+            result = resend_changed_balances!(db, evt_id; template_name="confirmation_email", dry_run=dry_run_emails)
             total_sent += result.sent
         end
 
@@ -1371,6 +1389,7 @@ COMMON OPTIONS:
   --strict                      Fail on warnings (for validate-config, recalculate-costs)
   --dry-run                     Preview changes without applying (for recalculate-costs)
   --check-sync                  Warn if config files need syncing
+    --nonstop                     Disable interactive prompts (auto-continue)
 
 EXAMPLES:
   eventreg init

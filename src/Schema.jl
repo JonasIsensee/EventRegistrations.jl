@@ -154,7 +154,7 @@ function init_database(db_path::AbstractString)
         CREATE TABLE IF NOT EXISTS confirmation_emails (
             id INTEGER PRIMARY KEY,
             registration_id INTEGER NOT NULL REFERENCES registrations(id),
-            email_type VARCHAR NOT NULL,  -- 'confirmation', 'payment_reminder', 'payment_confirmation', etc.
+            email_type VARCHAR NOT NULL,  -- 'confirmation_email', 'payment_confirmation', etc.
             sent_at TIMESTAMP NOT NULL,
             email_to VARCHAR NOT NULL,
             cost_at_send DECIMAL(10,2),     -- computed_cost at time of sending

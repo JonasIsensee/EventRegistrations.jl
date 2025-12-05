@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(julia --project:*)",
+      "Bash(cat:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

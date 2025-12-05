@@ -330,7 +330,7 @@ function qr_payload_to_png(payload::String)
 end
 
 """
-Generate payment QR attachment and hint text if configuration allows it.
+Generate a payment QR HTML block if configuration allows it.
 """
 function maybe_generate_payment_qr(amount::Float64, reference::String)
     if !CONFIG.qr_enabled || amount ≤ 0.0
@@ -352,18 +352,18 @@ function maybe_generate_payment_qr(amount::Float64, reference::String)
         )
 
         png_bytes = qr_payload_to_png(payload)
-    filename = "sepa-qr-$(sanitize_filename(reference)).png"
+        encoded = base64encode(png_bytes)
         hint_amount = replace(@sprintf("%.2f", amount), "." => ",")
-        hint = "Scanne den QR-Code im Anhang: Betrag (€$(hint_amount)) und Verwendungszweck sind dann schon eingetragen."
 
-        attachment = EmailAttachment(
-            filename,
-            "image/png",
-            png_bytes,
-            "inline"
-        )
+        html = """
+<div style="margin: 24px 0; text-align: center;">
+  <h3 style="margin-bottom: 12px; font-size: 18px;">Bezahlen per QR-Code</h3>
+  <img src="data:image/png;base64,$encoded" alt="SEPA QR-Code" style="max-width: 360px; width: 100%; height: auto;" />
+  <p style="margin-top: 12px;">Scanne den QR-Code: Betrag (€$hint_amount) und Verwendungszweck werden automatisch übernommen.</p>
+</div>
+"""
 
-        return (attachment=attachment, hint=hint)
+        return strip(html)
     catch e
         @warn "Failed to create payment QR" exception=e reference=reference
         return nothing
@@ -403,36 +403,42 @@ function generate_email_content(;
     end
 
     # Format registration fields for email display
-    fields_text = format_registration_fields(registration_fields)
+    fields_html = strip(format_registration_fields(registration_fields))
+
+    bank_details_text = prepare_bank_details(reference_number)
+    bank_details_html = isempty(strip(bank_details_text)) ? "" : replace(escape_html(bank_details_text), "\n" => "<br>")
+
+    fallback_info = isempty(strip(CONFIG.additional_info)) ? "Bei Fragen erreichst du uns unter $(CONFIG.from_address)." : CONFIG.additional_info
+    info_html = isempty(strip(fallback_info)) ? "" : "<p style=\"margin: 24px 0;\">$(replace(escape_html(fallback_info), "\n" => "<br>"))</p>"
 
     # Build variables dict
     vars = Dict{String, Any}(
-        "first_name" => first_name,
-        "last_name" => last_name,
-        "event_name" => event_name,
-        "reference_number" => reference_number,
+        "first_name" => escape_html(first_name),
+        "last_name" => escape_html(last_name),
+        "event_name" => escape_html(event_name),
+        "reference_number" => escape_html(reference_number),
         "cost" => format_currency(cost),
         "remaining" => format_currency(remaining),
         "subsidy_amount" => format_currency(subsidy_amount),
-        "subsidy_reason" => subsidy_reason,
+        "subsidy_reason" => escape_html(subsidy_reason),
         "amount_paid" => format_currency(amount_paid),
-        "cost_change_note" => cost_change_note,
-        "registration_fields" => fields_text,
-        "bank_details" => prepare_bank_details(reference_number),
-        "additional_info" => isempty(CONFIG.additional_info) ? "Bei Fragen erreichst du uns unter $(CONFIG.from_address)." : CONFIG.additional_info,
-        "sender_name" => CONFIG.from_name,
+        "cost_change_note" => escape_html(cost_change_note),
+        "registration_fields" => fields_html,
+        "bank_details" => bank_details_html,
+        "additional_info" => info_html,
+        "sender_name" => escape_html(CONFIG.from_name),
     )
 
-    vars["qr_hint"] = ""
+    vars["qr_block"] = ""
 
     # Merge extra variables
     merge!(vars, extra_vars)
 
-    if !haskey(vars, "qr_hint")
-        vars["qr_hint"] = ""
+    if !haskey(vars, "qr_block")
+        vars["qr_block"] = ""
     end
 
-    return collapse_blank_lines(render_template(template, vars))
+    return render_template(template, vars)
 end
 
 """
@@ -445,6 +451,7 @@ function preview_email(db::DuckDB.DB, registration_id::Integer;
         SELECT r.first_name, r.last_name, r.email, r.reference_number, r.computed_cost,
                COALESCE(e.event_name, r.event_id) as event_name,
                COALESCE(sub.total_subsidy, 0) as total_subsidy,
+               COALESCE(pay.total_paid, 0) as total_paid,
                r.fields
         FROM registrations r
         LEFT JOIN events e ON e.event_id = r.event_id
@@ -453,6 +460,13 @@ function preview_email(db::DuckDB.DB, registration_id::Integer;
             FROM subsidies
             GROUP BY registration_id
         ) sub ON sub.registration_id = r.id
+        LEFT JOIN (
+            SELECT pm.registration_id, SUM(bt.amount) as total_paid
+            FROM payment_matches pm
+            JOIN bank_transfers bt ON bt.id = pm.transfer_id
+            WHERE pm.match_type != 'unmatched'
+            GROUP BY pm.registration_id
+        ) pay ON pay.registration_id = r.id
         WHERE r.id = ?
     """, [registration_id])
 
@@ -462,12 +476,14 @@ function preview_email(db::DuckDB.DB, registration_id::Integer;
     end
 
     row = rows[1]
-    computed_cost = something(row[5], 0.0)
-    total_subsidy = something(row[7], 0.0)
-    effective_cost = computed_cost - total_subsidy  # What they actually need to pay
+    computed_cost = to_float(something(row[5], 0.0))
+    total_subsidy = to_float(something(row[7], 0.0))
+    total_paid = to_float(something(row[8], 0.0))
+    effective_cost = max(computed_cost - total_subsidy, 0.0)
+    remaining_amount = max(effective_cost - total_paid, 0.0)
 
     # Parse fields JSON
-    fields_json = row[8]
+    fields_json = row[9]
     registration_fields = if fields_json !== nothing && !isempty(fields_json)
         try
             JSON.parse(fields_json)
@@ -485,8 +501,9 @@ function preview_email(db::DuckDB.DB, registration_id::Integer;
         event_name = something(row[6], "Event"),
         reference_number = row[4],
         cost = effective_cost,
-        remaining = effective_cost,
+        remaining = remaining_amount,
         subsidy_amount = total_subsidy,
+        amount_paid = total_paid,
         registration_fields = registration_fields,
         extra_vars = extra_vars
     )
@@ -554,13 +571,11 @@ function send_confirmation_email!(db::DuckDB.DB, registration_id::Integer;
 
     remaining_amount = max(to_float(remaining), 0.0)
 
-    attachments = EmailAttachment[]
     extra_vars = Dict{String,String}()
 
-    qr_info = maybe_generate_payment_qr(remaining_amount, reference)
-    if qr_info !== nothing
-        push!(attachments, qr_info.attachment)
-        extra_vars["qr_hint"] = qr_info.hint
+    qr_block = maybe_generate_payment_qr(remaining_amount, reference)
+    if qr_block !== nothing
+        extra_vars["qr_block"] = qr_block
     end
 
     # Get registration details for email
@@ -580,12 +595,6 @@ function send_confirmation_email!(db::DuckDB.DB, registration_id::Integer;
         println("Cost: $computed_cost, Remaining: $remaining_amount")
         println("---")
         println(email_preview.body)
-        if !isempty(attachments)
-            println("--- ATTACHMENTS ---")
-            for att in attachments
-                println("  * $(att.filename) ($(length(att.content)) bytes)")
-            end
-        end
         println("--- END PREVIEW ---\n")
         # DRY RUN: Don't record in database
         return true
@@ -595,8 +604,7 @@ function send_confirmation_email!(db::DuckDB.DB, registration_id::Integer;
             success = send_via_smtp(
                 email_preview.to,
                 email_preview.subject,
-                email_preview.body;
-                attachments = attachments
+                email_preview.body
             )
         catch e
             success = false
@@ -643,11 +651,11 @@ function send_confirmation_email!(db::DuckDB.DB, registration_id::Integer;
 end
 
 """
-Check which registrations need emails resent due to balance changes.
+Check which registrations need confirmation emails resent due to balance changes.
 Returns list of (registration_id, reason, old_remaining, new_remaining).
 """
 function get_registrations_needing_resend(db::DuckDB.DB, event_id::AbstractString;
-                                           email_type::String="payment_reminder")
+                                           email_type::String="confirmation_email")
     result = DBInterface.execute(db, """
         WITH latest_emails AS (
             SELECT
@@ -705,7 +713,7 @@ Resend emails for registrations where the balance has changed.
 Returns (sent_count, error_count).
 """
 function resend_changed_balances!(db::DuckDB.DB, event_id::AbstractString;
-                                   template_name::String="payment_reminder",
+                                   template_name::String="confirmation_email",
                                    dry_run::Union{Bool,Nothing}=nothing)
     # Override global dry_run if specified
     original_dry_run = CONFIG.dry_run
@@ -728,14 +736,14 @@ function resend_changed_balances!(db::DuckDB.DB, event_id::AbstractString;
 
         for row in needing_resend
             registration_id = row[1]
-            old_remaining = row[2]
-            new_remaining = row[3]
+            old_remaining = to_float(row[2])
+            new_remaining = to_float(row[3])
             reason_code = row[4]
 
             reason = if reason_code == "never_sent"
                 "Initial email"
             elseif reason_code == "balance_changed"
-                "Balance changed from €$(old_remaining) to €$(new_remaining)"
+                "Saldo geändert von €$(format_currency(old_remaining)) auf €$(format_currency(new_remaining))"
             else
                 "Balance update"
             end
@@ -880,7 +888,7 @@ function send_via_smtp(to::String, subject::String, body::String; attachments::V
         message_body = ""
 
         if isempty(attachments)
-            push!(header_lines, "Content-Type: text/plain; charset=UTF-8")
+            push!(header_lines, "Content-Type: text/html; charset=UTF-8")
             push!(header_lines, "Content-Transfer-Encoding: 8bit")
             message_body = join(header_lines, "\n") * "\n\n" * body
         else
@@ -889,7 +897,7 @@ function send_via_smtp(to::String, subject::String, body::String; attachments::V
 
             parts = String[]
             push!(parts, "--$boundary")
-            push!(parts, "Content-Type: text/plain; charset=UTF-8")
+            push!(parts, "Content-Type: text/html; charset=UTF-8")
             push!(parts, "Content-Transfer-Encoding: 8bit")
             push!(parts, "")
             push!(parts, body)

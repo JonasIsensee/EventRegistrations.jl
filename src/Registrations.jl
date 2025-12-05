@@ -11,6 +11,7 @@ import ..EventRegistrations: with_transaction_safe
 # Import from parent module's submodules
 using ..EmailParser
 using ..ReferenceNumbers
+using ..Config: generate_event_config_template, get_config_dir
 using ..CostCalculator
 
 export process_email_folder!, get_registrations, export_registrations
@@ -18,11 +19,90 @@ export grant_subsidy!, get_subsidies, revoke_subsidy!, grant_subsidies_batch!
 export get_registration_by_reference, recalculate_costs!
 
 """
+Prompt the user for a yes/no decision and return `true` for yes, `false` for no.
+
+If the standard input stream is not interactive, or an EOF is encountered, the
+provided default is used (`false` when no default is supplied).
+"""
+function prompt_user_bool(question::AbstractString; default::Union{Bool,Nothing}=nothing)
+    suffix = default === nothing ? " [y/n]: " : default ? " [Y/n]: " : " [y/N]: "
+    prompt = question * suffix
+
+    while true
+        print(prompt)
+        flush(stdout)
+        try
+            response = readline(stdin)
+        catch _
+            return default === nothing ? false : default
+        end
+
+        response = strip(response)
+
+        if isempty(response)
+            if default !== nothing
+                return default
+            else
+                println("Please respond with y or n.")
+                continue
+            end
+        end
+
+        response_lower = lowercase(response)
+        if response_lower in ("y", "yes")
+            return true
+        elseif response_lower in ("n", "no")
+            return false
+        else
+            println("Please respond with y or n.")
+        end
+    end
+end
+
+"""
+Interactively offer to create configuration files for newly detected events.
+
+Returns a NamedTuple indicating whether processing should continue and which
+configuration files were created.
+"""
+function handle_new_event_prompts!(db::DuckDB.DB, events::Vector{String}, config_dir::AbstractString)
+    mkpath(joinpath(config_dir, "events"))
+    created_configs = Dict{String,String}()
+
+    for event_id in events
+        println("\n⚠ New event detected without cost configuration: $event_id")
+        create_config = prompt_user_bool("Create configuration for $event_id now?"; default=true)
+        if create_config
+            config_path = joinpath(config_dir, "events", "$(event_id).toml")
+            try
+                generate_event_config_template(event_id, config_path; db=db, config_dir=config_dir)
+                println("  ✓ Created event configuration at $config_path")
+                created_configs[event_id] = config_path
+            catch err
+                println("  ✗ Failed to create configuration for $event_id: $(sprint(showerror, err))")
+            end
+        end
+    end
+
+    if !isempty(created_configs)
+        println("\nPlease review and edit the generated configuration file(s) before continuing.")
+    end
+
+    continue_sync = prompt_user_bool("Continue processing after updating configuration?"; default=false)
+    return (continue_sync=continue_sync, created_configs=created_configs)
+end
+
+"""
 Process all .eml files in a folder.
 Handles resubmissions by updating existing registrations while preserving reference numbers.
 Reports newly detected event IDs and suggests configuration generation.
+When `prompt_for_new_events=true`, interactively offers to scaffold missing
+event configuration files and may return `terminated=true` if the user chooses
+to pause processing.
 """
-function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString)
+function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString;
+                               config_dir::Union{Nothing,String}=nothing,
+                               prompt_for_new_events::Bool=false)
     eml_files = filter(f -> endswith(lowercase(f), ".eml"), readdir(folder_path, join=true))
 
     # Track event IDs found in this batch
@@ -31,6 +111,7 @@ function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString)
     resubmissions = Vector{Tuple{String,String,String}}()  # (email, event_id, reference)
 
     stats = (processed=0, submissions=0, new_registrations=0, updates=0, skipped=0, no_cost_config=0)
+    terminated = false
 
     for filepath in eml_files
         try
@@ -93,16 +174,34 @@ function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString)
         println("\n" * "="^80)
         println("⚠ WARNING: $(length(events_without_config)) event(s) have NO cost configuration!")
         println("Costs are set to NULL until configuration is created.")
-        println("\nTo configure costs for these events:")
-        for event_id in sort(collect(events_without_config))
-            println("\n  Event: $event_id")
-            println("    1. Generate field config (if not done): eventreg generate-field-config")
-            println("    2. Create event config: eventreg create-event-config $event_id")
-            println("    3. Edit config/events/$event_id.toml to set cost rules")
-            println("    4. Sync to database: eventreg sync-config")
-            println("    5. Recalculate costs: eventreg recalculate-costs $event_id")
+        if prompt_for_new_events
+            println("\nInteractive setup assistance is available now.")
+        else
+            println("\nTo configure costs for these events:")
+            for event_id in sort(collect(events_without_config))
+                println("\n  Event: $event_id")
+                println("    1. Generate field config (if not done): eventreg generate-field-config")
+                println("    2. Create event config: eventreg create-event-config $event_id")
+                println("    3. Edit config/events/$event_id.toml to set cost rules")
+                println("    4. Sync to database: eventreg sync-config")
+                println("    5. Recalculate costs: eventreg recalculate-costs $event_id")
+            end
         end
         println("="^80)
+    end
+
+    if prompt_for_new_events && !isempty(events_without_config)
+        effective_config_dir = config_dir === nothing ? get_config_dir() : config_dir
+        sorted_events = sort(collect(events_without_config))
+        prompt_result = handle_new_event_prompts!(db, sorted_events, effective_config_dir)
+        if !prompt_result.continue_sync
+            terminated = true
+        end
+        for event_id in keys(prompt_result.created_configs)
+            if event_id in events_without_config
+                delete!(events_without_config, event_id)
+            end
+        end
     end
 
     # Report resubmissions (updated registrations)
@@ -123,7 +222,10 @@ function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString)
         println("="^80)
     end
 
-    return stats
+    return merge(stats, (
+        events_without_config = sort(collect(events_without_config)),
+        terminated = terminated,
+    ))
 end
 
 """
@@ -160,96 +262,95 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString)
               has_submission ? submission.event_id : nothing])
 
         if has_submission
-        # Parse email date
-        email_date = haskey(parsed.headers, "date") ?
-            EmailParser.parse_email_date(parsed.headers["date"]) : now()
+            # Parse email date
+            email_date = haskey(parsed.headers, "date") ?
+                EmailParser.parse_email_date(parsed.headers["date"]) : now()
 
-        # Store raw submission
-        fields_json = JSON.json(submission.fields)
+            # Store raw submission
+            fields_json = JSON.json(submission.fields)
 
-        DBInterface.execute(db, """
-            INSERT INTO submissions (id, file_hash, event_id, email, first_name, last_name,
-                                     fields, email_date, email_from, email_subject, created_at)
-            VALUES (nextval('submission_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, [file_hash, submission.event_id, submission.email,
-              submission.first_name, submission.last_name, fields_json,
-              email_date, get(parsed.headers, "from", nothing),
-              get(parsed.headers, "subject", nothing), now()])
-
-        # Get the submission ID we just inserted
-        sub_result = DBInterface.execute(db,
-            "SELECT currval('submission_id_seq')")
-        submission_id = first(collect(sub_result))[1]
-
-        # Check for existing registration (resubmission case)
-        existing = DBInterface.execute(db, """
-            SELECT id, reference_number FROM registrations
-            WHERE event_id = ? AND email = ?
-        """, [submission.event_id, submission.email])
-        existing_rows = collect(existing)
-
-        # Calculate cost (returns nothing if no cost config exists)
-        computed_cost = calculate_cost(db, submission.event_id, submission.fields)
-
-        if isempty(existing_rows)
-            # New registration
             DBInterface.execute(db, """
-                INSERT INTO registrations (id, event_id, email, reference_number,
-                                           first_name, last_name, fields, computed_cost,
-                                           latest_submission_id, registration_date, updated_at)
-                VALUES (nextval('registration_id_seq'), ?, ?, 'TEMP', ?, ?, ?, ?, ?, ?, ?)
-            """, [submission.event_id, submission.email,
+                INSERT INTO submissions (id, file_hash, event_id, email, first_name, last_name,
+                                         fields, email_date, email_from, email_subject, created_at)
+                VALUES (nextval('submission_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, [file_hash, submission.event_id, submission.email,
                   submission.first_name, submission.last_name, fields_json,
-                  computed_cost, submission_id, email_date, now()])
+                  email_date, get(parsed.headers, "from", nothing),
+                  get(parsed.headers, "subject", nothing), now()])
 
-            # Get the registration ID and generate reference number
-            reg_result = DBInterface.execute(db, "SELECT currval('registration_id_seq')")
-            reg_id = first(collect(reg_result))[1]
+            # Get the submission ID we just inserted
+            sub_result = DBInterface.execute(db,
+                "SELECT currval('submission_id_seq')")
+            submission_id = first(collect(sub_result))[1]
 
-            ref_number = generate_reference_number(submission.event_id, reg_id)
+            # Check for existing registration (resubmission case)
+            existing = DBInterface.execute(db, """
+                SELECT id, reference_number FROM registrations
+                WHERE event_id = ? AND email = ?
+            """, [submission.event_id, submission.email])
+            existing_rows = collect(existing)
 
-            DBInterface.execute(db, """
-                UPDATE registrations SET reference_number = ? WHERE id = ?
-            """, [ref_number, reg_id])
+            # Calculate cost (returns nothing if no cost config exists)
+            computed_cost = calculate_cost(db, submission.event_id, submission.fields)
 
-            is_new = true
-            if computed_cost === nothing
-                no_cost_config = true
-                @warn "New registration - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
+            if isempty(existing_rows)
+                # New registration
+                DBInterface.execute(db, """
+                    INSERT INTO registrations (id, event_id, email, reference_number,
+                                               first_name, last_name, fields, computed_cost,
+                                               latest_submission_id, registration_date, updated_at)
+                    VALUES (nextval('registration_id_seq'), ?, ?, 'TEMP', ?, ?, ?, ?, ?, ?, ?)
+                """, [submission.event_id, submission.email,
+                      submission.first_name, submission.last_name, fields_json,
+                      computed_cost, submission_id, email_date, now()])
+
+                # Get the registration ID and generate reference number
+                reg_result = DBInterface.execute(db, "SELECT currval('registration_id_seq')")
+                reg_id = first(collect(reg_result))[1]
+
+                ref_number = generate_reference_number(submission.event_id, reg_id)
+
+                DBInterface.execute(db, """
+                    UPDATE registrations SET reference_number = ? WHERE id = ?
+                """, [ref_number, reg_id])
+
+                is_new = true
+                if computed_cost === nothing
+                    no_cost_config = true
+                    @warn "New registration - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
+                else
+                    @info "New registration" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
+                end
             else
-                @info "New registration" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
-            end
-        else
-            # Update existing registration (keep reference number!)
-            reg_id = existing_rows[1][1]
-            ref_number = existing_rows[1][2]
+                # Update existing registration (keep reference number!)
+                reg_id = existing_rows[1][1]
+                ref_number = existing_rows[1][2]
 
-            DBInterface.execute(db, """
-                UPDATE registrations SET
-                    first_name = ?,
-                    last_name = ?,
-                    fields = ?,
-                    computed_cost = ?,
-                    latest_submission_id = ?,
-                    updated_at = ?
-                WHERE id = ?
-            """, [submission.first_name, submission.last_name, fields_json,
-                  computed_cost, submission_id, now(), reg_id])
+                DBInterface.execute(db, """
+                    UPDATE registrations SET
+                        first_name = ?,
+                        last_name = ?,
+                        fields = ?,
+                        computed_cost = ?,
+                        latest_submission_id = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                """, [submission.first_name, submission.last_name, fields_json,
+                      computed_cost, submission_id, now(), reg_id])
 
-            is_update = true
-            if computed_cost === nothing
-                no_cost_config = true
-                @warn "Updated registration (resubmission) - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
-            else
-                @info "Updated registration (resubmission)" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
+                is_update = true
+                if computed_cost === nothing
+                    no_cost_config = true
+                    @warn "Updated registration (resubmission) - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
+                else
+                    @info "Updated registration (resubmission)" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
+                end
             end
-        end
         end  # End if has_submission
     end  # End with_transaction_safe
 
     return (has_submission=has_submission, is_new=is_new, is_update=is_update, skipped=false, no_cost_config=no_cost_config)
 end
-
 """
 Get all registrations for an event.
 """

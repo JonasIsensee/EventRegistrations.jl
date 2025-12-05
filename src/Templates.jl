@@ -1,7 +1,7 @@
 module Templates
 
 export load_template, get_template_path, list_templates
-export render_template, ensure_default_templates
+export render_template, ensure_default_templates, escape_html
 
 # Default templates directory
 const TEMPLATES_DIR = Ref{String}("config/templates")
@@ -17,6 +17,21 @@ Set the templates directory.
 function set_templates_dir!(path::AbstractString)
     TEMPLATES_DIR[] = path
 end
+
+"""
+Escape a string for safe inclusion in HTML content.
+"""
+function escape_html(text::AbstractString)
+    return replace(text,
+        "&" => "&amp;",
+        "<" => "&lt;",
+        ">" => "&gt;",
+        '"' => "&quot;"
+    )
+end
+
+escape_html(value) = escape_html(string(value))
+escape_html(::Nothing) = ""
 
 """
 Get full path to a template file.
@@ -91,57 +106,45 @@ end
 # =============================================================================
 
 const DEFAULT_TEMPLATES = Dict(
-    "confirmation_email" => """
-Liebe/r {first_name},
-
-vielen Dank für deine Anmeldung zum {event_name}!
-
-Referenznummer: {reference_number}
-Zu zahlender Betrag: {cost} €
-
-{registration_fields}
-
-Bankverbindung:
-{bank_details}
-
-Bitte verwende als Verwendungszweck ausschließlich: {reference_number}
-
-{qr_hint}
-
-{additional_info}
-
-Viele Grüße,
-{sender_name}
+        "confirmation_email" => """<!DOCTYPE html>
+<html lang=\"de\">
+<head>
+<meta charset=\"UTF-8\">
+<title>Anmeldebestätigung</title>
+</head>
+<body style=\"font-family: Arial, sans-serif; color: #1f2933; background-color: #ffffff; line-height: 1.6; margin: 0; padding: 0;\">
+    <div style=\"padding: 24px;\">
+        <p>Liebe*r {first_name},</p>
+        <p>vielen Dank für deine Anmeldung zum <strong>{event_name}</strong>!</p>
+        <p>Bitte überweise deine Teilnahmegebühr zeitnah und vor Beginn des Probenwochenendes. Deine Übersicht:</p>
+        <div style=\"margin: 16px 0; padding: 16px; border: 1px solid #d2d6dc; border-radius: 8px; background-color: #f8fafc;\">
+            <p style=\"margin: 0;\">Referenznummer: <strong>{reference_number}</strong></p>
+            <p style=\"margin: 8px 0 0;\">Teilnahmebeitrag: <strong>{cost} €</strong></p>
+            <p style=\"margin: 8px 0 0;\">Offener Betrag: <strong>{remaining} €</strong></p>
+        </div>
+        <div style=\"margin: 24px 0;\">
+            <h3 style=\"margin-bottom: 8px; font-size: 18px;\">Bankverbindung</h3>
+            <p style=\"margin: 0; white-space: pre-line;\">{bank_details}</p>
+        </div>
+        {qr_block}
+        {registration_fields}
+        <div style=\"margin: 24px 0;\">
+            <p style=\"margin-bottom: 8px;\">Hinweis: Du könntest diese E-Mail erneut erhalten, wenn eine der folgenden Situationen eintritt:</p>
+            <ul style=\"margin: 0 0 0 20px; padding: 0;\">
+                <li style=\"margin-bottom: 4px;\">du deine Anmeldung aktualisierst,</li>
+                <li style=\"margin-bottom: 4px;\">wir die Kostenkalkulation anpassen müssen,</li>
+                <li style=\"margin-bottom: 4px;\">wir eine (Teil-)Zahlung verbuchen,</li>
+                <li style=\"margin-bottom: 4px;\">oder wir nach angemessener Zeit noch keinen Zahlungseingang sehen.</li>
+            </ul>
+        </div>
+        {additional_info}
+        <p style=\"margin-top: 32px;\">Viele Grüße,<br>{sender_name}</p>
+    </div>
+</body>
+</html>
 """,
 
-    "payment_reminder" => """
-Liebe/r {first_name},
-
-wir möchten dich freundlich daran erinnern, dass die Zahlung für {event_name}
-noch aussteht.
-
-Referenznummer: {reference_number}
-Offener Betrag: {remaining} €
-
-{registration_fields}
-
-Bankverbindung:
-{bank_details}
-
-Bitte verwende als Verwendungszweck ausschließlich: {reference_number}
-
-{qr_hint}
-
-Falls du bereits überwiesen hast, ignoriere bitte diese Nachricht.
-Es kann einige Tage dauern, bis die Zahlung bei uns eingeht.
-
-{additional_info}
-
-Viele Grüße,
-{sender_name}
-""",
-
-    "payment_confirmation" => """
+        "payment_confirmation" => """
 Liebe/r {first_name},
 
 vielen Dank! Wir haben deine Zahlung für {event_name} erhalten.
@@ -153,45 +156,7 @@ Wir freuen uns auf dich!
 
 Viele Grüße,
 {sender_name}
-""",
-
-    "subsidy_notification" => """
-Liebe/r {first_name},
-
-gute Nachrichten! Dir wurde ein Zuschuss für {event_name} gewährt.
-
-Referenznummer: {reference_number}
-Zuschuss: {subsidy_amount} €
-Grund: {subsidy_reason}
-
-Dein neuer zu zahlender Betrag: {remaining} €
-
-Bitte überweise den verbleibenden Betrag auf folgendes Konto:
-{bank_details}
-
-Verwendungszweck: {reference_number}
-
-{additional_info}
-
-Viele Grüße,
-{sender_name}
-""",
-
-    "registration_update" => """
-Liebe/r {first_name},
-
-wir haben deine aktualisierte Anmeldung für {event_name} erhalten.
-
-Referenznummer: {reference_number} (unverändert)
-Neuer Betrag: {cost} €
-
-{cost_change_note}
-
-{additional_info}
-
-Viele Grüße,
-{sender_name}
-""",
+"""
 )
 
 """
@@ -238,23 +203,12 @@ function get_template_placeholders(template_type::AbstractString)
     placeholders = Dict(
         "confirmation_email" => [
             "first_name", "last_name", "event_name", "reference_number",
-            "cost", "registration_fields", "bank_details", "qr_hint", "additional_info", "sender_name"
-        ],
-        "payment_reminder" => [
-            "first_name", "last_name", "event_name", "reference_number",
-            "remaining", "registration_fields", "bank_details", "qr_hint", "additional_info", "sender_name"
+            "cost", "remaining", "registration_fields", "bank_details",
+            "qr_block", "additional_info", "sender_name"
         ],
         "payment_confirmation" => [
             "first_name", "last_name", "event_name", "reference_number",
             "amount_paid", "sender_name"
-        ],
-        "subsidy_notification" => [
-            "first_name", "last_name", "event_name", "reference_number",
-            "subsidy_amount", "subsidy_reason", "remaining", "bank_details", "additional_info", "sender_name"
-        ],
-        "registration_update" => [
-            "first_name", "last_name", "event_name", "reference_number",
-            "cost", "cost_change_note", "additional_info", "sender_name"
         ],
     )
 
@@ -291,14 +245,23 @@ function format_registration_fields(fields::Dict;
         end
 
         clean_value = replace(raw_value, r"\s*\n\s*" => ", ")
-        push!(entries, "• $(key): $(clean_value)")
+        escaped_key = escape_html(key)
+        escaped_value = escape_html(clean_value)
+        push!(entries, "<li style=\"margin: 4px 0;\"><strong>$(escaped_key):</strong> $(escaped_value)</li>")
     end
 
     if isempty(entries)
         return ""
     end
 
-    return "Deine Angaben:\n" * join(entries, "\n")
+    return """
+<div style="margin: 24px 0;">
+  <h3 style="margin-bottom: 8px; font-size: 18px;">Deine Angaben</h3>
+  <ul style="margin: 0 0 0 20px; padding: 0;">
+    $(join(entries, "\n    "))
+  </ul>
+</div>
+"""
 end
 
 export format_registration_fields
