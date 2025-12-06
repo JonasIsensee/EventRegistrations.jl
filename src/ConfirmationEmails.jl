@@ -1011,4 +1011,304 @@ function export_emails_to_files(db::DuckDB.DB, event_id::AbstractString, output_
     return count
 end
 
+# =============================================================================
+# EMAIL QUEUE MANAGEMENT
+# =============================================================================
+
+"""
+Queue an email for later sending.
+Returns the queue entry ID, or nothing if email was already queued with same content.
+"""
+function queue_email!(db::DuckDB.DB, registration_id::Integer;
+                      template_name::String="confirmation_email",
+                      reason::String="balance_changed")
+    # Get registration data
+    reg_result = DBInterface.execute(db, """
+        SELECT r.email, r.reference_number, r.computed_cost,
+               COALESCE(r.computed_cost, 0) -
+               COALESCE((SELECT SUM(amount) FROM subsidies WHERE registration_id = r.id), 0) -
+               COALESCE((SELECT SUM(bt.amount) FROM bank_transfers bt
+                         JOIN payment_matches pm ON pm.transfer_id = bt.id
+                         WHERE pm.registration_id = r.id), 0) as remaining
+        FROM registrations r
+        WHERE r.id = ?
+    """, [registration_id])
+
+    reg_rows = collect(reg_result)
+    if isempty(reg_rows)
+        @warn "Registration not found" registration_id=registration_id
+        return nothing
+    end
+
+    email_to, reference_number, computed_cost, remaining = reg_rows[1]
+
+    # Convert to Float64 to avoid DuckDB binding issues with FixedDecimal
+    computed_cost_f = computed_cost === nothing ? nothing : Float64(computed_cost)
+    remaining_f = Float64(remaining)
+
+    # Check if there's already a pending email with same content
+    existing = DBInterface.execute(db, """
+        SELECT id FROM email_queue
+        WHERE registration_id = ?
+          AND email_type = ?
+          AND status = 'pending'
+          AND remaining_at_queue = ?
+    """, [registration_id, template_name, remaining_f])
+
+    if !isempty(collect(existing))
+        @info "Email already queued with same balance" registration_id=registration_id remaining=remaining_f
+        return nothing
+    end
+
+    # Generate email content
+    preview = preview_email(db, registration_id; template_name=template_name)
+
+    # Insert into queue
+    DBInterface.execute(db, """
+        INSERT INTO email_queue (
+            id, registration_id, email_type, email_to, subject, body_text,
+            cost_at_queue, remaining_at_queue, reference_number, queue_reason,
+            status, queued_at
+        ) VALUES (
+            nextval('email_queue_id_seq'), ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            'pending', CURRENT_TIMESTAMP
+        )
+    """, [registration_id, template_name, email_to, preview.subject, preview.body,
+          computed_cost_f, remaining_f, reference_number, reason])
+
+    # Get the inserted ID
+    result = DBInterface.execute(db, "SELECT currval('email_queue_id_seq')")
+    queue_id = first(collect(result))[1]
+
+    @info "Email queued" queue_id=queue_id registration_id=registration_id email_to=email_to reason=reason
+
+    return queue_id
+end
+
+export queue_email!
+
+"""
+Queue emails for all registrations that need them (balance changed or never sent).
+Returns count of emails queued.
+"""
+function queue_pending_emails!(db::DuckDB.DB, event_id::AbstractString;
+                               template_name::String="confirmation_email")
+    needing_email = get_registrations_needing_resend(db, event_id; email_type=template_name)
+
+    queued_count = 0
+    for row in needing_email
+        registration_id = row[1]
+        reason_code = row[4]
+
+        reason = if reason_code == "never_sent"
+            "initial"
+        elseif reason_code == "balance_changed"
+            "balance_changed"
+        else
+            "update"
+        end
+
+        queue_id = queue_email!(db, registration_id; template_name=template_name, reason=reason)
+        if queue_id !== nothing
+            queued_count += 1
+        end
+    end
+
+    return queued_count
+end
+
+export queue_pending_emails!
+
+"""
+Get all pending emails from the queue.
+Returns array of named tuples with queue entry details.
+"""
+function get_pending_emails(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing)
+    query = if event_id !== nothing
+        """
+        SELECT eq.id, eq.registration_id, eq.email_to, eq.subject, eq.body_text,
+               eq.cost_at_queue, eq.remaining_at_queue, eq.reference_number,
+               eq.queue_reason, eq.queued_at, r.event_id, r.first_name, r.last_name
+        FROM email_queue eq
+        JOIN registrations r ON r.id = eq.registration_id
+        WHERE eq.status = 'pending' AND r.event_id = ?
+        ORDER BY eq.queued_at ASC
+        """
+    else
+        """
+        SELECT eq.id, eq.registration_id, eq.email_to, eq.subject, eq.body_text,
+               eq.cost_at_queue, eq.remaining_at_queue, eq.reference_number,
+               eq.queue_reason, eq.queued_at, r.event_id, r.first_name, r.last_name
+        FROM email_queue eq
+        JOIN registrations r ON r.id = eq.registration_id
+        WHERE eq.status = 'pending'
+        ORDER BY eq.queued_at ASC
+        """
+    end
+
+    result = if event_id !== nothing
+        DBInterface.execute(db, query, [event_id])
+    else
+        DBInterface.execute(db, query)
+    end
+
+    return [(
+        id = row[1],
+        registration_id = row[2],
+        email_to = row[3],
+        subject = row[4],
+        body_text = row[5],
+        cost = row[6],
+        remaining = row[7],
+        reference_number = row[8],
+        reason = row[9],
+        queued_at = row[10],
+        event_id = row[11],
+        first_name = row[12],
+        last_name = row[13]
+    ) for row in result]
+end
+
+export get_pending_emails
+
+"""
+Get count of pending emails by event.
+Returns dict of event_id => count.
+"""
+function count_pending_emails(db::DuckDB.DB)
+    result = DBInterface.execute(db, """
+        SELECT r.event_id, COUNT(*) as cnt
+        FROM email_queue eq
+        JOIN registrations r ON r.id = eq.registration_id
+        WHERE eq.status = 'pending'
+        GROUP BY r.event_id
+    """)
+
+    return Dict(row[1] => row[2] for row in result)
+end
+
+export count_pending_emails
+
+"""
+Mark a queued email as sent or discarded.
+"""
+function mark_email!(db::DuckDB.DB, queue_id::Integer, status::String;
+                     processed_by::String="manual",
+                     error_message::Union{String,Nothing}=nothing)
+    if !(status in ["sent", "discarded"])
+        error("Invalid status: $status. Must be 'sent' or 'discarded'.")
+    end
+
+    # Update queue entry
+    if error_message !== nothing
+        DBInterface.execute(db, """
+            UPDATE email_queue
+            SET status = ?, processed_at = CURRENT_TIMESTAMP, processed_by = ?, error_message = ?
+            WHERE id = ?
+        """, [status, processed_by, error_message, queue_id])
+    else
+        DBInterface.execute(db, """
+            UPDATE email_queue
+            SET status = ?, processed_at = CURRENT_TIMESTAMP, processed_by = ?
+            WHERE id = ?
+        """, [status, processed_by, queue_id])
+    end
+
+    # If marked as sent, also record in confirmation_emails for tracking
+    if status == "sent"
+        queue_entry = DBInterface.execute(db, """
+            SELECT registration_id, email_type, email_to, cost_at_queue, remaining_at_queue, reference_number, queue_reason
+            FROM email_queue WHERE id = ?
+        """, [queue_id])
+
+        rows = collect(queue_entry)
+        if !isempty(rows)
+            reg_id, email_type, email_to, cost, remaining, reference, reason = rows[1]
+            DBInterface.execute(db, """
+                INSERT INTO confirmation_emails (
+                    id, registration_id, email_type, sent_at, email_to,
+                    cost_at_send, remaining_at_send, reference_sent, status, resend_reason
+                ) VALUES (
+                    nextval('email_id_seq'), ?, ?, CURRENT_TIMESTAMP, ?,
+                    ?, ?, ?, 'sent', ?
+                )
+            """, [reg_id, email_type, email_to, cost, remaining, reference, reason])
+        end
+    end
+
+    @info "Email queue entry updated" queue_id=queue_id status=status processed_by=processed_by
+end
+
+export mark_email!
+
+"""
+Send a queued email and update its status.
+Returns true if sent successfully.
+"""
+function send_queued_email!(db::DuckDB.DB, queue_id::Integer)
+    # Get queue entry
+    result = DBInterface.execute(db, """
+        SELECT eq.email_to, eq.subject, eq.body_text, eq.registration_id,
+               eq.cost_at_queue, eq.remaining_at_queue, eq.reference_number
+        FROM email_queue eq
+        WHERE eq.id = ? AND eq.status = 'pending'
+    """, [queue_id])
+
+    rows = collect(result)
+    if isempty(rows)
+        @warn "Queue entry not found or not pending" queue_id=queue_id
+        return false
+    end
+
+    email_to, subject, body_text, reg_id, cost, remaining, reference = rows[1]
+
+    # Check if dry_run mode
+    if CONFIG.dry_run
+        println("  [DRY RUN] Would send email to: $email_to")
+        println("  [DRY RUN] Subject: $subject")
+        mark_email!(db, queue_id, "sent"; processed_by="dry_run")
+        return true
+    end
+
+    # Actually send the email
+    success = send_via_smtp(email_to, subject, body_text)
+
+    if success
+        mark_email!(db, queue_id, "sent"; processed_by="smtp")
+        return true
+    else
+        mark_email!(db, queue_id, "pending"; processed_by="smtp_failed",
+                   error_message="SMTP send failed")
+        return false
+    end
+end
+
+export send_queued_email!
+
+"""
+Send all pending emails in the queue.
+Returns (sent_count, error_count).
+"""
+function send_all_pending_emails!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing)
+    pending = get_pending_emails(db; event_id=event_id)
+
+    sent_count = 0
+    error_count = 0
+
+    for email in pending
+        println("  Sending to $(email.email_to) ($(email.first_name) $(email.last_name))...")
+        success = send_queued_email!(db, email.id)
+        if success
+            sent_count += 1
+        else
+            error_count += 1
+        end
+    end
+
+    return (sent=sent_count, errors=error_count)
+end
+
+export send_all_pending_emails!
+
 end # module

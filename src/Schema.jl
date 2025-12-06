@@ -2,7 +2,6 @@ module Schema
 
 using DuckDB
 using DBInterface
-using SQLite
 
 export init_database
 
@@ -179,6 +178,31 @@ function init_database(db_path::AbstractString)
     """)
 
     # =========================================================================
+    # EMAIL QUEUE TABLE
+    # Pending emails waiting to be sent or reviewed
+    # Allows preview before sending and manual control over email dispatch
+    # =========================================================================
+    DBInterface.execute(db, """
+        CREATE TABLE IF NOT EXISTS email_queue (
+            id INTEGER PRIMARY KEY,
+            registration_id INTEGER NOT NULL REFERENCES registrations(id),
+            email_type VARCHAR NOT NULL,     -- 'confirmation_email', 'payment_confirmation', etc.
+            email_to VARCHAR NOT NULL,
+            subject VARCHAR NOT NULL,
+            body_text VARCHAR NOT NULL,      -- Rendered email body
+            cost_at_queue DECIMAL(10,2),     -- computed_cost at time of queuing
+            remaining_at_queue DECIMAL(10,2), -- remaining balance at time of queuing
+            reference_number VARCHAR,
+            queue_reason VARCHAR,            -- Why this email was queued ('initial', 'balance_changed', etc.)
+            status VARCHAR NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'discarded')),
+            queued_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            processed_at TIMESTAMP,          -- When status changed from 'pending'
+            processed_by VARCHAR,            -- Who/what processed ('cli', 'sync', 'manual')
+            error_message VARCHAR            -- Error details if send failed
+        )
+    """)
+
+    # =========================================================================
     # FINANCIAL TRANSACTIONS TABLE
     # Immutable ledger of all financial events (payments, subsidies, refunds)
     # Provides complete audit trail and simplifies balance calculations
@@ -214,7 +238,8 @@ function init_database(db_path::AbstractString)
 
     # Create sequences
     for seq in ["registration_id_seq", "submission_id_seq", "subsidy_id_seq",
-                "transfer_id_seq", "match_id_seq", "email_id_seq", "transaction_id_seq"]
+                "transfer_id_seq", "match_id_seq", "email_id_seq", "transaction_id_seq",
+                "email_queue_id_seq"]
         try
             DBInterface.execute(db, "CREATE SEQUENCE IF NOT EXISTS $seq START 1")
         catch; end
@@ -235,6 +260,8 @@ function init_database(db_path::AbstractString)
         "CREATE INDEX IF NOT EXISTS idx_txn_reg ON financial_transactions(registration_id)",
         "CREATE INDEX IF NOT EXISTS idx_txn_type ON financial_transactions(transaction_type)",
         "CREATE INDEX IF NOT EXISTS idx_txn_date ON financial_transactions(effective_date)",
+        "CREATE INDEX IF NOT EXISTS idx_email_queue_status ON email_queue(status)",
+        "CREATE INDEX IF NOT EXISTS idx_email_queue_reg ON email_queue(registration_id)",
     ]
     for idx in indices
         try

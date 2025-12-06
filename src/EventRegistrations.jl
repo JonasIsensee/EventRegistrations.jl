@@ -73,6 +73,32 @@ end
 export with_database
 
 """
+    require_database(f, db_path::AbstractString)
+
+Execute function `f` with a database connection, but ONLY if the database
+already exists. If the database doesn't exist, throws an error with a helpful
+message suggesting to run 'eventreg init' or 'eventreg sync'.
+
+Use this for commands that should not create a new database.
+"""
+function require_database(f::Function, db_path::AbstractString)
+    if !isfile(db_path)
+        error("Database not found: $db_path\n\n" *
+              "Run one of the following to create it:\n" *
+              "  eventreg init        # Initialize new project\n" *
+              "  eventreg sync        # Full sync (also creates DB if missing)")
+    end
+    db = init_database(db_path)
+    try
+        return f(db)
+    finally
+        DBInterface.close!(db)
+    end
+end
+
+export require_database
+
+"""
     with_transaction(f, db::DuckDB.DB)
 
 Execute function `f` within a database transaction.
@@ -299,9 +325,13 @@ using .ConfirmationEmails: send_confirmation_email!, send_pending_confirmations!
 using .ConfirmationEmails: get_unsent_confirmations, preview_email, export_emails_to_files
 using .ConfirmationEmails: configure! as configure_email!, load_email_config_from_file!
 using .ConfirmationEmails: get_registrations_needing_resend, resend_changed_balances!
+using .ConfirmationEmails: queue_email!, queue_pending_emails!, get_pending_emails
+using .ConfirmationEmails: count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
 export send_confirmation_email!, send_pending_confirmations!
 export get_unsent_confirmations, preview_email, export_emails_to_files
 export configure_email!, load_email_config_from_file!
+export queue_email!, queue_pending_emails!, get_pending_emails
+export count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
 export get_registrations_needing_resend, resend_changed_balances!
 
 # Re-export from EmailDownload

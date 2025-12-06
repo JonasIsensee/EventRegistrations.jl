@@ -32,7 +32,7 @@ function cmd_process_emails(email_folder::String="emails";
         return 1
     end
 
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         println("Processing emails from: $email_folder")
     stats = process_email_folder!(db, email_folder;
                       prompt_for_new_events=!nonstop)
@@ -180,13 +180,7 @@ function cmd_check_sync(;
     db_path::String="events.duckdb",
     config_dir::String="config")
 
-    if !isfile(db_path)
-        println("❌ Database not found: $db_path")
-        println("Run 'eventreg init' first.")
-        return 1
-    end
-
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         statuses = Config.get_all_config_sync_status(db, config_dir)
 
         if isempty(statuses)
@@ -240,7 +234,7 @@ function cmd_sync_config(;
     config_dir::String="config",
     )
 
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         println("Syncing event configurations to database...")
         sync_event_configs_to_db!(db, config_dir)
 
@@ -259,7 +253,7 @@ function cmd_recalculate_costs(event_id::String;
                                dry_run::Bool=false,
                                verbose::Bool=false,
                                check_sync::Bool=false)
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         # Check for unsynced configs if requested
         if check_sync
             unsynced = Config.get_unsynced_configs(db, config_dir)
@@ -302,7 +296,7 @@ end
 List all events with statistics.
 """
 function cmd_list_events(; db_path::String="events.duckdb")
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         events = list_events(db)
 
         if isempty(events)
@@ -333,7 +327,7 @@ function cmd_list_registrations(event_id::Union{String,Nothing}=nothing;
                                  name::Union{String,Nothing}=nothing,
                                  email::Union{String,Nothing}=nothing,
                                  since::Union{String,Nothing}=nothing)
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         # Default to most recent event if not specified
         local_event_id = event_id
         if local_event_id === nothing
@@ -385,7 +379,7 @@ end
 Show detailed overview for an event.
 """
 function cmd_event_overview(event_id::String; db_path::String="events.duckdb")
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         overview = event_overview(db, event_id)
 
         if overview === nothing
@@ -426,11 +420,13 @@ function cmd_status(; db_path::String="events.duckdb", config_dir::String="confi
     # Database
     println("Database:")
     println("  Path: $db_path")
-    with_database(db_path) do db
-        if isfile(db_path)
-            println("  Status: ✓ Exists")
-            println("  Size: $(round(stat(db_path).size / 1024 / 1024, digits=2)) MB")
 
+    db_exists = isfile(db_path)
+    if db_exists
+        println("  Status: ✓ Exists")
+        println("  Size: $(round(stat(db_path).size / 1024 / 1024, digits=2)) MB")
+
+        require_database(db_path) do db
             # Count emails processed
             result = DBInterface.execute(db, "SELECT COUNT(*) FROM processed_emails")
             email_count = first(collect(result))[1]
@@ -445,51 +441,53 @@ function cmd_status(; db_path::String="events.duckdb", config_dir::String="confi
             result = DBInterface.execute(db, "SELECT COUNT(*) FROM registrations")
             registration_count = first(collect(result))[1]
             println("  Active registrations: $registration_count")
+        end
+    else
+        println("  Status: ❌ Not found (run 'eventreg init' or 'eventreg sync' to create)")
+    end
+
+    # Configuration
+    println("\nConfiguration:")
+    println("  Config directory: $config_dir")
+    if isdir(config_dir)
+        println("  Status: ✓ Exists")
+
+        # Check fields.toml
+        fields_path = joinpath(config_dir, "fields.toml")
+        if isfile(fields_path)
+            println("  Fields config: ✓ $fields_path")
         else
-            println("  Status: ❌ Not found (run 'eventreg init' to create)")
+            println("  Fields config: ❌ Not found (run 'eventreg generate-field-config')")
         end
 
-        # Configuration
-        println("Configuration:")
-        println("  Config directory: $config_dir")
-        if isdir(config_dir)
-            println("  Status: ✓ Exists")
-
-            # Check fields.toml
-            fields_path = joinpath(config_dir, "fields.toml")
-            if isfile(fields_path)
-                println("  Fields config: ✓ $fields_path")
-            else
-                println("  Fields config: ❌ Not found (run 'eventreg generate-field-config')")
-            end
-
-            # Check events directory
-            events_dir = joinpath(config_dir, "events")
-            if isdir(events_dir)
-                event_configs = filter(f -> endswith(f, ".toml"), readdir(events_dir))
-                println("  Event configs: $(length(event_configs)) files in $events_dir")
-                for config_file in event_configs
-                    println("    - $(config_file)")
-                end
-            else
-                println("  Events directory: ❌ Not found")
-            end
-
-            # Check templates directory
-            templates_dir = joinpath(config_dir, "templates")
-            if isdir(templates_dir)
-                template_files = filter(f -> endswith(f, ".txt"), readdir(templates_dir))
-                println("  Templates: $(length(template_files)) files in $templates_dir")
-            else
-                println("  Templates directory: ❌ Not found")
+        # Check events directory
+        events_dir = joinpath(config_dir, "events")
+        if isdir(events_dir)
+            event_configs = filter(f -> endswith(f, ".toml"), readdir(events_dir))
+            println("  Event configs: $(length(event_configs)) files in $events_dir")
+            for config_file in event_configs
+                println("    - $(config_file)")
             end
         else
-            println("  Status: ❌ Not found (run 'eventreg init' to create)")
+            println("  Events directory: ❌ Not found")
         end
-        println()
 
-        # Events in database
-        if isfile(db_path)
+        # Check templates directory
+        templates_dir = joinpath(config_dir, "templates")
+        if isdir(templates_dir)
+            template_files = filter(f -> endswith(f, ".txt"), readdir(templates_dir))
+            println("  Templates: $(length(template_files)) files in $templates_dir")
+        else
+            println("  Templates directory: ❌ Not found")
+        end
+    else
+        println("  Status: ❌ Not found (run 'eventreg init' to create)")
+    end
+    println()
+
+    # Events in database
+    if db_exists
+        require_database(db_path) do db
             println("Events in Database:")
             result = DBInterface.execute(db, """
                 SELECT
@@ -536,7 +534,7 @@ function cmd_validate_config(event_id::Union{String,Nothing}=nothing;
                              config_dir::String="config",
                              strict::Bool=false,
                              verbose::Bool=false)
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         println("Validating configuration...")
         println()
 
@@ -654,19 +652,17 @@ function cmd_sync(;
     emails_dir::String="emails",
     bank_dir::String="bank_transfers",
     credentials_path::String="config/email_credentials.toml",
-    dry_run_emails="true",
     event_id::Union{String,Nothing}=nothing,
     nonstop::Bool=false)
-    dry_run_emails = parse(Bool, dry_run_emails)
     println("=== EventRegistrations Sync ===\n")
 
 
     # Step 1: Initialize database if necessary
     db = if !isfile(db_path)
-        println("[1/10] Initializing database...")
+        println("[1/9] Initializing database...")
         init_project(db_path, config_dir)
     else
-        println("[1/10] Database exists: $db_path")
+        println("[1/9] Database exists: $db_path")
         init_database(db_path)
     end
     try
@@ -675,7 +671,7 @@ function cmd_sync(;
         println("\n✓ Configuration synced successfully!")
 
         # Step 2: Download emails (if credentials exist)
-        println("\n[2/10] Checking for new emails...")
+        println("\n[2/9] Checking for new emails...")
         if isfile(credentials_path) || isfile("credentials.toml") || isfile("config/credentials.toml")
             result = download_emails!(; credentials_path, emails_dir, verbose=false)
             if result.error_count == 0
@@ -688,7 +684,7 @@ function cmd_sync(;
         end
 
         # # Step 3: Process emails
-        println("\n[3/10] Processing emails...")
+        println("\n[3/9] Processing emails...")
         stats_ref = Ref{Any}(nothing)
         if isdir(emails_dir)
             stats = process_email_folder!(db, emails_dir;
@@ -710,7 +706,7 @@ function cmd_sync(;
         end
 
         # Step 3.5: Auto-generate event configs for new events
-        println("\n[3.5/10] Checking for new events without configuration...")
+        println("\n[4/9] Checking for new events without configuration...")
         # Get all events from registrations
         events_result = DBInterface.execute(db, """
             SELECT DISTINCT event_id FROM registrations
@@ -743,8 +739,8 @@ function cmd_sync(;
             println("  ✓ All events have configurations")
         end
 
-        # Step 4: Check config sync and track which events changed
-        println("\n[4/10] Checking configuration sync...")
+        # Step 5: Check config sync and track which events changed
+        println("\n[5/9] Checking configuration sync...")
         unsynced = get_unsynced_configs(db, config_dir)
         if !isempty(unsynced)
             println("  ⚠ $(length(unsynced)) config files need syncing:")
@@ -758,8 +754,8 @@ function cmd_sync(;
             println("  ✓ All configurations in sync")
         end
 
-        # Step 5-6: Recalculate costs for changed events and NULL costs
-        println("\n[5/10] Recalculating costs...")
+        # Step 6: Recalculate costs for changed events and NULL costs
+        println("\n[6/9] Recalculating costs...")
         recalculated = String[]
 
         # Then check for other events with NULL costs but existing config
@@ -785,7 +781,7 @@ function cmd_sync(;
             println("  ✓ Recalculated costs for $(length(recalculated)) event(s)")
         end
         # Step 7: Import bank transfers
-        println("\n[6/10] Checking for bank transfers...")
+        println("\n[7/9] Checking for bank transfers...")
         if isdir(bank_dir)
             csv_files = filter(f -> endswith(lowercase(f), ".csv"), readdir(bank_dir))
             if !isempty(csv_files)
@@ -804,8 +800,8 @@ function cmd_sync(;
             println("  No bank transfers directory ($bank_dir)")
         end
 
-        # #Step 8: Match transfers
-        println("\n[7/10] Matching bank transfers...")
+        # Step 8: Match transfers
+        println("\n[8/9] Matching bank transfers...")
         if event_id !== nothing
             result = match_transfers!(db; event_id=event_id)
             println("  Matched: $(result.matched), Unmatched: $(length(result.unmatched))")
@@ -821,38 +817,39 @@ function cmd_sync(;
             println("  Total matched: $total_matched")
         end
 
-        # Step 9: Load email configuration
-        println("\n[8/10] Loading email configuration...")
-        if isfile(credentials_path)
-            success = load_email_config_from_file!(credentials_path; dry_run=dry_run_emails)
-            if success
-                println("  ✓ Email configuration loaded (dry_run=$(dry_run_emails))")
-            else
-                println("  ⚠ Failed to load email configuration")
-            end
-        else
-            println("  No email credentials found - emails will be skipped")
-        end
-
-        # Step 10: Send/resend emails
-        println("\n[9/10] Checking for emails to send...")
+        # Step 9: Queue emails for review (pending for manual review/sending)
+        println("\n[9/9] Queuing emails for pending registrations...")
         target_events = [row[1] for row in list_events(db)]
 
-        total_sent = 0
+        total_queued = 0
         for evt_id in target_events
-            # Check for changed balances
-            result = resend_changed_balances!(db, evt_id; template_name="confirmation_email", dry_run=dry_run_emails)
-            total_sent += result.sent
+            queued = queue_pending_emails!(db, evt_id; template_name="confirmation_email")
+            total_queued += queued
         end
 
-        if total_sent > 0
-            println("  $(dry_run_emails ? "Would send" : "Sent") $total_sent emails")
+        if total_queued > 0
+            println("  ✓ Queued $total_queued email(s)")
         else
-            println("  ✓ No emails need to be sent")
+            println("  ✓ No new emails to queue")
         end
 
-        # Step 11: Summary
-        println("\n[10/10] Generating summary...")
+        # Show pending email counts
+        pending_counts = count_pending_emails(db)
+        total_pending = sum(values(pending_counts); init=0)
+        if total_pending > 0
+            println("\n  📧 Pending emails: $total_pending")
+            for (evt_id, count) in pending_counts
+                println("    - $evt_id: $count")
+            end
+            println("\n  To manage pending emails:")
+            println("    eventreg list-pending-emails        # List all pending")
+            println("    eventreg list-pending-emails -v     # List with full content")
+            println("    eventreg send-emails                # Send all pending")
+            println("    eventreg mark-email <id> sent       # Mark as sent")
+            println("    eventreg mark-email <id> discarded  # Discard email")
+        end
+
+        # Summary
         target_event = if event_id !== nothing
             event_id
         else
@@ -893,7 +890,7 @@ function cmd_import_bank_csv(csv_file::String;
         return 1
     end
 
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         println("Importing bank transfers from: $csv_file")
         result = import_bank_csv!(db, csv_file; delimiter=first(delimiter), decimal_comma=decimal_comma)
 
@@ -911,7 +908,7 @@ function cmd_match_transfers(;
     event_id::Union{String,Nothing}=nothing,
     db_path::String="events.duckdb")
 
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         println("Matching bank transfers to registrations...")
         result = match_transfers!(db; event_id=event_id)
 
@@ -932,7 +929,7 @@ end
 List unmatched bank transfers.
 """
 function cmd_list_unmatched(; db_path::String="events.duckdb")
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         unmatched = get_unmatched_transfers(db)
 
         if isempty(unmatched)
@@ -960,7 +957,7 @@ Manually match a transfer to a registration.
 function cmd_manual_match(transfer_id::Int, reference::String;
     db_path::String="events.duckdb")
 
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         println("Matching transfer $transfer_id to registration $reference...")
         manual_match!(db, transfer_id, reference)
 
@@ -977,7 +974,7 @@ function cmd_grant_subsidy(identifier::String, amount::Float64;
     granted_by::String="cli",
     db_path::String="events.duckdb")
 
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         println("Granting subsidy of $amount € to $identifier...")
         grant_subsidy!(db, identifier, amount; reason=reason, granted_by=granted_by)
 
@@ -1004,7 +1001,7 @@ function cmd_export_payment_status(event_id::Union{String,Nothing}=nothing,
     # Allow output to be passed as positional or keyword argument
     actual_output = output_pos !== nothing ? output_pos : output
 
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         # Default to most recent event if not specified
         local_event_id = event_id
         if local_event_id === nothing
@@ -1110,7 +1107,7 @@ function cmd_export_registrations(event_id::Union{String,Nothing}=nothing,
     # Allow output to be passed as positional or keyword argument
     actual_output = output_pos !== nothing ? output_pos : output
 
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         # Default to most recent event if not specified
         local_event_id = event_id
         if local_event_id === nothing
@@ -1194,7 +1191,7 @@ function cmd_export_emails(event_id::Union{String,Nothing}=nothing,
                            db_path::String="events.duckdb",
                            template::String="confirmation_email")
 
-    return with_database(db_path) do db
+    return require_database(db_path) do db
         # Default to most recent event if not specified
         local_event_id = event_id
         if local_event_id === nothing
@@ -1215,6 +1212,164 @@ function cmd_export_emails(event_id::Union{String,Nothing}=nothing,
 end
 
 # =============================================================================
+# EMAIL QUEUE MANAGEMENT COMMANDS
+# =============================================================================
+
+"""
+List pending emails in the queue.
+With -v/--verbose flag, shows full email content.
+"""
+function cmd_list_pending_emails(;
+    db_path::String="events.duckdb",
+    event_id::Union{String,Nothing}=nothing,
+    verbose::Bool=false)
+
+    return require_database(db_path) do db
+        pending = get_pending_emails(db; event_id=event_id)
+
+        if isempty(pending)
+            println("✓ No pending emails in queue.")
+            return 0
+        end
+
+        println("\n📧 Pending Emails ($(length(pending))):")
+        println("=" ^ 80)
+
+        for email in pending
+            println("\n  ID: $(email.id)")
+            println("  To: $(email.email_to)")
+            println("  Name: $(email.first_name) $(email.last_name)")
+            println("  Event: $(email.event_id)")
+            println("  Reference: $(email.reference_number)")
+            println("  Reason: $(email.reason)")
+            println("  Remaining: €$(email.remaining)")
+            println("  Queued: $(email.queued_at)")
+
+            if verbose
+                println("\n  Subject: $(email.subject)")
+                println("\n  --- Email Body ---")
+                # Indent the body for readability
+                for line in split(email.body_text, '\n')
+                    println("  │ $line")
+                end
+                println("  --- End Body ---")
+            end
+            println("-" ^ 80)
+        end
+
+        println("\nCommands:")
+        println("  eventreg send-emails                 # Send all pending")
+        println("  eventreg send-emails --id=<id>       # Send specific email")
+        println("  eventreg mark-email <id> sent        # Mark as sent (without sending)")
+        println("  eventreg mark-email <id> discarded   # Discard email")
+
+        return 0
+    end
+end
+
+"""
+Mark a pending email as sent or discarded.
+"""
+function cmd_mark_email(queue_id::Int, status::String;
+    db_path::String="events.duckdb")
+
+    if !(status in ["sent", "discarded"])
+        println("❌ Error: Status must be 'sent' or 'discarded'")
+        return 1
+    end
+
+    return require_database(db_path) do db
+        # Verify email exists and is pending
+        result = DBInterface.execute(db, """
+            SELECT eq.email_to, eq.status, r.first_name, r.last_name
+            FROM email_queue eq
+            JOIN registrations r ON r.id = eq.registration_id
+            WHERE eq.id = ?
+        """, [queue_id])
+
+        rows = collect(result)
+        if isempty(rows)
+            println("❌ Error: Email queue entry not found: $queue_id")
+            return 1
+        end
+
+        email_to, current_status, first_name, last_name = rows[1]
+        if current_status != "pending"
+            println("❌ Error: Email is not pending (current status: $current_status)")
+            return 1
+        end
+
+        mark_email!(db, queue_id, status; processed_by="cli")
+
+        action = status == "sent" ? "marked as sent" : "discarded"
+        println("✓ Email to $first_name $last_name <$email_to> $action")
+        return 0
+    end
+end
+
+"""
+Send pending emails (all or by ID).
+"""
+function cmd_send_emails(;
+    db_path::String="events.duckdb",
+    event_id::Union{String,Nothing}=nothing,
+    id::Union{Int,Nothing}=nothing,
+    credentials_path::String="config/email_credentials.toml")
+
+    return require_database(db_path) do db
+        # Load email configuration
+        cred_paths = [credentials_path, "credentials.toml", "config/credentials.toml"]
+        cred_found = findfirst(isfile, cred_paths)
+
+        if cred_found === nothing
+            println("❌ Error: No email credentials found!")
+            println("Create a credentials file with SMTP settings.")
+            return 1
+        end
+
+        actual_cred_path = cred_paths[cred_found]
+        println("Loading email configuration from: $actual_cred_path")
+        success = load_email_config_from_file!(actual_cred_path; dry_run=false)
+
+        if !success
+            println("❌ Error: Failed to load email configuration")
+            return 1
+        end
+
+        if id !== nothing
+            # Send specific email
+            println("Sending email ID $id...")
+            success = send_queued_email!(db, id)
+            if success
+                println("✓ Email sent successfully!")
+            else
+                println("❌ Failed to send email")
+                return 1
+            end
+        else
+            # Send all pending
+            pending = get_pending_emails(db; event_id=event_id)
+            if isempty(pending)
+                println("✓ No pending emails to send.")
+                return 0
+            end
+
+            println("Sending $(length(pending)) pending email(s)...")
+            result = send_all_pending_emails!(db; event_id=event_id)
+
+            println("\n✓ Email sending complete!")
+            println("  Sent: $(result.sent)")
+            if result.errors > 0
+                println("  ⚠ Errors: $(result.errors)")
+                return 1
+            end
+        end
+
+        return 0
+    end
+end
+
+# =============================================================================
 # MAIN CLI ENTRY POINT
 # =============================================================================
 
@@ -1226,6 +1381,7 @@ USAGE:
 
 COMMANDS:
   init                           Initialize new project
+  sync                           Full sync workflow (download, process, match, queue emails)
   process-emails [folder]        Process registration emails
   generate-field-config          Generate field configuration
   create-event-config <id>       Create event config template
@@ -1249,6 +1405,15 @@ PAYMENTS:
   manual-match <id> <ref>        Manually match a transfer
   grant-subsidy <id> <amount>    Grant subsidy to registration
 
+EMAIL MANAGEMENT:
+  list-pending-emails            List emails waiting to be sent
+    --verbose, -v                Show full email content
+    --event-id=<id>              Filter by event
+  mark-email <id> <status>       Mark email as 'sent' or 'discarded'
+  send-emails                    Send all pending emails via SMTP
+    --id=<id>                    Send specific email by ID
+    --event-id=<id>              Send only emails for specific event
+
 EXPORTS:
   export-payment-status [event-id] [output]  Payment status with color highlighting
     --format=<fmt>               Output: terminal, pdf, latex, csv
@@ -1271,10 +1436,11 @@ COMMON OPTIONS:
   --strict                      Fail on warnings (for validate-config, recalculate-costs)
   --dry-run                     Preview changes without applying (for recalculate-costs)
   --check-sync                  Warn if config files need syncing
-    --nonstop                     Disable interactive prompts (auto-continue)
+  --nonstop                     Disable interactive prompts (auto-continue)
 
 EXAMPLES:
   eventreg init
+  eventreg sync                                            # full workflow
   eventreg process-emails emails/
   eventreg status
   eventreg check-sync                                      # check config sync status
@@ -1286,6 +1452,10 @@ EXAMPLES:
   eventreg list-registrations --filter=unpaid              # list unpaid registrations
   eventreg list-registrations --name="Müller"              # filter by name
   eventreg list-registrations --since=2025-01-01           # registrations since date
+  eventreg list-pending-emails                             # list pending emails
+  eventreg list-pending-emails -v                          # with full content
+  eventreg send-emails                                     # send all pending
+  eventreg mark-email 42 discarded                         # discard email
   eventreg export-payment-status                           # colored terminal output
   eventreg export-payment-status --filter=unpaid           # show only unpaid
   eventreg export-payment-status --summary-only            # show only totals
@@ -1320,6 +1490,16 @@ function run_cli(args::Vector{String})
             else
                 # Boolean flag
                 options[Symbol(replace(arg[3:end], "-" => "_"))] = true
+            end
+        elseif startswith(arg, "-") && length(arg) == 2
+            # Short flags (e.g., -v for verbose)
+            flag = arg[2]
+            if flag == 'v'
+                options[:verbose] = true
+            elseif flag == 'n'
+                options[:dry_run] = true
+            else
+                push!(positional, arg)
             end
         else
             push!(positional, arg)
@@ -1402,6 +1582,24 @@ function run_cli(args::Vector{String})
             event_id = length(positional) >= 1 ? positional[1] : nothing
             output_dir = length(positional) >= 2 ? positional[2] : "emails_export"
             return cmd_export_emails(event_id, output_dir; options...)
+        # Email queue management commands
+        elseif command == "list-pending-emails"
+            return cmd_list_pending_emails(; options...)
+        elseif command == "mark-email"
+            if length(positional) < 2
+                println("❌ Error: queue-id and status required")
+                println("Usage: eventreg mark-email <id> <sent|discarded>")
+                return 1
+            end
+            queue_id = parse(Int, positional[1])
+            return cmd_mark_email(queue_id, positional[2]; options...)
+        elseif command == "send-emails"
+            # Check if --id was provided
+            id_val = get(options, :id, nothing)
+            if id_val !== nothing
+                options[:id] = parse(Int, id_val)
+            end
+            return cmd_send_emails(; options...)
         # Validation and maintenance commands
         elseif command == "validate-config"
             event_id = length(positional) >= 1 ? positional[1] : nothing
