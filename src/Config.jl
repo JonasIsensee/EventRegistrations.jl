@@ -15,6 +15,7 @@ export load_event_config, load_event_aliases, generate_event_config_template
 export get_config_dir, ensure_config_dirs
 export check_config_sync, get_unsynced_configs, record_config_sync
 export ConfigSyncStatus
+export get_registration_detail_columns
 
 # Default config directory (can be overridden)
 const CONFIG_DIR = Ref{String}("config")
@@ -366,6 +367,88 @@ function load_event_config(event_id::AbstractString, config_dir::AbstractString=
 end
 
 """
+Return ordered columns for registration detail exports as defined in the
+event configuration.
+
+Looks for `[export.registration_details]` with a `columns` array. Entries are
+matched against known base columns, then resolved via event aliases to actual
+field names. Unknown entries are returned as-is to allow future extension.
+"""
+function get_registration_detail_columns(event_id::AbstractString,
+                                          config_dir::AbstractString=CONFIG_DIR[])
+    path = joinpath(config_dir, "events", "$event_id.toml")
+
+    if !isfile(path)
+        return nothing
+    end
+
+    # Ensure event aliases are loaded for this event (used for resolution)
+    try
+        load_event_aliases(event_id, config_dir)
+    catch err
+        @warn "Failed to load event aliases for registration detail columns" event_id=event_id exception=err
+    end
+
+    config = TOML.parsefile(path)
+    export_section = get(config, "export", nothing)
+
+    if !(export_section isa AbstractDict)
+        return nothing
+    end
+
+    details = get(export_section, "registration_details", nothing)
+    if !(details isa AbstractDict)
+        return nothing
+    end
+
+    columns = get(details, "columns", nothing)
+    if !(columns isa AbstractVector)
+        return nothing
+    end
+
+    base_columns = Set([
+        "id",
+        "reference_number",
+        "first_name",
+        "last_name",
+        "email",
+        "computed_cost",
+        "registration_date",
+    ])
+
+    ordered = String[]
+    seen = Set{String}()
+
+    for raw_entry in columns
+        if !(raw_entry isa AbstractString)
+            continue
+        end
+
+        entry = strip(String(raw_entry))
+        if isempty(entry)
+            continue
+        end
+
+        resolved = if entry in base_columns
+            entry
+        else
+            try
+                resolve_field_name(entry, event_id)
+            catch
+                entry
+            end
+        end
+
+        if !(resolved in seen)
+            push!(ordered, resolved)
+            push!(seen, resolved)
+        end
+    end
+
+    return isempty(ordered) ? nothing : ordered
+end
+
+"""
 Generate a template event config file with UNIFIED aliases and cost rules.
 
 This creates a single configuration file for the event that includes:
@@ -436,6 +519,11 @@ function generate_event_config_template(event_id::AbstractString,
             field_to_alias[field] = generate_alias_suggestion(field)
         end
     end
+
+            alias_to_field = Dict{String, String}()
+            for (field, alias) in field_to_alias
+                alias_to_field[alias] = field
+            end
 
     # Build the template
     lines = String[]
@@ -589,6 +677,61 @@ function generate_event_config_template(event_id::AbstractString,
     push!(lines, "# pattern = \"Einzelzimmer\"")
     push!(lines, "# cost = 10.0")
     push!(lines, "# multiply_by = \"nights\"  # 10€ per night for single room")
+
+    # ==========================================================================
+    # REGISTRATION DETAIL EXPORT (COLUMN ORDER)
+    # ==========================================================================
+    push!(lines, "")
+    push!(lines, "# ═══════════════════════════════════════════════════════════════════════════════")
+    push!(lines, "# REGISTRATION DETAIL EXPORT")
+    push!(lines, "# Controls the column order for 'eventreg export-registration-details'.")
+    push!(lines, "# Only the columns listed here are exported; add or remove entries as needed.")
+    push!(lines, "# Form field aliases are resolved automatically to actual field names.")
+    push!(lines, "# ═══════════════════════════════════════════════════════════════════════════════")
+    push!(lines, "")
+
+    detail_priority = [
+        "reference_number",
+        "first_name",
+        "last_name",
+        "email",
+        "registration_date",
+        "computed_cost",
+    ]
+
+    seen_columns = Set{String}()
+    detail_columns = String[]
+
+    for col in detail_priority
+        if !(col in seen_columns)
+            push!(detail_columns, col)
+            push!(seen_columns, col)
+        end
+    end
+
+    for field in actual_fields
+        alias = field_to_alias[field]
+        if !(alias in seen_columns)
+            push!(detail_columns, alias)
+            push!(seen_columns, alias)
+        end
+    end
+
+    push!(lines, "[export.registration_details]")
+    push!(lines, "columns = [")
+
+    if isempty(actual_fields)
+        push!(lines, "    # Add additional field aliases below once registrations are available")
+    end
+
+    for (idx, col) in enumerate(detail_columns)
+        is_last = idx == length(detail_columns)
+        suffix = is_last ? "" : ","
+        comment = haskey(alias_to_field, col) ? "  # → $(alias_to_field[col])" : ""
+        push!(lines, "    \"$col\"$suffix$comment")
+    end
+
+    push!(lines, "]")
 
     content = join(lines, "\n") * "\n"
     write(output_path, content)

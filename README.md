@@ -144,6 +144,7 @@ eventreg export-registrations PWE_2026_01 registrations.csv
 
 - `eventreg export-payment-status <event-id> <output>` - Export payment report
 - `eventreg export-registrations <event-id> <output>` - Export registration data
+- `eventreg export-registration-details <event-id> <output>` - Export all registration fields (terminal or CSV)
 
 Run `eventreg --help` for full command list and options.
 
@@ -216,8 +217,29 @@ busfahrt_hin = "Busfahrt Hinweg (10€)"
 
 Defines pricing logic:
 
-```toml
+````toml
 event_id = "PWE_2026_01"
+### Registration Detail Export Order
+
+Control the column order for `export-registration-details` by adding an optional
+section to your event config:
+
+```toml
+[export.registration_details]
+columns = [
+  "reference_number",
+  "email",
+  "first_name",
+  "last_name",
+  "Stimmgruppe",
+  "Übernachtung Freitag"
+]
+````
+
+Entries may include built-in fields (like `reference_number` or `registration_date`)
+or form fields. Form fields can use aliases defined in the same file; they are
+resolved to the actual form field names automatically. Only the listed columns are
+exported, so add every column you want in the report.
 event_name = "Workshop Weekend January 2026"
 base_cost = 0.0
 
@@ -230,6 +252,7 @@ cost = 25.0
 field = "busfahrt_hin"
 value = "Ja"
 cost = 10.0
+
 ```
 
 ### Email Templates (`config/templates/*.txt`)
@@ -237,6 +260,7 @@ cost = 10.0
 Customizable email templates with placeholders:
 
 ```
+
 Hallo {first_name},
 
 vielen Dank für deine Anmeldung!
@@ -245,6 +269,7 @@ Kosten: {cost} €
 Referenznummer: {reference_number}
 
 Bitte überweise den Betrag mit der Referenznummer.
+
 ```
 
 ## License
@@ -258,3 +283,4 @@ For issues and questions, please check:
 - The comprehensive documentation in CLAUDE.md
 - Example workflows in the registration_software/ directory
 - Test files for usage examples
+```

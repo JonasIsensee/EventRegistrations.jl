@@ -11,10 +11,11 @@ import ..EventRegistrations: with_transaction
 # Import from parent module's submodules
 using ..EmailParser
 using ..ReferenceNumbers
-using ..Config: generate_event_config_template, get_config_dir
+using ..Config: generate_event_config_template, get_config_dir, get_registration_detail_columns
 using ..CostCalculator
 
 export process_email_folder!, get_registrations, export_registrations
+export RegistrationDetailTable, get_registration_detail_table
 export grant_subsidy!, get_subsidies, revoke_subsidy!, grant_subsidies_batch!
 export get_registration_by_reference, recalculate_costs!
 
@@ -419,6 +420,30 @@ function get_registrations(db::DuckDB.DB, event_id::AbstractString)
 end
 
 """
+Collect all unique field names used by registrations in an event.
+"""
+function get_registration_field_names(db::DuckDB.DB, event_id::AbstractString)
+    field_result = DBInterface.execute(db, """
+        SELECT DISTINCT json_keys(fields) as keys
+        FROM registrations
+        WHERE event_id = ?
+    """, [event_id])
+
+    all_fields = Set{String}()
+    for row in field_result
+        keys = row[1]
+        if keys === nothing
+            continue
+        end
+        for key in keys
+            push!(all_fields, string(key))
+        end
+    end
+
+    return sort!(collect(all_fields))
+end
+
+"""
 Get a registration by reference number.
 """
 function get_registration_by_reference(db::DuckDB.DB, reference::AbstractString)
@@ -440,41 +465,36 @@ Payment status now includes subsidies as credits alongside real payments.
 function export_registrations(db::DuckDB.DB, event_id::AbstractString;
                                fields::Union{Vector{String}, Nothing}=nothing,
                                include_payment_status::Bool=false)
-    # Get all unique fields if not specified
     if fields === nothing
-        field_result = DBInterface.execute(db, """
-            SELECT DISTINCT json_keys(fields) as keys FROM registrations WHERE event_id = ?
-        """, [event_id])
-
-        all_fields = Set{String}()
-        for row in field_result
-            if row[1] !== nothing
-                for f in row[1]
-                    push!(all_fields, f)
-                end
-            end
-        end
-        fields = sort(collect(all_fields))
+        fields = get_registration_field_names(db, event_id)
     end
 
-    # Build query with dynamic field extraction
-    field_extracts = join(["json_extract_string(r.fields, '\$.$f') as \"$f\"" for f in fields], ", ")
+    select_clauses = [
+        "r.id",
+        "r.reference_number",
+        "r.email",
+        "r.first_name",
+        "r.last_name",
+        "r.computed_cost",
+        "r.registration_date",
+    ]
+
+    if !isempty(fields)
+        append!(select_clauses, ["json_extract_string(r.fields, '\$.$f') as \"$f\"" for f in fields])
+    end
 
     payment_join = ""
-    payment_select = ""
     if include_payment_status
-        payment_select = """,
-            COALESCE(pt.total_paid, 0) as total_paid,
-            COALESCE(sub.total_subsidy, 0) as total_subsidy,
-            COALESCE(pt.total_paid, 0) + COALESCE(sub.total_subsidy, 0) as total_credits,
-            r.computed_cost - COALESCE(pt.total_paid, 0) - COALESCE(sub.total_subsidy, 0) as remaining,
-            CASE
-                WHEN COALESCE(pt.total_paid, 0) + COALESCE(sub.total_subsidy, 0) >= r.computed_cost THEN 'Paid'
-                WHEN COALESCE(pt.total_paid, 0) + COALESCE(sub.total_subsidy, 0) > 0 THEN 'Partial'
-                ELSE 'Unpaid'
-            END as payment_status,
-            pt.payment_count,
-            pt.last_payment_date"""
+        append!(select_clauses, [
+            "COALESCE(pt.total_paid, 0) as total_paid",
+            "COALESCE(sub.total_subsidy, 0) as total_subsidy",
+            "COALESCE(pt.total_paid, 0) + COALESCE(sub.total_subsidy, 0) as total_credits",
+            "r.computed_cost - COALESCE(pt.total_paid, 0) - COALESCE(sub.total_subsidy, 0) as remaining",
+            "CASE\n                WHEN COALESCE(pt.total_paid, 0) + COALESCE(sub.total_subsidy, 0) >= r.computed_cost THEN 'Paid'\n                WHEN COALESCE(pt.total_paid, 0) + COALESCE(sub.total_subsidy, 0) > 0 THEN 'Partial'\n                ELSE 'Unpaid'\n             END as payment_status",
+            "pt.payment_count",
+            "pt.last_payment_date"
+        ])
+
         payment_join = """
             LEFT JOIN (
                 SELECT
@@ -494,11 +514,9 @@ function export_registrations(db::DuckDB.DB, event_id::AbstractString;
             ) sub ON sub.registration_id = r.id"""
     end
 
+    select_clause = join(select_clauses, ",\n               ")
     query = """
-        SELECT r.id, r.reference_number, r.email, r.first_name, r.last_name,
-               r.computed_cost, r.registration_date,
-               $field_extracts
-               $payment_select
+        SELECT $select_clause
         FROM registrations r
         $payment_join
         WHERE r.event_id = ?
@@ -507,6 +525,112 @@ function export_registrations(db::DuckDB.DB, event_id::AbstractString;
 
     result = DBInterface.execute(db, query, [event_id])
     return collect(result)
+end
+
+struct RegistrationDetailTable
+    event_id::String
+    event_name::Union{String,Nothing}
+    columns::Vector{String}
+    rows::Vector{Vector{Any}}
+end
+
+"""
+Build a tabular view of all registration details for an event.
+"""
+function get_registration_detail_table(db::DuckDB.DB, event_id::AbstractString;
+                                       config_dir::Union{Nothing,String}=nothing)
+    event_result = DBInterface.execute(db,
+        "SELECT event_name FROM events WHERE event_id = ?",
+        [event_id])
+    event_rows = collect(event_result)
+    event_name = isempty(event_rows) ? nothing : event_rows[1][1]
+
+    registrations = get_registrations(db, event_id)
+    fields = get_registration_field_names(db, event_id)
+
+    base_columns = [
+        "id",
+        "reference_number",
+        "first_name",
+        "last_name",
+        "email",
+        "computed_cost",
+        "registration_date",
+    ]
+
+    cfg_dir = config_dir === nothing ? get_config_dir() : config_dir
+    preferred_columns = try
+        get_registration_detail_columns(event_id, cfg_dir)
+    catch err
+        @warn "Failed to load registration detail column order" event_id=event_id config_dir=cfg_dir exception=err
+        nothing
+    end
+
+    columns = String[]
+    seen = Set{String}()
+
+    function maybe_add_column!(col::String)
+        if !(col in seen)
+            push!(columns, col)
+            push!(seen, col)
+        end
+    end
+
+    if preferred_columns !== nothing
+        for col in preferred_columns
+            maybe_add_column!(col)
+        end
+    else
+        for col in base_columns
+            maybe_add_column!(col)
+        end
+
+        for col in fields
+            maybe_add_column!(col)
+        end
+    end
+
+    rows = Vector{Vector{Any}}(undef, length(registrations))
+
+    for (idx, reg) in enumerate(registrations)
+        parsed_fields = Dict{String,Any}()
+        raw_fields = reg[6]
+        if raw_fields !== nothing
+            try
+                parsed = JSON.parse(raw_fields)
+                if parsed isa AbstractDict
+                    for (k, v) in parsed
+                        parsed_fields[string(k)] = v
+                    end
+                end
+            catch
+                # fall back to empty dict on parse errors
+            end
+        end
+
+        base_map = Dict{String,Any}(
+            "id" => reg[1],
+            "reference_number" => reg[3],
+            "first_name" => reg[4],
+            "last_name" => reg[5],
+            "email" => reg[2],
+            "computed_cost" => reg[7],
+            "registration_date" => reg[8],
+        )
+
+        row = Vector{Any}(undef, length(columns))
+        for (col_idx, col_name) in enumerate(columns)
+            if haskey(base_map, col_name)
+                row[col_idx] = base_map[col_name]
+            else
+                row[col_idx] = get(parsed_fields, col_name, nothing)
+            end
+        end
+
+        rows[idx] = row
+    end
+
+    return RegistrationDetailTable(event_id, event_name, columns, rows)
 end
 
 """

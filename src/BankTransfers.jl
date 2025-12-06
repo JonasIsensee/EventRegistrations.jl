@@ -10,8 +10,9 @@ using DelimitedFiles
 # Import from parent module
 import ..EventRegistrations: with_transaction
 
-# Import from parent module's submodule
+# Import from parent module's submodules
 using ..ReferenceNumbers
+using ..ConfirmationEmails: queue_payment_confirmation!
 
 export import_bank_csv!, match_transfers!, get_unmatched_transfers
 export manual_match!, get_payment_status, get_payment_summary
@@ -344,6 +345,13 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                     effective_date=transfer_date,
                     notes="Auto-matched payment (confidence: $(final_confidence))")
 
+                # Queue payment confirmation email (if email system is available)
+                try
+                    queue_payment_confirmation!(db, reg_id, amount)
+                catch e
+                    @debug "Payment confirmation not queued" exception=e
+                end
+
                 matched += 1
                 match_found = true
 
@@ -409,6 +417,13 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                             reference_id=match_id, reference_table="payment_matches",
                             effective_date=transfer_date,
                             notes="Auto-matched by name+amount (confidence: 0.6)")
+
+                        # Queue payment confirmation email (if email system is available)
+                        try
+                            queue_payment_confirmation!(db, reg_id, amount)
+                        catch e
+                            @debug "Payment confirmation not queued" exception=e
+                        end
 
                         matched += 1
                         match_found = true
@@ -518,6 +533,13 @@ function manual_match!(db::DuckDB.DB, transfer_id::Integer, registration_id::Int
         effective_date=transfer_date,
         recorded_by="manual",
         notes="Manual match: $(notes)")
+
+    # Queue payment confirmation email (if email system is available)
+    try
+        queue_payment_confirmation!(db, registration_id, amount)
+    catch e
+        @debug "Payment confirmation not queued" exception=e
+    end
 
     @info "Manual match created" transfer_id=transfer_id registration_id=registration_id
 end

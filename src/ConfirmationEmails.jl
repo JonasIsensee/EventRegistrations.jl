@@ -862,6 +862,100 @@ end
 export queue_email!
 
 """
+Queue a payment confirmation email after a payment match is created.
+Returns the queue entry ID, or nothing if unable to queue.
+
+This should be called after a payment is matched to a registration.
+The payment_confirmation template will be used.
+"""
+function queue_payment_confirmation!(db::DuckDB.DB, registration_id::Integer, amount_paid::Real)
+    # Get registration data
+    reg_result = DBInterface.execute(db, """
+        SELECT r.email, r.reference_number, r.first_name, r.event_id,
+               COALESCE(e.event_name, r.event_id) as event_name
+        FROM registrations r
+        LEFT JOIN events e ON e.event_id = r.event_id
+        WHERE r.id = ?
+    """, [registration_id])
+
+    reg_rows = collect(reg_result)
+    if isempty(reg_rows)
+        @warn "Registration not found for payment confirmation" registration_id=registration_id
+        return nothing
+    end
+
+    email_to, reference_number, first_name, event_id, event_name = reg_rows[1]
+
+    # Convert amount to Float64
+    amount_f = Float64(amount_paid)
+
+    # Check for duplicate pending payment confirmation with same amount
+    # (avoid sending duplicate payment confirmations for the same payment)
+    existing = DBInterface.execute(db, """
+        SELECT id FROM email_queue
+        WHERE registration_id = ?
+          AND email_type = 'payment_confirmation'
+          AND status = 'pending'
+          AND cost_at_queue = ?
+          AND queued_at > (CURRENT_TIMESTAMP::TIMESTAMP - INTERVAL 1 MINUTE)
+
+    """, [registration_id, amount_f])
+
+    if !isempty(collect(existing))
+        @info "Payment confirmation already queued recently" registration_id=registration_id amount=amount_f
+        return nothing
+    end
+
+    # Generate email content using payment_confirmation template
+    template = load_template("payment_confirmation")
+    if template === nothing
+        ensure_default_templates()
+        template = load_template("payment_confirmation")
+    end
+
+    if template === nothing
+        @error "Payment confirmation template not found"
+        return nothing
+    end
+
+    # Prepare template variables
+    vars = Dict{String, Any}(
+        "first_name" => escape_html(something(first_name, "")),
+        "event_name" => escape_html(something(event_name, event_id)),
+        "reference_number" => escape_html(reference_number),
+        "amount_paid" => format_currency(amount_f),
+        "sender_name" => escape_html(CONFIG.from_name)
+    )
+
+    body_text = render_template(template, vars)
+    subject = "Zahlungsbestätigung: $(event_name) - $(reference_number)"
+
+    # Insert into queue
+    DBInterface.execute(db, """
+        INSERT INTO email_queue (
+            id, registration_id, email_type, email_to, subject, body_text,
+            cost_at_queue, remaining_at_queue, reference_number, queue_reason,
+            status, queued_at
+        ) VALUES (
+            nextval('email_queue_id_seq'), ?, ?, ?, ?, ?,
+            ?, NULL, ?, ?,
+            'pending', CURRENT_TIMESTAMP
+        )
+    """, [registration_id, "payment_confirmation", email_to, subject, body_text,
+          amount_f, reference_number, "payment_received"])
+
+    # Get the inserted ID
+    result = DBInterface.execute(db, "SELECT currval('email_queue_id_seq')")
+    queue_id = first(collect(result))[1]
+
+    @info "Payment confirmation queued" queue_id=queue_id registration_id=registration_id amount=amount_f
+
+    return queue_id
+end
+
+export queue_payment_confirmation!
+
+"""
 Queue emails for all registrations that need them (balance changed or never sent).
 Returns count of emails queued.
 """
@@ -998,6 +1092,9 @@ function mark_email!(db::DuckDB.DB, queue_id::Integer, status::String;
         rows = collect(queue_entry)
         if !isempty(rows)
             reg_id, email_type, email_to, cost, remaining, reference, reason = rows[1]
+            # Handle NULL values (e.g., for payment confirmations where remaining is not tracked)
+            cost_f = (isnothing(cost) || ismissing(cost)) ? 0.0 : Float64(cost)
+            remaining_f = (isnothing(remaining) || ismissing(remaining)) ? 0.0 : Float64(remaining)
             DBInterface.execute(db, """
                 INSERT INTO confirmation_emails (
                     id, registration_id, email_type, sent_at, email_to,
@@ -1006,7 +1103,7 @@ function mark_email!(db::DuckDB.DB, queue_id::Integer, status::String;
                     nextval('email_id_seq'), ?, ?, CURRENT_TIMESTAMP, ?,
                     ?, ?, ?, 'sent', ?
                 )
-            """, [reg_id, email_type, email_to, Float64(cost), Float64(remaining), reference, reason])
+            """, [reg_id, email_type, email_to, cost_f, remaining_f, reference, reason])
         end
     end
 

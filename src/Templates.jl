@@ -122,11 +122,11 @@ const DEFAULT_TEMPLATES = Dict(
             <p style=\"margin: 8px 0 0;\">Teilnahmebeitrag: <strong>{cost} €</strong></p>
             <p style=\"margin: 8px 0 0;\">Offener Betrag: <strong>{remaining} €</strong></p>
         </div>
+        {qr_block}
         <div style=\"margin: 24px 0;\">
             <h3 style=\"margin-bottom: 8px; font-size: 18px;\">Bankverbindung</h3>
             <p style=\"margin: 0; white-space: pre-line;\">{bank_details}</p>
         </div>
-        {qr_block}
         {registration_fields}
         <div style=\"margin: 24px 0;\">
             <p style=\"margin-bottom: 8px;\">Hinweis: Du könntest diese E-Mail erneut erhalten, wenn eine der folgenden Situationen eintritt:</p>
@@ -147,7 +147,7 @@ const DEFAULT_TEMPLATES = Dict(
         "payment_confirmation" => """
 Liebe/r {first_name},
 
-vielen Dank! Wir haben deine Zahlung für {event_name} erhalten.
+vielen Dank! Wir haben deine Zahlung erhalten.
 
 Referenznummer: {reference_number}
 Bezahlt: {amount_paid} €

@@ -7,6 +7,8 @@
 # names (e.g., get_registration_table_data).
 
 using Dates: Date, @dateformat_str
+using JSON
+using PrettyTables: pretty_table
 
 """
 Initialize a new project in the current directory.
@@ -1194,6 +1196,125 @@ function cmd_export_registrations(event_id::Union{String,Nothing}=nothing,
     end
 end
 
+function format_detail_display_value(value)
+    if value === nothing || value === missing
+        return "—"
+    elseif value isa AbstractDict || value isa AbstractVector
+        return JSON.json(value)
+    else
+        return string(value)
+    end
+end
+
+function format_detail_csv_value(value)
+    if value === nothing || value === missing
+        return ""
+    elseif value isa AbstractDict || value isa AbstractVector
+        return JSON.json(value)
+    else
+        return string(value)
+    end
+end
+
+csv_escape(value::AbstractString) = "\"" * replace(value, "\"" => "\"\"") * "\""
+
+function print_registration_detail_table(table::RegistrationDetailTable; io::IO=stdout)
+    row_count = length(table.rows)
+    col_count = length(table.columns)
+    data_matrix = Matrix{String}(undef, row_count, col_count)
+
+    for (i, row) in enumerate(table.rows)
+        for (j, cell) in enumerate(row)
+            data_matrix[i, j] = format_detail_display_value(cell)
+        end
+    end
+
+    title = "Registration Details: $(table.event_id)"
+    if table.event_name !== nothing
+        title *= " - $(table.event_name)"
+    end
+
+    println(io)
+    println(io, title)
+    println(io, "=" ^ length(title))
+    println(io)
+
+    alignments = fill(:l, col_count)
+    pretty_table(io, data_matrix;
+        column_labels = table.columns,
+        alignment = alignments,
+        maximum_number_of_columns = -1,
+        maximum_number_of_rows = -1
+    )
+
+    println(io)
+    println(io, "Rows: $row_count")
+end
+
+function export_registration_detail_csv(table::RegistrationDetailTable, output_path::String)
+    open(output_path, "w") do io
+        header = [csv_escape(col) for col in table.columns]
+        println(io, join(header, ","))
+
+        for row in table.rows
+            formatted = [csv_escape(format_detail_csv_value(cell)) for cell in row]
+            println(io, join(formatted, ","))
+        end
+    end
+
+    println("✓ Registration details exported to: $output_path")
+    return output_path
+end
+
+function cmd_export_registration_details(event_id::Union{String,Nothing}=nothing,
+                                          output_pos::Union{String,Nothing}=nothing;
+                                          db_path::String="events.duckdb",
+                                          config_dir::String="config",
+                                          format::String="terminal",
+                                          output::Union{String,Nothing}=nothing)
+    actual_output = output_pos !== nothing ? output_pos : output
+
+    return require_database(db_path) do db
+        local_event_id = event_id
+        if local_event_id === nothing
+            local_event_id = get_most_recent_event(db)
+            if local_event_id === nothing
+                println("❌ Error: No events with registrations found")
+                return 1
+            end
+            println("Using most recent event: $local_event_id")
+        end
+
+    detail_table = get_registration_detail_table(db, local_event_id; config_dir=config_dir)
+
+        if isempty(detail_table.rows)
+            println("No registrations found for event: $local_event_id")
+            return 0
+        end
+
+        output_format = lowercase(string(format))
+        if actual_output !== nothing && output_format == "terminal"
+            ext = lowercase(splitext(actual_output)[2])
+            if ext == ".csv"
+                output_format = "csv"
+            end
+        end
+
+        if output_format == "terminal"
+            print_registration_detail_table(detail_table)
+        elseif output_format == "csv"
+            output_path = actual_output === nothing ? "registration_details_$(local_event_id).csv" : actual_output
+            export_registration_detail_csv(detail_table, output_path)
+        else
+            println("❌ Error: Unknown format: $output_format")
+            println("Supported formats: terminal, csv")
+            return 1
+        end
+
+        return 0
+    end
+end
+
 """
 Export confirmation emails to text files.
 Useful when SMTP is not available for sending emails directly.
@@ -1434,6 +1555,9 @@ EXPORTS:
   export-registrations [event-id] [output]   Export/print registration data
     --format=<fmt>               Output: terminal, pdf, latex, csv
     --filter=<filter>            Filter: all, unpaid, problems, paid
+    export-registration-details [event-id] [output]  Export all registration fields
+        --format=<fmt>               Output: terminal, csv
+        # Column order via config/events/<event>.toml [export.registration_details]
   list-registrations [event-id]  Quick registration listing with filters
     --filter=<filter>            Filter: all, unpaid, problems, paid
     --name=<pattern>             Filter by name (regex pattern)
@@ -1473,6 +1597,7 @@ EXAMPLES:
   eventreg export-payment-status --summary-only            # show only totals
   eventreg export-payment-status PWE_2026_01 report.pdf    # export to PDF
   eventreg export-registrations report.pdf                 # export registrations to PDF
+    eventreg export-registration-details PWE_2026_01 details.csv
   eventreg export-payment-status --format=latex            # generate LaTeX
 
 Run 'eventreg <command> --help' for more information on a command.
@@ -1590,6 +1715,10 @@ function run_cli(args::Vector{String})
             event_id = length(positional) >= 1 ? positional[1] : nothing
             output = length(positional) >= 2 ? positional[2] : nothing
             return cmd_export_registrations(event_id, output; options...)
+        elseif command == "export-registration-details"
+            event_id = length(positional) >= 1 ? positional[1] : nothing
+            output = length(positional) >= 2 ? positional[2] : nothing
+            return cmd_export_registration_details(event_id, output; options...)
         elseif command == "export-emails"
             event_id = length(positional) >= 1 ? positional[1] : nothing
             output_dir = length(positional) >= 2 ? positional[2] : "emails_export"

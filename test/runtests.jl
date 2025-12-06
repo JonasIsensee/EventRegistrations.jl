@@ -511,6 +511,53 @@ try
 
         println("  ✓ Event overview functions working")
     end
+
+    @testset "12. Registration Detail Export" begin
+        println("\n=== Test 12: Registration Detail Export ===")
+
+        detail_config_path = joinpath(TEST_CONFIG_DIR, "events", "PWE_2026_01.toml")
+        mkpath(dirname(detail_config_path))
+
+        config_content = """
+        [aliases]
+        stimmgruppe = "Stimmgruppe"
+
+        [export.registration_details]
+        columns = [
+            "reference_number",
+            "email",
+            "stimmgruppe",
+            "first_name",
+            "last_name"
+        ]
+        """
+        open(detail_config_path, "w") do io
+            write(io, config_content)
+        end
+
+        detail_table = get_registration_detail_table(db, "PWE_2026_01"; config_dir=TEST_CONFIG_DIR)
+
+        @test detail_table.event_id == "PWE_2026_01"
+        @test length(detail_table.columns) == 5
+        @test length(detail_table.rows) >= 1
+
+        if !isempty(detail_table.rows)
+            @test length(detail_table.rows[1]) == length(detail_table.columns)
+        end
+
+        expected_columns = ["reference_number", "email", "Stimmgruppe", "first_name", "last_name"]
+        @test detail_table.columns == expected_columns
+
+        stimmgruppe_index = findfirst(==("Stimmgruppe"), detail_table.columns)
+        @test stimmgruppe_index !== nothing
+        if stimmgruppe_index !== nothing && !isempty(detail_table.rows)
+            @test detail_table.rows[1][stimmgruppe_index] !== nothing
+        end
+
+        @test "id" ∉ detail_table.columns
+
+        println("  ✓ Registration detail export table generated")
+    end
 end
 
 

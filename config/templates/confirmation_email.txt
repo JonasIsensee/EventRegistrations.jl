@@ -21,15 +21,18 @@
 		{qr_block}
 		{registration_fields}
 		<div style="margin: 24px 0;">
-			<p style="margin-bottom: 8px;">Hinweis: Du könntest diese E-Mail erneut erhalten, wenn eine der folgenden Situationen eintritt:</p>
+			<p style="margin-bottom: 8px;">Hinweis: Falls du eine vergleichbare E-Mail schon einmal erhalten hast, kann das verschiedene Gründe haben:</p>
 			<ul style="margin: 0 0 0 20px; padding: 0;">
-				<li style="margin-bottom: 4px;">du deine Anmeldung aktualisierst,</li>
-				<li style="margin-bottom: 4px;">wir die Kostenkalkulation anpassen müssen,</li>
-				<li style="margin-bottom: 4px;">wir eine (Teil-)Zahlung verbuchen,</li>
-				<li style="margin-bottom: 4px;">oder wir nach angemessener Zeit noch keinen Zahlungseingang sehen.</li>
+				<li style="margin-bottom: 4px;">du hast deine Anmeldung aktualisiert</li>
+				<li style="margin-bottom: 4px;">wir mussten die Kostenkalkulation anpassen</li>
+				<li style="margin-bottom: 4px;">wir haben eine Teilzahlung erhalten</li>
+				<li style="margin-bottom: 4px;">wir haben noch keine Zahlung erhalten und möchten dich bitten das einmal zu überprüfen</li>
 			</ul>
 		</div>
 		{additional_info}
+
+		Falls du das Gefühl hast, dass bei der Anmeldung oder der Kostenberechnung ein Fehler aufgetreten ist, melde dich gerne bei pwe@uni-goettingen.de .
+
 		<p style="margin-top: 32px;">Viele Grüße,<br>{sender_name}</p>
 	</div>
 </body>
