@@ -354,11 +354,13 @@ function maybe_generate_payment_qr(amount::Float64, reference::String)
         encoded = base64encode(png_bytes)
         hint_amount = replace(@sprintf("%.2f", amount), "." => ",")
 
+        # QR code sizing: min-width ensures scannability (~4cm at 96dpi),
+        # width provides comfortable default (~5cm), max-width prevents excessive size
         html = """
 <div style="margin: 24px 0; text-align: center;">
   <h3 style="margin-bottom: 12px; font-size: 18px;">Bezahlen per QR-Code</h3>
-  <img src="data:image/png;base64,$encoded" alt="SEPA QR-Code" style="max-width: 360px; width: 100%; height: auto;" />
-  <p style="margin-top: 12px;">Scanne den QR-Code: Betrag (€$hint_amount) und Verwendungszweck werden automatisch übernommen.</p>
+  <img src="data:image/png;base64,$encoded" alt="SEPA QR-Code" style="min-width: 160px; width: 200px; max-width: 280px; height: auto; image-rendering: pixelated;" />
+  <p style="margin-top: 12px; font-size: 14px; color: #4a5568;">Scanne den QR-Code mit deiner Banking-App.<br>Betrag (€$hint_amount) und Verwendungszweck werden automatisch übernommen.</p>
 </div>
 """
 
@@ -463,7 +465,7 @@ function preview_email(db::DuckDB.DB, registration_id::Integer;
             SELECT pm.registration_id, SUM(bt.amount) as total_paid
             FROM payment_matches pm
             JOIN bank_transfers bt ON bt.id = pm.transfer_id
-            WHERE pm.match_type != 'unmatched'
+            WHERE pm.registration_id IS NOT NULL
             GROUP BY pm.registration_id
         ) pay ON pay.registration_id = r.id
         WHERE r.id = ?
@@ -557,7 +559,7 @@ function send_confirmation_email!(db::DuckDB.DB, registration_id::Integer;
             SELECT pm.registration_id, SUM(bt.amount) as total_paid
             FROM payment_matches pm
             JOIN bank_transfers bt ON bt.id = pm.transfer_id
-            WHERE pm.match_type != 'unmatched'
+            WHERE pm.registration_id IS NOT NULL
             GROUP BY pm.registration_id
         ) pay ON pay.registration_id = r.id
         WHERE r.id = ?
@@ -686,7 +688,7 @@ function get_registrations_needing_resend(db::DuckDB.DB, event_id::AbstractStrin
                 SELECT pm.registration_id, SUM(bt.amount) as total_paid
                 FROM payment_matches pm
                 JOIN bank_transfers bt ON bt.id = pm.transfer_id
-                WHERE pm.match_type != 'unmatched'
+                WHERE pm.registration_id IS NOT NULL
                 GROUP BY pm.registration_id
             ) pay ON pay.registration_id = r.id
             WHERE r.event_id = ?

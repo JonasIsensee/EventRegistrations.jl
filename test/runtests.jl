@@ -13,6 +13,7 @@ using Test
 using EventRegistrations
 using DBInterface
 using Dates
+using TOML
 
 # =============================================================================
 # TEST CONFIGURATION
@@ -395,8 +396,105 @@ try
 
     end
 
-    @testset "10. Event Overview" begin
-        println("\n=== Test 10: Event Overview ===")
+    @testset "10. Config File Generation and Sync" begin
+        println("\n=== Test 10: Config File Generation and Sync ===")
+
+        # Create a test event for config generation
+        test_event_id = "Sommerkonzert_2024"
+
+        # Step 1: Generate event config template automatically
+        config_path = joinpath(TEST_CONFIG_DIR, "events", "$(test_event_id).toml")
+        mkpath(dirname(config_path))
+
+        EventRegistrations.Config.generate_event_config_template(
+            test_event_id,
+            config_path;
+            db=db,
+            config_dir=TEST_CONFIG_DIR
+        )
+
+        @test isfile(config_path)
+        println("  ✓ Generated config file: $config_path")
+
+        # Step 2: Read and modify the generated config to add proper cost rules
+        config_content = read(config_path, String)
+
+        # Parse the TOML and add proper cost rules
+        config_dict = TOML.parsefile(config_path)
+
+        # Ensure [event] section exists with a name
+        if !haskey(config_dict, "event")
+            config_dict["event"] = Dict()
+        end
+        config_dict["event"]["name"] = "Summer Concert 2024"
+
+        # Add cost rules
+        config_dict["costs"] = Dict(
+            "base" => 50.0,
+            "rules" => [
+                Dict("field" => "Instrument", "value" => "Violine", "cost" => 10.0),
+                Dict("field" => "T-Shirt", "value" => "Ja", "cost" => 15.0)
+            ]
+        )
+
+        # Write back as TOML
+        open(config_path, "w") do io
+            TOML.print(io, config_dict)
+        end
+
+        @test occursin("base = 50.0", read(config_path, String))
+        println("  ✓ Modified config with cost rules")
+
+        # Step 3: Sync the config file to database
+        EventRegistrations.Config.record_config_sync(db, config_path)
+
+        # Verify the sync was recorded
+        result = DBInterface.execute(db,
+            "SELECT file_hash, config_snapshot FROM config_sync WHERE config_path = ?",
+            [config_path])
+        rows = collect(result)
+
+        @test !isempty(rows)
+        @test rows[1][1] !== nothing  # file_hash
+        @test rows[1][2] !== nothing  # config_snapshot
+        @test occursin("base = 50.0", rows[1][2])  # Verify content is stored
+        println("  ✓ Config sync recorded in database")
+
+        # Step 4: Sync the config to events table
+        EventRegistrations.Config.sync_event_configs_to_db!(db, TEST_CONFIG_DIR)
+
+        # Verify event was created in events table with cost rules
+        event_result = DBInterface.execute(db,
+            "SELECT event_name, cost_rules FROM events WHERE event_id = ?",
+            [test_event_id])
+        event_rows = collect(event_result)
+
+        @test !isempty(event_rows)
+        @test event_rows[1][2] !== nothing  # cost_rules should be set
+        println("  ✓ Event synced to events table with cost rules")
+
+        # Step 5: Test that check_config_sync works correctly
+        sync_status = EventRegistrations.Config.check_config_sync(db, config_path)
+        @test sync_status.is_synced == true
+        @test sync_status.needs_sync == false
+        println("  ✓ Config sync status tracking works")
+
+        # Step 6: Modify the file and verify it's detected as needing sync
+        sleep(0.1)  # Ensure different timestamp
+        config_dict["costs"]["base"] = 60.0
+        open(config_path, "w") do io
+            TOML.print(io, config_dict)
+        end
+
+        sync_status2 = EventRegistrations.Config.check_config_sync(db, config_path)
+        @test sync_status2.needs_sync == true
+        println("  ✓ Config change detection works (hash-based)")
+
+        println("  ✓ Full config workflow tested (generation → edit → sync → change detection)")
+    end
+
+    @testset "11. Event Overview" begin
+        println("\n=== Test 11: Event Overview ===")
 
         # The list_events function requires events to be in the events table
         # Just test that it doesn't crash

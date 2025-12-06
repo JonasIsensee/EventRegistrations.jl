@@ -14,9 +14,12 @@ Tables:
 - registrations: One row per person-event (latest submission wins)
 - submissions: Raw submission history (all submissions kept)
 - processed_emails: Track which emails have been processed
-- cost_overrides: Manual price adjustments (subsidies)
+- subsidies: Manual price adjustments (financial help)
 - bank_transfers: Imported bank transfer data
 - payment_matches: Links transfers to registrations
+- financial_transactions: Immutable ledger of all financial events
+- confirmation_emails: Track sent emails with resending support
+- config_sync: Track configuration file sync state
 """
 function init_database(db_path::AbstractString)
     #db = DBInterface.connect(SQLite.DB, db_path)
@@ -52,9 +55,14 @@ function init_database(db_path::AbstractString)
             last_name VARCHAR,
             fields JSON NOT NULL,
             computed_cost DECIMAL(10,2),  -- Cost from rules
+            cost_rules_hash VARCHAR,  -- Hash of cost rules used for computation
+            cost_computed_at TIMESTAMP,  -- When cost was last computed
             latest_submission_id INTEGER,
             registration_date TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status VARCHAR DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'paid', 'cancelled', 'refunded')),
+            valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- Temporal support
+            valid_to TIMESTAMP,  -- NULL = current version
             UNIQUE(event_id, email)
         )
     """)
@@ -132,14 +140,15 @@ function init_database(db_path::AbstractString)
     # PAYMENT MATCHES TABLE
     # Links bank transfers to registrations
     # Multiple transfers CAN match the same registration (partial payments, overpayments)
-    # But each transfer can only be matched once
+    # Each transfer can only be matched once
+    # registration_id = NULL means unmatched transfer
     # =========================================================================
     DBInterface.execute(db, """
         CREATE TABLE IF NOT EXISTS payment_matches (
             id INTEGER PRIMARY KEY,
-            transfer_id INTEGER REFERENCES bank_transfers(id),
-            registration_id INTEGER REFERENCES registrations(id),
-            match_type VARCHAR NOT NULL,  -- 'auto', 'manual', 'unmatched'
+            transfer_id INTEGER NOT NULL REFERENCES bank_transfers(id),
+            registration_id INTEGER REFERENCES registrations(id),  -- NULL = unmatched
+            match_type VARCHAR CHECK (match_type IN ('auto', 'auto_uncertain', 'auto_name', 'manual')),
             match_confidence DECIMAL(3,2),  -- 0.0 to 1.0
             matched_reference VARCHAR,  -- The reference number found
             notes VARCHAR,
@@ -170,21 +179,42 @@ function init_database(db_path::AbstractString)
     """)
 
     # =========================================================================
+    # FINANCIAL TRANSACTIONS TABLE
+    # Immutable ledger of all financial events (payments, subsidies, refunds)
+    # Provides complete audit trail and simplifies balance calculations
+    # =========================================================================
+    DBInterface.execute(db, """
+        CREATE TABLE IF NOT EXISTS financial_transactions (
+            id INTEGER PRIMARY KEY,
+            registration_id INTEGER NOT NULL REFERENCES registrations(id),
+            transaction_type VARCHAR NOT NULL CHECK (transaction_type IN ('charge', 'payment', 'subsidy', 'refund', 'adjustment')),
+            amount DECIMAL(10,2) NOT NULL,  -- Positive = credit (payment, subsidy), Negative = debit (charge, refund)
+            reference_id INTEGER,  -- FK to source table (payment_matches.id, subsidies.id, etc.)
+            reference_table VARCHAR,  -- 'payment_matches', 'subsidies', 'registrations', etc.
+            effective_date DATE NOT NULL,
+            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            recorded_by VARCHAR,  -- Who/what created this transaction
+            notes VARCHAR
+        )
+    """)
+
+    # =========================================================================
     # CONFIG SYNC TRACKING TABLE
     # Tracks when config files were last synced to the database
+    # Uses file hash for change detection (more reliable than mtime)
     # =========================================================================
     DBInterface.execute(db, """
         CREATE TABLE IF NOT EXISTS config_sync (
             config_path VARCHAR PRIMARY KEY,
-            file_mtime TIMESTAMP NOT NULL,
-            synced_at TIMESTAMP NOT NULL,
-            file_hash VARCHAR
+            file_hash VARCHAR NOT NULL,
+            config_snapshot VARCHAR,  -- Actual config content at sync time (plain text)
+            synced_at TIMESTAMP NOT NULL
         )
     """)
 
     # Create sequences
     for seq in ["registration_id_seq", "submission_id_seq", "subsidy_id_seq",
-                "transfer_id_seq", "match_id_seq", "email_id_seq"]
+                "transfer_id_seq", "match_id_seq", "email_id_seq", "transaction_id_seq"]
         try
             DBInterface.execute(db, "CREATE SEQUENCE IF NOT EXISTS $seq START 1")
         catch; end
@@ -195,10 +225,16 @@ function init_database(db_path::AbstractString)
         "CREATE INDEX IF NOT EXISTS idx_reg_event ON registrations(event_id)",
         "CREATE INDEX IF NOT EXISTS idx_reg_email ON registrations(email)",
         "CREATE INDEX IF NOT EXISTS idx_reg_ref ON registrations(reference_number)",
+        "CREATE INDEX IF NOT EXISTS idx_reg_status ON registrations(status)",
+        "CREATE INDEX IF NOT EXISTS idx_reg_temporal ON registrations(id, valid_from, valid_to)",
         "CREATE INDEX IF NOT EXISTS idx_sub_event ON submissions(event_id)",
         "CREATE INDEX IF NOT EXISTS idx_sub_email ON submissions(email)",
         "CREATE INDEX IF NOT EXISTS idx_transfer_date ON bank_transfers(transfer_date)",
         "CREATE INDEX IF NOT EXISTS idx_transfer_ref ON bank_transfers(reference_text)",
+        "CREATE INDEX IF NOT EXISTS idx_match_reg ON payment_matches(registration_id)",
+        "CREATE INDEX IF NOT EXISTS idx_txn_reg ON financial_transactions(registration_id)",
+        "CREATE INDEX IF NOT EXISTS idx_txn_type ON financial_transactions(transaction_type)",
+        "CREATE INDEX IF NOT EXISTS idx_txn_date ON financial_transactions(effective_date)",
     ]
     for idx in indices
         try

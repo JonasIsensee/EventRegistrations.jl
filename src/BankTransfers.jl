@@ -18,6 +18,27 @@ export manual_match!, get_payment_status, get_payment_summary
 export get_payment_history, get_payment_discrepancies
 
 """
+Log a financial transaction to the immutable ledger.
+"""
+function log_financial_transaction!(db::DuckDB.DB, registration_id::Integer,
+                                     transaction_type::String, amount::Real;
+                                     reference_id::Union{Integer,Nothing}=nothing,
+                                     reference_table::Union{String,Nothing}=nothing,
+                                     effective_date::Date=today(),
+                                     recorded_by::String="system",
+                                     notes::String="")
+    with_transaction(db) do
+        DBInterface.execute(db, """
+            INSERT INTO financial_transactions (id, registration_id, transaction_type, amount,
+                                                reference_id, reference_table, effective_date,
+                                                recorded_at, recorded_by, notes)
+            VALUES (nextval('transaction_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [registration_id, transaction_type, amount, reference_id, reference_table,
+              effective_date, now(), recorded_by, notes])
+    end
+end
+
+"""
 Import bank transfers from a CSV file.
 Only adds new transfers (detects duplicates by hash).
 
@@ -299,13 +320,29 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                 match_type = final_confidence >= 0.8 ? "auto" : "auto_uncertain"
 
                 # Create match
+                match_id = nothing
                 with_transaction(db) do
                     DBInterface.execute(db, """
                         INSERT INTO payment_matches (id, transfer_id, registration_id, match_type,
                                                     match_confidence, matched_reference, notes, created_at)
                         VALUES (nextval('match_id_seq'), ?, ?, ?, ?, ?, ?, ?)
                     """, [transfer_id, reg_id, match_type, final_confidence, ref_candidate, "", now()])
+
+                    # Get the match ID we just inserted
+                    result_id = DBInterface.execute(db, "SELECT currval('match_id_seq')")
+                    match_id = first(collect(result_id))[1]
                 end
+
+                # Get transfer date for financial transaction
+                transfer_date_result = DBInterface.execute(db,
+                    "SELECT transfer_date FROM bank_transfers WHERE id = ?", [transfer_id])
+                transfer_date = first(collect(transfer_date_result))[1]
+
+                # Log financial transaction (payment is a credit, so positive amount)
+                log_financial_transaction!(db, reg_id, "payment", amount;
+                    reference_id=match_id, reference_table="payment_matches",
+                    effective_date=transfer_date,
+                    notes="Auto-matched payment (confidence: $(final_confidence))")
 
                 matched += 1
                 match_found = true
@@ -349,13 +386,30 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
 
                     if name_match
                         # Create match with lower confidence
+                        match_id = nothing
                         with_transaction(db) do
                             DBInterface.execute(db, """
                                 INSERT INTO payment_matches (id, transfer_id, registration_id, match_type,
                                                             match_confidence, matched_reference, notes, created_at)
                                 VALUES (nextval('match_id_seq'), ?, ?, 'auto_name', 0.6, ?, 'Matched by name + amount', ?)
                             """, [transfer_id, reg_id, ref, now()])
+
+                            # Get the match ID we just inserted
+                            result_id = DBInterface.execute(db, "SELECT currval('match_id_seq')")
+                            match_id = first(collect(result_id))[1]
                         end
+
+                        # Get transfer date for financial transaction
+                        transfer_date_result = DBInterface.execute(db,
+                            "SELECT transfer_date FROM bank_transfers WHERE id = ?", [transfer_id])
+                        transfer_date = first(collect(transfer_date_result))[1]
+
+                        # Log financial transaction (payment is a credit, so positive amount)
+                        log_financial_transaction!(db, reg_id, "payment", amount;
+                            reference_id=match_id, reference_table="payment_matches",
+                            effective_date=transfer_date,
+                            notes="Auto-matched by name+amount (confidence: 0.6)")
+
                         matched += 1
                         match_found = true
                         @info "Matched transfer by name" sender=sender_name registration="$first_name $last_name"
@@ -415,13 +469,22 @@ Manually match a transfer to a registration.
 """
 function manual_match!(db::DuckDB.DB, transfer_id::Integer, registration_id::Integer;
                        notes::String="")
+    # Get transfer details for financial transaction logging
+    transfer_result = DBInterface.execute(db,
+        "SELECT transfer_date, amount FROM bank_transfers WHERE id = ?",
+        [transfer_id])
+    transfer_row = first(collect(transfer_result))
+    transfer_date, amount = transfer_row[1], Float64(transfer_row[2])
+
     # Check if already matched
     existing = DBInterface.execute(db,
         "SELECT id FROM payment_matches WHERE transfer_id = ?",
         [transfer_id])
 
+    match_id = nothing
     if !isempty(collect(existing))
         # Update existing match
+        match_id = first(collect(existing))[1]
         with_transaction(db) do
             DBInterface.execute(db, """
                 UPDATE payment_matches
@@ -442,8 +505,19 @@ function manual_match!(db::DuckDB.DB, transfer_id::Integer, registration_id::Int
                                             match_confidence, matched_reference, notes, created_at)
                 VALUES (nextval('match_id_seq'), ?, ?, 'manual', 1.0, ?, ?, ?)
             """, [transfer_id, registration_id, ref, notes, now()])
+
+            # Get the match ID we just inserted
+            result_id = DBInterface.execute(db, "SELECT currval('match_id_seq')")
+            match_id = first(collect(result_id))[1]
         end
     end
+
+    # Log financial transaction (payment is a credit, so positive amount)
+    log_financial_transaction!(db, registration_id, "payment", amount;
+        reference_id=match_id, reference_table="payment_matches",
+        effective_date=transfer_date,
+        recorded_by="manual",
+        notes="Manual match: $(notes)")
 
     @info "Manual match created" transfer_id=transfer_id registration_id=registration_id
 end
@@ -498,7 +572,7 @@ function get_payment_status(db::DuckDB.DB, event_id::AbstractString)
                 MAX(bt.transfer_date) as last_payment_date
             FROM payment_matches pm
             JOIN bank_transfers bt ON bt.id = pm.transfer_id
-            WHERE pm.match_type != 'unmatched'
+            WHERE pm.registration_id IS NOT NULL
             GROUP BY pm.registration_id
         ) payments ON payments.registration_id = r.id
         LEFT JOIN (
@@ -563,7 +637,7 @@ function get_payment_summary(db::DuckDB.DB, event_id::AbstractString)
                 COALESCE(SUM(bt.amount), 0) as total_paid,
                 COALESCE(sub.total_subsidy, 0) as total_subsidy
             FROM registrations r
-            LEFT JOIN payment_matches pm ON pm.registration_id = r.id AND pm.match_type != 'unmatched'
+            LEFT JOIN payment_matches pm ON pm.registration_id = r.id AND pm.registration_id IS NOT NULL
             LEFT JOIN bank_transfers bt ON bt.id = pm.transfer_id
             LEFT JOIN (
                 SELECT registration_id, SUM(amount) as total_subsidy
@@ -616,7 +690,7 @@ function get_payment_discrepancies(db::DuckDB.DB, event_id::AbstractString)
             COALESCE(SUM(bt.amount), 0) + COALESCE(sub.total_subsidy, 0) as total_credits,
             COALESCE(SUM(bt.amount), 0) + COALESCE(sub.total_subsidy, 0) - r.computed_cost as difference
         FROM registrations r
-        LEFT JOIN payment_matches pm ON pm.registration_id = r.id AND pm.match_type != 'unmatched'
+        LEFT JOIN payment_matches pm ON pm.registration_id = r.id AND pm.registration_id IS NOT NULL
         LEFT JOIN bank_transfers bt ON bt.id = pm.transfer_id
         LEFT JOIN (
             SELECT registration_id, SUM(amount) as total_subsidy

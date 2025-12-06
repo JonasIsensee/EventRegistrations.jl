@@ -698,20 +698,28 @@ end
 
 """
 Record that a config file has been synced.
+Stores the file hash and optionally a snapshot of the config content.
 """
 function record_config_sync(db::DuckDB.DB, config_path::AbstractString)
-    mtime = get_file_mtime(config_path)
     file_hash = compute_file_hash(config_path)
     now_ts = Dates.now()
+
+    # Read and store config snapshot (for audit trail)
+    config_content = try
+        read(config_path, String)
+    catch
+        nothing
+    end
+
     with_transaction(db) do
         DBInterface.execute(db, """
-            INSERT INTO config_sync (config_path, file_mtime, synced_at, file_hash)
+            INSERT INTO config_sync (config_path, file_hash, config_snapshot, synced_at)
             VALUES (?, ?, ?, ?)
             ON CONFLICT (config_path) DO UPDATE SET
-                file_mtime = EXCLUDED.file_mtime,
-                synced_at = EXCLUDED.synced_at,
-                file_hash = EXCLUDED.file_hash
-        """, [config_path, mtime, now_ts, file_hash])
+                file_hash = EXCLUDED.file_hash,
+                config_snapshot = EXCLUDED.config_snapshot,
+                synced_at = EXCLUDED.synced_at
+        """, [config_path, file_hash, config_content, now_ts])
     end
 end
 

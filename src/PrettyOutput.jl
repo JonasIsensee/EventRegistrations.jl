@@ -182,7 +182,7 @@ function get_payment_table_data(db::DuckDB.DB, event_id::String)::PaymentTableDa
             SELECT pm.registration_id, SUM(bt.amount) as total
             FROM payment_matches pm
             JOIN bank_transfers bt ON bt.id = pm.transfer_id
-            WHERE pm.match_type != 'unmatched'
+            WHERE pm.registration_id IS NOT NULL
             GROUP BY pm.registration_id
         ) payments ON payments.registration_id = r.id
         LEFT JOIN (
@@ -523,7 +523,7 @@ function get_registration_table_data(db::DuckDB.DB, event_id::String)::Registrat
             SELECT pm.registration_id, SUM(bt.amount) as total
             FROM payment_matches pm
             JOIN bank_transfers bt ON bt.id = pm.transfer_id
-            WHERE pm.match_type != 'unmatched'
+            WHERE pm.registration_id IS NOT NULL
             GROUP BY pm.registration_id
         ) payments ON payments.registration_id = r.id
         LEFT JOIN (

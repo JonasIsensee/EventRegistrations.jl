@@ -19,6 +19,27 @@ export grant_subsidy!, get_subsidies, revoke_subsidy!, grant_subsidies_batch!
 export get_registration_by_reference, recalculate_costs!
 
 """
+Log a financial transaction to the immutable ledger.
+"""
+function log_financial_transaction!(db::DuckDB.DB, registration_id::Integer,
+                                     transaction_type::String, amount::Real;
+                                     reference_id::Union{Integer,Nothing}=nothing,
+                                     reference_table::Union{String,Nothing}=nothing,
+                                     effective_date::Date=today(),
+                                     recorded_by::String="system",
+                                     notes::String="")
+    with_transaction(db) do
+        DBInterface.execute(db, """
+            INSERT INTO financial_transactions (id, registration_id, transaction_type, amount,
+                                                reference_id, reference_table, effective_date,
+                                                recorded_at, recorded_by, notes)
+            VALUES (nextval('transaction_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [registration_id, transaction_type, amount, reference_id, reference_table,
+              effective_date, now(), recorded_by, notes])
+    end
+end
+
+"""
 Prompt the user for a yes/no decision and return `true` for yes, `false` for no.
 
 If the standard input stream is not interactive, or an EOF is encountered, the
@@ -294,17 +315,34 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString)
         # Calculate cost (returns nothing if no cost config exists)
         computed_cost = calculate_cost(db, submission.event_id, submission.fields)
 
+        # Get cost rules hash for versioning
+        cost_rules_hash = nothing
+        cost_computed_at = nothing
+        if computed_cost !== nothing
+            rules_result = DBInterface.execute(db,
+                "SELECT cost_rules FROM events WHERE event_id = ?",
+                [submission.event_id])
+            rules_rows = collect(rules_result)
+            if !isempty(rules_rows) && rules_rows[1][1] !== nothing
+                cost_rules_hash = string(hash(rules_rows[1][1]))
+                cost_computed_at = now()
+            end
+        end
+
         if isempty(existing_rows)
             # New registration
             with_transaction(db) do
                 DBInterface.execute(db, """
                     INSERT INTO registrations (id, event_id, email, reference_number,
                                                 first_name, last_name, fields, computed_cost,
-                                                latest_submission_id, registration_date, updated_at)
-                    VALUES (nextval('registration_id_seq'), ?, ?, 'TEMP', ?, ?, ?, ?, ?, ?, ?)
+                                                cost_rules_hash, cost_computed_at,
+                                                latest_submission_id, registration_date, updated_at,
+                                                status, valid_from)
+                    VALUES (nextval('registration_id_seq'), ?, ?, 'TEMP', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
                 """, [submission.event_id, submission.email,
                         submission.first_name, submission.last_name, fields_json,
-                        computed_cost, submission_id, email_date, now()])
+                        computed_cost, cost_rules_hash, cost_computed_at,
+                        submission_id, email_date, now(), now()])
             end
 
             # Get the registration ID and generate reference number
@@ -317,6 +355,15 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString)
                     UPDATE registrations SET reference_number = ? WHERE id = ?
                 """, [ref_number, reg_id])
             end
+
+            # Log financial transaction for the charge (if cost was computed)
+            if computed_cost !== nothing
+                log_financial_transaction!(db, reg_id, "charge", -computed_cost;
+                    reference_id=reg_id, reference_table="registrations",
+                    effective_date=Date(email_date),
+                    notes="Initial registration charge")
+            end
+
             is_new = true
             if computed_cost === nothing
                 no_cost_config = true
@@ -335,11 +382,14 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString)
                         last_name = ?,
                         fields = ?,
                         computed_cost = ?,
+                        cost_rules_hash = ?,
+                        cost_computed_at = ?,
                         latest_submission_id = ?,
                         updated_at = ?
                     WHERE id = ?
                 """, [submission.first_name, submission.last_name, fields_json,
-                        computed_cost, submission_id, now(), reg_id])
+                        computed_cost, cost_rules_hash, cost_computed_at,
+                        submission_id, now(), reg_id])
             end
 
             is_update = true
@@ -434,7 +484,7 @@ function export_registrations(db::DuckDB.DB, event_id::AbstractString;
                     MAX(bt.transfer_date) as last_payment_date
                 FROM payment_matches pm
                 JOIN bank_transfers bt ON bt.id = pm.transfer_id
-                WHERE pm.match_type != 'unmatched'
+                WHERE pm.registration_id IS NOT NULL
                 GROUP BY pm.registration_id
             ) pt ON pt.registration_id = r.id
             LEFT JOIN (
@@ -467,12 +517,22 @@ Multiple subsidies can be granted and they stack.
 function grant_subsidy!(db::DuckDB.DB, registration_id::Integer,
                         amount::Real; reason::String="", granted_by::String="")
     # Insert subsidy record
+    subsidy_id = nothing
     with_transaction(db) do
-    DBInterface.execute(db, """
-        INSERT INTO subsidies (id, registration_id, amount, reason, granted_by, granted_at)
-        VALUES (nextval('subsidy_id_seq'), ?, ?, ?, ?, ?)
-    """, [registration_id, amount, reason, granted_by, now()])
+        DBInterface.execute(db, """
+            INSERT INTO subsidies (id, registration_id, amount, reason, granted_by, granted_at)
+            VALUES (nextval('subsidy_id_seq'), ?, ?, ?, ?, ?)
+        """, [registration_id, amount, reason, granted_by, now()])
+
+        # Get the subsidy ID we just inserted
+        result = DBInterface.execute(db, "SELECT currval('subsidy_id_seq')")
+        subsidy_id = first(collect(result))[1]
     end
+
+    # Log financial transaction (subsidy is a credit, so positive amount)
+    log_financial_transaction!(db, registration_id, "subsidy", amount;
+        reference_id=subsidy_id, reference_table="subsidies",
+        recorded_by=granted_by, notes=reason)
 
     @info "Granted subsidy" registration_id=registration_id amount=amount reason=reason
 end
@@ -572,6 +632,17 @@ function recalculate_costs!(db::DuckDB.DB, event_id::AbstractString;
         error("No cost configuration found for event: $event_id")
     end
 
+    # Get cost rules hash for versioning
+    cost_rules_hash = nothing
+    rules_result = DBInterface.execute(db,
+        "SELECT cost_rules FROM events WHERE event_id = ?",
+        [event_id])
+    rules_rows = collect(rules_result)
+    if !isempty(rules_rows) && rules_rows[1][1] !== nothing
+        cost_rules_hash = string(hash(rules_rows[1][1]))
+    end
+    cost_computed_at = now()
+
     # Pre-calculate all costs and collect warnings
     updates = []
     all_warnings = []
@@ -645,9 +716,10 @@ function recalculate_costs!(db::DuckDB.DB, event_id::AbstractString;
     for upd in updates
         with_transaction(db) do
             DBInterface.execute(db, """
-                UPDATE registrations SET computed_cost = ?, updated_at = ?
+                UPDATE registrations SET computed_cost = ?, cost_rules_hash = ?,
+                                        cost_computed_at = ?, updated_at = ?
                 WHERE id = ?
-            """, [upd.new_cost, now(), upd.id])
+            """, [upd.new_cost, cost_rules_hash, cost_computed_at, now(), upd.id])
         end
     end
 
