@@ -305,7 +305,7 @@ function generate_sepa_qr_payload(; amount::Float64, reference::String, recipien
         "1",
         "SCT",
         uppercase(strip(bic)),
-        strip(recipient)[1:min(end, 70)],
+        strip(recipient)[1:min(end, 100)],
         clean_iban,
         "EUR" * formatted_amount,
         "",
