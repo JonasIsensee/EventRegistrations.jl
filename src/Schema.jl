@@ -2,6 +2,7 @@ module Schema
 
 using DuckDB
 using DBInterface
+using SQLite
 
 export init_database
 
@@ -18,7 +19,8 @@ Tables:
 - payment_matches: Links transfers to registrations
 """
 function init_database(db_path::AbstractString)
-    db = DuckDB.DB(db_path)
+    #db = DBInterface.connect(SQLite.DB, db_path)
+    db = DBInterface.connect(DuckDB.DB, db_path)
 
     # =========================================================================
     # EVENTS TABLE
@@ -120,7 +122,7 @@ function init_database(db_path::AbstractString)
             sender_name VARCHAR,
             sender_iban VARCHAR,
             reference_text VARCHAR,  -- The Verwendungszweck
-            raw_data JSON,  -- Full row from CSV
+            raw_data VARCHAR,  -- Full row from CSV
             imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             source_file VARCHAR
         )
@@ -135,7 +137,7 @@ function init_database(db_path::AbstractString)
     DBInterface.execute(db, """
         CREATE TABLE IF NOT EXISTS payment_matches (
             id INTEGER PRIMARY KEY,
-            transfer_id INTEGER NOT NULL REFERENCES bank_transfers(id),
+            transfer_id INTEGER REFERENCES bank_transfers(id),
             registration_id INTEGER REFERENCES registrations(id),
             match_type VARCHAR NOT NULL,  -- 'auto', 'manual', 'unmatched'
             match_confidence DECIMAL(3,2),  -- 0.0 to 1.0

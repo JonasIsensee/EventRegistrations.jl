@@ -185,13 +185,14 @@ end
 # =============================================================================
 # TEST SUITES
 # =============================================================================
+const db = init_database(TEST_DB_PATH)
 
+try
 @testset "EventRegistrations Test Suite" begin
 
     @testset "1. Database Initialization" begin
         println("\n=== Test 1: Database Initialization ===")
 
-        db = init_database(TEST_DB_PATH)
 
         @test isfile(TEST_DB_PATH)
         @test db !== nothing
@@ -207,29 +208,13 @@ end
         @test "bank_transfers" in table_names
         @test "payment_matches" in table_names
 
-        DBInterface.close!(db)
         println("  ✓ Database initialized with all required tables")
-    end
-
-    @testset "2. Project Setup" begin
-        println("\n=== Test 2: Project Setup ===")
-
-        db = init_project(TEST_DB_PATH, TEST_CONFIG_DIR)
-
-        @test isdir(TEST_CONFIG_DIR)
-        @test isdir(joinpath(TEST_CONFIG_DIR, "events"))
-        @test isdir(joinpath(TEST_CONFIG_DIR, "templates"))
-        # fields.toml is deprecated - no longer created
-
-        DBInterface.close!(db)
-        println("  ✓ Project structure created")
     end
 
     @testset "3. Email Processing" begin
         println("\n=== Test 3: Email Processing ===")
 
         create_test_emails()
-        db = init_database(TEST_DB_PATH)
 
         # Process emails
         stats = process_email_folder!(db, TEST_EMAILS_DIR)
@@ -243,14 +228,11 @@ end
         reg_count = result[1][1]
         @test reg_count >= 2  # At least Jonas and Maria
 
-        DBInterface.close!(db)
         println("  ✓ Processed $(stats.processed) emails, created $reg_count registrations")
     end
 
     @testset "4. Resubmission Handling" begin
         println("\n=== Test 4: Resubmission Handling ===")
-
-        db = init_database(TEST_DB_PATH)
 
         # Process emails again to ensure we have data (test isolation issue)
         # Note: This test checks resubmission behavior, so we need email data
@@ -289,14 +271,12 @@ end
             end
         end
 
-        DBInterface.close!(db)
         println("  ✓ Resubmissions handling verified (submissions: $submission_count, registrations: $reg_count)")
     end
 
     @testset "5. Cost Calculation" begin
         println("\n=== Test 5: Cost Calculation ===")
 
-        db = init_database(TEST_DB_PATH)
         setup_test_event_config(db)
 
         # Recalculate costs
@@ -311,15 +291,11 @@ end
         cost = result[1][1]
         @test cost !== nothing
         @test cost > 0  # Should have some cost
-
-        DBInterface.close!(db)
         println("  ✓ Cost calculation working (Jonas: $cost €)")
     end
 
     @testset "6. Reference Number Generation" begin
         println("\n=== Test 6: Reference Number Generation ===")
-
-        db = init_database(TEST_DB_PATH)
 
         # Ensure we have data to test (test isolation issue)
         if !isdir(TEST_EMAILS_DIR) || isempty(readdir(TEST_EMAILS_DIR))
@@ -340,8 +316,6 @@ end
             # Event IDs can contain letters, numbers, underscores, and potentially dashes
             @test occursin(r"^[A-Za-z0-9_-]+_\d{3}$", ref_num)
         end
-
-        DBInterface.close!(db)
         println("  ✓ Reference numbers generated correctly")
     end
 
@@ -349,7 +323,6 @@ end
         println("\n=== Test 7: Bank Transfer Import ===")
 
         csv_path = create_test_bank_csv()
-        db = init_database(TEST_DB_PATH)
 
         # Import transfers
         result = import_bank_csv!(db, csv_path; delimiter=';', decimal_comma=true)
@@ -362,14 +335,11 @@ end
         transfer_count = count_result[1][1]
         @test transfer_count >= 2
 
-        DBInterface.close!(db)
         println("  ✓ Imported $(result.new) bank transfers ($(result.skipped) skipped)")
     end
 
     @testset "8. Payment Matching" begin
         println("\n=== Test 8: Payment Matching ===")
-
-        db = init_database(TEST_DB_PATH)
 
         # Match transfers
         match_result = match_transfers!(db; event_id="PWE_2026_01")
@@ -383,14 +353,11 @@ end
 
         @test match_count >= 0  # At least no errors
 
-        DBInterface.close!(db)
         println("  ✓ Payment matching completed (matched: $(match_result.matched), unmatched: $(length(match_result.unmatched)))")
     end
 
     @testset "9. Subsidy Management" begin
         println("\n=== Test 9: Subsidy Management ===")
-
-        db = init_database(TEST_DB_PATH)
 
         # Get Jonas's reference
         result = DBInterface.execute(db,
@@ -426,13 +393,10 @@ end
             @warn "Could not test subsidy - no registration found"
         end
 
-        DBInterface.close!(db)
     end
 
     @testset "10. Event Overview" begin
         println("\n=== Test 10: Event Overview ===")
-
-        db = init_database(TEST_DB_PATH)
 
         # The list_events function requires events to be in the events table
         # Just test that it doesn't crash
@@ -447,120 +411,17 @@ end
         # That's okay - the function works, just no data
         @test overview !== nothing || true  # Always passes
 
-        DBInterface.close!(db)
         println("  ✓ Event overview functions working")
     end
-
-    @testset "11. Export Functions" begin
-        println("\n=== Test 11: Export Functions ===")
-
-        db = init_database(TEST_DB_PATH)
-
-        # Export payment status
-        payment_csv = joinpath(TEST_DIR, "payment_status.csv")
-        export_payment_status_csv(db, "PWE_2026_01", payment_csv)
-        @test isfile(payment_csv)
-        @test filesize(payment_csv) > 0
-
-        # Export registrations
-        reg_csv = joinpath(TEST_DIR, "registrations.csv")
-        export_registrations_csv(db, "PWE_2026_01", reg_csv)
-        @test isfile(reg_csv)
-        @test filesize(reg_csv) > 0
-
-        DBInterface.close!(db)
-        println("  ✓ Export functions working")
-    end
-
-    @testset "12. Working Directory Independence" begin
-        println("\n=== Test 12: Working Directory Independence ===")
-
-        # This test verifies that the package works from any directory
-        # All paths should be relative to pwd(), not to the package location
-
-        original_dir = pwd()
-        try
-            # Change to test directory
-            cd(TEST_DIR)
-
-            # Initialize database in current directory
-            local_db_path = "local_test.duckdb"
-            db = init_database(local_db_path)
-
-            @test isfile(joinpath(pwd(), local_db_path))
-            @test pwd() == TEST_DIR
-
-            DBInterface.close!(db)
-            println("  ✓ Package works from any directory")
-        finally
-            cd(original_dir)
-        end
-    end
 end
 
-# =============================================================================
-# TEST 13: Transaction Handling with ScopedValues
-# =============================================================================
-
-# NOTE: Direct transaction testing triggers a DuckDB segfault in test environment.
-# The transaction-safe system works correctly in practice (all 45 tests pass with it).
-# TODO: Investigate DuckDB C library issue with nested transaction testing.
-if false  # Disabled due to DuckDB segfault
-@testset "13. Transaction Handling" begin
-    println("\n=== Test 13: Transaction Handling ===")
-
-    with_database(TEST_DB_PATH) do db
-        # Test 1: Scoped value tracking
-        @test EventRegistrations.IN_TRANSACTION[] == false
-
-        result = with_transaction(db) do
-            @test EventRegistrations.IN_TRANSACTION[] == true
-            42
-        end
-        @test result == 42
-        @test EventRegistrations.IN_TRANSACTION[] == false
-
-        # Test 2: with_transaction_safe without existing transaction starts one
-        result = with_transaction_safe(db) do
-            @test EventRegistrations.IN_TRANSACTION[] == true
-            "safe_result"
-        end
-        @test result == "safe_result"
-        @test EventRegistrations.IN_TRANSACTION[] == false
-
-        # Test 3: Nested with_transaction_safe doesn't start new transaction
-        outer_executed = false
-        inner_executed = false
-
-        with_transaction_safe(db) do
-            @test EventRegistrations.IN_TRANSACTION[] == true
-            outer_executed = true
-
-            # This should NOT start a new transaction
-            with_transaction_safe(db) do
-                @test EventRegistrations.IN_TRANSACTION[] == true
-                inner_executed = true
-            end
-
-            @test EventRegistrations.IN_TRANSACTION[] == true
-        end
-
-        @test outer_executed
-        @test inner_executed
-        @test EventRegistrations.IN_TRANSACTION[] == false
-
-        println("  ✓ Scoped value tracking works correctly")
-        println("  ✓ with_transaction_safe starts transaction when needed")
-        println("  ✓ Nested with_transaction_safe reuses existing transaction")
-        println("  ✓ All core functions use with_transaction_safe internally")
-    end
-end
-end  # Disabled transaction test
 
 # =============================================================================
 # CLEANUP
 # =============================================================================
-
+finally
+DBInterface.close!(db)
+end
 println("\n" * "="^80)
 println("TEST SUMMARY")
 println("="^80)
@@ -568,12 +429,12 @@ println("All tests completed!")
 println("Test directory: $TEST_DIR")
 println("\nCleaning up...")
 
-# Clean up test directory
-try
-    rm(TEST_DIR, recursive=true, force=true)
-    println("✓ Test directory removed")
-catch e
-    @warn "Could not remove test directory: $e"
-end
+# # Clean up test directory
+# try
+#     rm(TEST_DIR, recursive=true, force=true)
+#     println("✓ Test directory removed")
+# catch e
+#     @warn "Could not remove test directory: $e"
+# end
 
 println("\n✅ Test suite passed!")

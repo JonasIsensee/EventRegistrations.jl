@@ -3,7 +3,6 @@ module CostCalculator
 using JSON
 using DuckDB
 using DBInterface
-
 export calculate_cost, calculate_cost_with_details, set_event_cost_rules, get_cost_rules
 export CostCalculationResult
 
@@ -253,13 +252,13 @@ function set_event_cost_rules(db::DuckDB.DB, event_id::AbstractString;
 
     # Upsert the event
     DBInterface.execute(db, """
-        INSERT INTO events (event_id, event_name, base_cost, cost_rules)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT (event_id) DO UPDATE SET
-            event_name = COALESCE(EXCLUDED.event_name, events.event_name),
-            base_cost = EXCLUDED.base_cost,
-            cost_rules = EXCLUDED.cost_rules
-    """, [event_id, event_name, base_cost, rules_json])
+            INSERT INTO events (event_id, event_name, base_cost, cost_rules)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (event_id) DO UPDATE SET
+                event_name = COALESCE(EXCLUDED.event_name, events.event_name),
+                base_cost = EXCLUDED.base_cost,
+                cost_rules = EXCLUDED.cost_rules
+        """, [event_id, event_name, base_cost, rules_json])
 end
 
 """

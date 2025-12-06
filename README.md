@@ -21,6 +21,7 @@ A complete event registration management system built in Julia for processing fo
 ### Setup
 
 1. Clone or download the EventRegistrations.jl package:
+
 ```bash
 cd /path/to/your/projects
 git clone <repository-url> EventRegistrations.jl
@@ -28,12 +29,14 @@ git clone <repository-url> EventRegistrations.jl
 ```
 
 2. Install dependencies:
+
 ```bash
 cd EventRegistrations.jl
 julia --project -e 'using Pkg; Pkg.instantiate()'
 ```
 
 3. Add the CLI to your PATH (optional but recommended):
+
 ```bash
 # On Linux/Mac:
 sudo ln -s $(pwd)/bin/eventreg /usr/local/bin/eventreg
@@ -54,6 +57,7 @@ eventreg init
 ```
 
 This creates:
+
 - `events.duckdb` - Database file
 - `config/` - Configuration directory
   - `fields.toml` - Field name aliases
@@ -64,6 +68,7 @@ This creates:
 
 1. Place your `.eml` files in an `emails/` directory
 2. Run:
+
 ```bash
 eventreg process-emails emails/
 ```
@@ -71,6 +76,7 @@ eventreg process-emails emails/
 ### Configure Event Costs
 
 1. Generate field configuration from processed emails:
+
 ```bash
 eventreg generate-field-config
 ```
@@ -78,6 +84,7 @@ eventreg generate-field-config
 2. Edit `config/fields.toml` to customize field aliases
 
 3. Create event configuration:
+
 ```bash
 eventreg create-event-config PWE_2026_01 --name="Workshop Weekend January 2026"
 ```
@@ -85,6 +92,7 @@ eventreg create-event-config PWE_2026_01 --name="Workshop Weekend January 2026"
 4. Edit `config/events/PWE_2026_01.toml` to set cost rules
 
 5. Sync configuration to database:
+
 ```bash
 eventreg sync-config
 ```
@@ -106,28 +114,34 @@ eventreg export-registrations PWE_2026_01 registrations.csv
 ## CLI Commands
 
 ### Project Management
+
 - `eventreg init` - Initialize new project
 - `eventreg list-events` - List all events
 - `eventreg event-overview <event-id>` - Show event details
 
 ### Email Processing
+
 - `eventreg process-emails [folder]` - Process registration emails
 - `eventreg generate-field-config` - Generate field configuration
 
 ### Configuration
+
 - `eventreg create-event-config <id>` - Create event config template
 - `eventreg sync-config` - Sync config files to database
 
 ### Bank Transfers
+
 - `eventreg import-bank-csv <file>` - Import bank transfers
 - `eventreg match-transfers` - Match transfers to registrations
 - `eventreg list-unmatched` - List unmatched transfers
 - `eventreg manual-match <id> <ref>` - Manually match a transfer
 
 ### Subsidies
+
 - `eventreg grant-subsidy <id> <amount>` - Grant subsidy to registration
 
 ### Reports
+
 - `eventreg export-payment-status <event-id> <output>` - Export payment report
 - `eventreg export-registrations <event-id> <output>` - Export registration data
 
@@ -152,9 +166,6 @@ registrations = get_registrations(db, "PWE_2026_01")
 # Import bank transfers
 import_bank_csv!(db, "transfers.csv")
 match_transfers!(db; event_id="PWE_2026_01")
-
-# Export reports
-export_payment_status_csv(db, "PWE_2026_01", "payment_status.csv")
 
 # Close database
 DBInterface.close!(db)
@@ -243,6 +254,7 @@ See LICENSE file.
 ## Support
 
 For issues and questions, please check:
+
 - The comprehensive documentation in CLAUDE.md
 - Example workflows in the registration_software/ directory
 - Test files for usage examples

@@ -19,7 +19,6 @@ using ..Templates
 export send_confirmation_email!, send_pending_confirmations!, generate_email_content
 export get_unsent_confirmations, preview_email, export_emails_to_files
 export configure!, EmailConfig
-
 """
 Configuration for email sending.
 """
@@ -594,7 +593,7 @@ function send_confirmation_email!(db::DuckDB.DB, registration_id::Integer;
         println("Type: $email_type")
         println("Cost: $computed_cost, Remaining: $remaining_amount")
         println("---")
-        println(email_preview.body)
+        #println(email_preview.body)
         println("--- END PREVIEW ---\n")
         # DRY RUN: Don't record in database
         return true
@@ -630,16 +629,20 @@ function send_confirmation_email!(db::DuckDB.DB, registration_id::Integer;
 
     # Record the email attempt (only in non-dry-run mode)
     status = success ? "sent" : "failed"
-    DBInterface.execute(db, """
-        INSERT INTO confirmation_emails (
-            id, registration_id, email_type, sent_at, email_to,
-            cost_at_send, remaining_at_send, reference_sent, status,
-            error_message, resend_reason, supersedes_id
-        )
-        VALUES (nextval('email_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, [registration_id, email_type, now(), email_preview.to,
-          Float64(computed_cost), Float64(remaining), reference, status,
-          error_msg, resend_reason, supersedes_id])
+    #with_transaction(db) do
+        DBInterface.execute(db, """
+            INSERT INTO confirmation_emails (
+                id, registration_id, email_type, sent_at, email_to,
+                cost_at_send, remaining_at_send, reference_sent, status,
+                error_message, resend_reason, supersedes_id, resends
+            )
+            VALUES (nextval('email_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [registration_id, email_type, now(), email_preview.to,
+            Float64(computed_cost),
+            Float64(remaining),
+            reference, status,
+            error_msg, resend_reason, supersedes_id, 1])
+    #end
 
     if success
         @info "Email sent successfully" registration_id=registration_id to=email_preview.to type=email_type

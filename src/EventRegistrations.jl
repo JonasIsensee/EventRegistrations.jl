@@ -42,6 +42,70 @@ using Dates
 using TOML
 using Base: ScopedValues
 
+# =============================================================================
+# DATABASE HELPER FUNCTIONS
+# =============================================================================
+
+"""
+    with_database(f, db_path::AbstractString)
+
+Execute function `f` with a database connection, ensuring the connection
+is properly closed even if an error occurs.
+
+This is the recommended way to work with the database to prevent corruption.
+
+# Example
+```julia
+with_database("events.duckdb") do db
+    process_email_folder!(db, "emails")
+end
+```
+"""
+function with_database(f::Function, db_path::AbstractString)
+    db = init_database(db_path)
+    try
+        return f(db)
+    finally
+        DBInterface.close!(db)
+    end
+end
+
+export with_database
+
+"""
+    with_transaction(f, db::DuckDB.DB)
+
+Execute function `f` within a database transaction.
+Commits on success, rolls back on error.
+
+This ensures atomic operations - either all changes succeed or none do.
+
+# Example
+```julia
+with_transaction(db) do
+    # Multiple database operations
+    # If any fail, all are rolled back
+end
+```
+"""
+function with_transaction(f::Function, db::DuckDB.DB)
+    DBInterface.execute(db, "BEGIN TRANSACTION")
+    try
+        result = f()
+        DBInterface.execute(db, "COMMIT")
+        return result
+    catch e
+        try
+            DBInterface.execute(db, "ROLLBACK")
+        catch rollback_error
+            @error "Failed to rollback transaction" exception=rollback_error
+        end
+        rethrow(e)
+    end
+end
+export with_transaction
+
+
 # Include all submodules
 include("Schema.jl")
 include("Config.jl")
@@ -96,135 +160,7 @@ using .Config: get_all_config_sync_status
 export ConfigSyncStatus, check_config_sync, get_unsynced_configs
 export get_all_config_sync_status
 
-# =============================================================================
-# DATABASE HELPER FUNCTIONS
-# =============================================================================
 
-"""
-    with_database(f, db_path::AbstractString)
-
-Execute function `f` with a database connection, ensuring the connection
-is properly closed even if an error occurs.
-
-This is the recommended way to work with the database to prevent corruption.
-
-# Example
-```julia
-with_database("events.duckdb") do db
-    process_email_folder!(db, "emails")
-end
-```
-"""
-function with_database(f::Function, db_path::AbstractString)
-    db = init_database(db_path)
-    try
-        return f(db)
-    finally
-        DBInterface.close!(db)
-    end
-end
-export with_database
-
-# Scoped value to track if we're currently in a transaction
-const IN_TRANSACTION = ScopedValues.ScopedValue(false)
-
-"""
-    with_transaction(f, db::DuckDB.DB)
-
-Execute function `f` within a database transaction.
-Commits on success, rolls back on error.
-
-This ensures atomic operations - either all changes succeed or none do.
-
-# Example
-```julia
-with_transaction(db) do
-    # Multiple database operations
-    # If any fail, all are rolled back
-end
-```
-
-⚠️ Note: This will fail if called within an existing transaction (DuckDB doesn't support nested transactions).
-Use `with_transaction_safe` for automatic nested transaction handling.
-"""
-function with_transaction(f::Function, db::DuckDB.DB)
-    DBInterface.execute(db, "BEGIN TRANSACTION")
-    try
-        result = ScopedValues.with(IN_TRANSACTION => true) do
-            f()
-        end
-        DBInterface.execute(db, "COMMIT")
-        return result
-    catch e
-        try
-            DBInterface.execute(db, "ROLLBACK")
-        catch rollback_error
-            @error "Failed to rollback transaction" exception=rollback_error
-        end
-        rethrow(e)
-    end
-end
-export with_transaction
-
-"""
-    with_transaction_safe(f, db::DuckDB.DB)
-
-Execute function `f` within a database transaction, but only if not already in one.
-
-If already in a transaction (detected via scoped value), simply executes `f` without
-starting a new transaction. This allows safe nesting of transactional operations.
-
-# Example
-```julia
-# This works even if called from within another transaction
-with_transaction_safe(db) do
-    # Operations here
-    some_other_function_that_also_uses_with_transaction_safe(db)
-end
-```
-
-This is the preferred method for functions that should be atomic but may be called
-from contexts that already have transactions.
-"""
-function with_transaction_safe(f::Function, db::DuckDB.DB)
-    if IN_TRANSACTION[]
-        # Already in a transaction, just execute
-        return f()
-    else
-        # Start a new transaction
-        return with_transaction(f, db)
-    end
-end
-export with_transaction_safe
-
-"""
-    backup_database(db_path::AbstractString; suffix::String="")
-
-Create a timestamped backup of the database file.
-Returns the path to the backup file.
-
-# Example
-```julia
-backup_path = backup_database("events.duckdb")
-# Creates: events.duckdb.backup.2025-12-04T10-30-00
-```
-"""
-function backup_database(db_path::AbstractString; suffix::String="")
-    if !isfile(db_path)
-        @warn "Database file does not exist, nothing to backup" path=db_path
-        return nothing
-    end
-
-    timestamp = Dates.format(now(), "yyyy-mm-ddTHH-MM-SS")
-    backup_suffix = isempty(suffix) ? timestamp : "$timestamp-$suffix"
-    backup_path = "$db_path.backup.$backup_suffix"
-
-    cp(db_path, backup_path)
-    @info "Created database backup" original=db_path backup=backup_path
-
-    return backup_path
-end
-export backup_database
 
 """
     verify_database(db_path::AbstractString)
@@ -268,8 +204,8 @@ function verify_database(db_path::AbstractString)
     end
 
     # Try to open connection
+    db = DuckDB.DB(db_path)
     try
-        db = DuckDB.DB(db_path)
         results["connection_ok"] = true
 
         # Check core tables exist
@@ -315,10 +251,11 @@ function verify_database(db_path::AbstractString)
 
         results["integrity_ok"] = isempty(results["errors"])
 
-        DBInterface.close!(db)
     catch e
         push!(results["errors"], "Database connection error: $e")
         return (valid=false, results=results)
+    finally
+        DBInterface.close!(db)
     end
 
     return (valid=isempty(results["errors"]), results=results)
@@ -461,113 +398,6 @@ end
 export event_overview
 
 """
-Export payment status to CSV file.
-Shows computed cost, payments, subsidies, total credits, and remaining amount.
-"""
-function export_payment_status_csv(db::DuckDB.DB, event_id::AbstractString, output_path::AbstractString)
-    # Sanitize path by escaping single quotes to prevent SQL injection
-    sanitized_path = replace(output_path, "'" => "''")
-
-    # Use prepared statement for event_id, but path must be literal in COPY TO
-    stmt = DBInterface.prepare(db, """
-        COPY (
-            WITH payment_totals AS (
-                SELECT
-                    pm.registration_id,
-                    SUM(bt.amount) as total_paid,
-                    COUNT(*) as payment_count,
-                    MAX(bt.transfer_date) as last_payment_date
-                FROM payment_matches pm
-                JOIN bank_transfers bt ON bt.id = pm.transfer_id
-                WHERE pm.match_type != 'unmatched'
-                GROUP BY pm.registration_id
-            ),
-            subsidy_totals AS (
-                SELECT registration_id, SUM(amount) as total_subsidy
-                FROM subsidies
-                GROUP BY registration_id
-            )
-            SELECT
-                r.reference_number as "Referenz",
-                r.first_name as "Vorname",
-                r.last_name as "Nachname",
-                r.email as "E-Mail",
-                r.computed_cost as "Kosten",
-                COALESCE(pt.total_paid, 0) as "Bezahlt",
-                COALESCE(st.total_subsidy, 0) as "Zuschuss",
-                COALESCE(pt.total_paid, 0) + COALESCE(st.total_subsidy, 0) as "Gesamt Gutschrift",
-                r.computed_cost - COALESCE(pt.total_paid, 0) - COALESCE(st.total_subsidy, 0) as "Offen",
-                CASE
-                    WHEN COALESCE(pt.total_paid, 0) + COALESCE(st.total_subsidy, 0) >= r.computed_cost THEN 'Bezahlt'
-                    WHEN COALESCE(pt.total_paid, 0) + COALESCE(st.total_subsidy, 0) > 0 THEN 'Teilweise'
-                    ELSE 'Offen'
-                END as "Status",
-                COALESCE(pt.payment_count, 0) as "Anzahl Zahlungen",
-                pt.last_payment_date as "Letzte Zahlung"
-            FROM registrations r
-            LEFT JOIN payment_totals pt ON pt.registration_id = r.id
-            LEFT JOIN subsidy_totals st ON st.registration_id = r.id
-            WHERE r.event_id = ?
-            ORDER BY r.last_name, r.first_name
-        ) TO '$sanitized_path' (HEADER, DELIMITER ';')
-    """)
-    DBInterface.execute(stmt, [event_id])
-    @info "Exported payment status" event_id=event_id path=output_path
-end
-export export_payment_status_csv
-
-"""
-Export full registration details to CSV.
-"""
-function export_registrations_csv(db::DuckDB.DB, event_id::AbstractString, output_path::AbstractString;
-                                   fields::Union{Vector{String}, Nothing}=nothing)
-    # Get all fields if not specified
-    if fields === nothing
-        field_result = DBInterface.execute(db, """
-            SELECT DISTINCT json_keys(fields) FROM registrations WHERE event_id = ?
-        """, [event_id])
-
-        all_fields = Set{String}()
-        for row in field_result
-            if row[1] !== nothing
-                for f in row[1]
-                    push!(all_fields, f)
-                end
-            end
-        end
-        fields = sort(collect(all_fields))
-    end
-
-    # Sanitize field names to prevent SQL injection (remove quotes and backticks)
-    sanitized_fields = [replace(replace(f, "\"" => ""), "`" => "") for f in fields]
-    field_extracts = join(["json_extract_string(fields, '\$.$f') as \"$f\"" for f in sanitized_fields], ", ")
-
-    # Sanitize path by escaping single quotes
-    sanitized_path = replace(output_path, "'" => "''")
-
-    # Use prepared statement for event_id, but path must be literal in COPY TO
-    stmt = DBInterface.prepare(db, """
-        COPY (
-            SELECT
-                reference_number as "Referenz",
-                first_name as "Vorname",
-                last_name as "Nachname",
-                email as "E-Mail",
-                computed_cost as "Berechnete Kosten",
-                computed_cost as "Kosten",
-                registration_date as "Anmeldedatum",
-                $field_extracts
-            FROM registrations
-            WHERE event_id = ?
-            ORDER BY last_name, first_name
-        ) TO '$sanitized_path' (HEADER, DELIMITER ';')
-    """)
-    DBInterface.execute(stmt, [event_id])
-    @info "Exported registrations" event_id=event_id path=output_path
-end
-export export_registrations_csv
-
-"""
 Interactive helper to resolve unmatched transfers.
 """
 function resolve_unmatched_interactive(db::DuckDB.DB)
@@ -668,16 +498,6 @@ function setup_project!(config_dir::AbstractString="config")
     templates_dir = joinpath(config_dir, "templates")
     Templates.set_templates_dir!(templates_dir)
     ensure_default_templates(templates_dir)
-
-    @info "Project setup complete" config_dir=config_dir
-    println("\nNext steps:")
-    println("1. Place .eml files in an 'emails' directory")
-    println("2. Run: eventreg sync")
-    println("   (Processes emails and auto-generates event configs)")
-    println("3. Edit generated configs in $(joinpath(config_dir, "events"))/")
-    println("4. Run: eventreg sync again to apply cost rules")
-    println("5. Customize email templates in $templates_dir/ if needed")
-
     return config_dir
 end
 export setup_project!

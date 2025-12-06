@@ -8,7 +8,7 @@ using SHA
 using DelimitedFiles
 
 # Import from parent module
-import ..EventRegistrations: with_transaction_safe
+import ..EventRegistrations: with_transaction
 
 # Import from parent module's submodule
 using ..ReferenceNumbers
@@ -66,8 +66,7 @@ function import_bank_csv!(db::DuckDB.DB, csv_path::AbstractString;
     new_count = 0
     skip_count = 0
 
-    with_transaction_safe(db) do
-        for line in lines[header_idx+1:end]
+    for line in lines[header_idx+1:end]
         # Skip empty lines
         if isempty(strip(line))
             continue
@@ -113,7 +112,7 @@ function import_bank_csv!(db::DuckDB.DB, csv_path::AbstractString;
 
         # Create hash for duplicate detection
         hash_input = "$date_str|$amount_str|$reference|$sender_name"
-        transfer_hash = bytes2hex(sha256(hash_input))
+        transfer_hash = hash_input# bytes2hex(sha256(hash_input))
 
         # Check if already exists
         existing = DBInterface.execute(db,
@@ -129,17 +128,17 @@ function import_bank_csv!(db::DuckDB.DB, csv_path::AbstractString;
         raw_json = JSON.json(raw_data)
 
         # Insert transfer
-        DBInterface.execute(db, """
-            INSERT INTO bank_transfers (id, transfer_hash, transfer_date, amount,
-                                        sender_name, sender_iban, reference_text,
-                                        raw_data, source_file, imported_at)
-            VALUES (nextval('transfer_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, [transfer_hash, transfer_date, amount, sender_name, sender_iban,
-              reference, raw_json, filename, now()])
-
+        with_transaction(db) do
+            DBInterface.execute(db, """
+                INSERT INTO bank_transfers (id, transfer_hash, transfer_date, amount,
+                                            sender_name, sender_iban, reference_text,
+                                            raw_data, source_file, imported_at)
+                VALUES (nextval('transfer_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, [transfer_hash, transfer_date, amount, sender_name, sender_iban,
+                reference, raw_json, filename, now()])
+        end
         new_count += 1
-        end  # End for loop
-    end  # End with_transaction_safe
+    end  # End for loop
 
     @info "Imported bank transfers" new=new_count skipped=skip_count file=filename
 
@@ -264,8 +263,7 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
     unmatched_list = []
 
     # Wrap all matching operations in a transaction (safe for nesting)
-    with_transaction_safe(db) do
-        for transfer in transfers
+    for transfer in transfers
         transfer_id, reference_text, amount, sender_name = transfer
         # Convert amount to Float64 to avoid DuckDB binding issues with FixedDecimal
         amount = Float64(amount)
@@ -301,11 +299,13 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                 match_type = final_confidence >= 0.8 ? "auto" : "auto_uncertain"
 
                 # Create match
-                DBInterface.execute(db, """
-                    INSERT INTO payment_matches (id, transfer_id, registration_id, match_type,
-                                                 match_confidence, matched_reference, created_at)
-                    VALUES (nextval('match_id_seq'), ?, ?, ?, ?, ?, ?)
-                """, [transfer_id, reg_id, match_type, final_confidence, ref_candidate, now()])
+                with_transaction(db) do
+                    DBInterface.execute(db, """
+                        INSERT INTO payment_matches (id, transfer_id, registration_id, match_type,
+                                                    match_confidence, matched_reference, notes, created_at)
+                        VALUES (nextval('match_id_seq'), ?, ?, ?, ?, ?, ?, ?)
+                    """, [transfer_id, reg_id, match_type, final_confidence, ref_candidate, "", now()])
+                end
 
                 matched += 1
                 match_found = true
@@ -349,12 +349,13 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
 
                     if name_match
                         # Create match with lower confidence
-                        DBInterface.execute(db, """
-                            INSERT INTO payment_matches (id, transfer_id, registration_id, match_type,
-                                                        match_confidence, matched_reference, notes, created_at)
-                            VALUES (nextval('match_id_seq'), ?, ?, 'auto_name', 0.6, ?, 'Matched by name + amount', ?)
-                        """, [transfer_id, reg_id, ref, now()])
-
+                        with_transaction(db) do
+                            DBInterface.execute(db, """
+                                INSERT INTO payment_matches (id, transfer_id, registration_id, match_type,
+                                                            match_confidence, matched_reference, notes, created_at)
+                                VALUES (nextval('match_id_seq'), ?, ?, 'auto_name', 0.6, ?, 'Matched by name + amount', ?)
+                            """, [transfer_id, reg_id, ref, now()])
+                        end
                         matched += 1
                         match_found = true
                         @info "Matched transfer by name" sender=sender_name registration="$first_name $last_name"
@@ -372,9 +373,7 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                 sender_name=sender_name
             ))
         end
-        end  # End for loop
-    end  # End with_transaction_safe
-
+    end  # End for loop
     @info "Transfer matching complete" matched=matched unmatched=length(unmatched_list)
 
     return (matched=matched, unmatched=unmatched_list)
@@ -423,11 +422,13 @@ function manual_match!(db::DuckDB.DB, transfer_id::Integer, registration_id::Int
 
     if !isempty(collect(existing))
         # Update existing match
-        DBInterface.execute(db, """
-            UPDATE payment_matches
-            SET registration_id = ?, match_type = 'manual', match_confidence = 1.0, notes = ?
-            WHERE transfer_id = ?
-        """, [registration_id, notes, transfer_id])
+        with_transaction(db) do
+            DBInterface.execute(db, """
+                UPDATE payment_matches
+                SET registration_id = ?, match_type = 'manual', match_confidence = 1.0, notes = ?
+                WHERE transfer_id = ?
+            """, [registration_id, notes, transfer_id])
+        end
     else
         # Create new match
         # Get registration reference
@@ -435,12 +436,13 @@ function manual_match!(db::DuckDB.DB, transfer_id::Integer, registration_id::Int
             "SELECT reference_number FROM registrations WHERE id = ?",
             [registration_id])
         ref = first(collect(reg_result))[1]
-
-        DBInterface.execute(db, """
-            INSERT INTO payment_matches (id, transfer_id, registration_id, match_type,
-                                        match_confidence, matched_reference, notes, created_at)
-            VALUES (nextval('match_id_seq'), ?, ?, 'manual', 1.0, ?, ?, ?)
-        """, [transfer_id, registration_id, ref, notes, now()])
+        with_transaction(db) do
+            DBInterface.execute(db, """
+                INSERT INTO payment_matches (id, transfer_id, registration_id, match_type,
+                                            match_confidence, matched_reference, notes, created_at)
+                VALUES (nextval('match_id_seq'), ?, ?, 'manual', 1.0, ?, ?, ?)
+            """, [transfer_id, registration_id, ref, notes, now()])
+        end
     end
 
     @info "Manual match created" transfer_id=transfer_id registration_id=registration_id

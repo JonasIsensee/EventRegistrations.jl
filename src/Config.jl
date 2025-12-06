@@ -8,7 +8,7 @@ using Dates
 using SHA
 
 # Import from parent module
-import ..EventRegistrations: with_transaction_safe
+import ..EventRegistrations: with_transaction
 
 export load_field_aliases, generate_field_config, resolve_field_name
 export load_event_config, load_event_aliases, generate_event_config_template
@@ -629,44 +629,42 @@ Sync event configs from TOML files to database.
 function sync_event_configs_to_db!(db::DuckDB.DB, config_dir::AbstractString=CONFIG_DIR[])
     # Load event configs (event-specific aliases only)
     configs = load_all_event_configs(config_dir)
-
-    # Wrap all syncs in a transaction for atomicity (safe for nesting)
-    with_transaction_safe(db) do
-        for (event_id, config) in configs
+    for (event_id, config) in configs
         event_name = get(config, "event_name", nothing)
+        if isnothing(event_name)
+            println("Why is event name notnhing?")
+            continue
+        end
         base_cost = get(config, "base", 0.0)
 
         # Remove event_name from rules dict
         rules = copy(config)
         delete!(rules, "event_name")
-
         # This would call set_event_cost_rules - but we need to avoid circular deps
         # Instead, we'll do it directly here
-        rules_json = json_write(rules)
-
-        DBInterface.execute(db, """
-            INSERT INTO events (event_id, event_name, base_cost, cost_rules)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT (event_id) DO UPDATE SET
-                event_name = COALESCE(EXCLUDED.event_name, events.event_name),
-                base_cost = EXCLUDED.base_cost,
-                cost_rules = EXCLUDED.cost_rules
-        """, [event_id, event_name, base_cost, rules_json])
+        rules_json =  JSON.json(rules)
+        rules_json = replace(rules_json, "€" => "\\u20AC")
+        with_transaction(db) do
+            DBInterface.execute(db,
+            """
+                INSERT INTO events (event_id, event_name, base_cost, cost_rules)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (event_id) DO UPDATE SET
+                    event_name = COALESCE(EXCLUDED.event_name, events.event_name),
+                    base_cost = EXCLUDED.base_cost,
+                    cost_rules = EXCLUDED.cost_rules
+            """
+            , [event_id, event_name, base_cost, rules_json])
+        end
 
         # Record event config sync
         event_config_path = joinpath(config_dir, "events", "$event_id.toml")
         if isfile(event_config_path)
             record_config_sync(db, event_config_path)
         end
-        end  # End for loop
-    end  # End with_transaction_safe
+    end  # End for loop
 
-    @info "Synced event configs to database" count=length(configs)
-end
-
-# Simple JSON writer
-function json_write(obj)
-    return JSON.json(obj)
+    println("Synced $(length(configs)) event configs to database")
 end
 
 # =============================================================================
@@ -702,22 +700,19 @@ end
 Record that a config file has been synced.
 """
 function record_config_sync(db::DuckDB.DB, config_path::AbstractString)
-    if !isfile(config_path)
-        return
-    end
-
     mtime = get_file_mtime(config_path)
     file_hash = compute_file_hash(config_path)
     now_ts = Dates.now()
-
-    DBInterface.execute(db, """
-        INSERT INTO config_sync (config_path, file_mtime, synced_at, file_hash)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT (config_path) DO UPDATE SET
-            file_mtime = EXCLUDED.file_mtime,
-            synced_at = EXCLUDED.synced_at,
-            file_hash = EXCLUDED.file_hash
-    """, [config_path, mtime, now_ts, file_hash])
+    with_transaction(db) do
+        DBInterface.execute(db, """
+            INSERT INTO config_sync (config_path, file_mtime, synced_at, file_hash)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (config_path) DO UPDATE SET
+                file_mtime = EXCLUDED.file_mtime,
+                synced_at = EXCLUDED.synced_at,
+                file_hash = EXCLUDED.file_hash
+        """, [config_path, mtime, now_ts, file_hash])
+    end
 end
 
 """

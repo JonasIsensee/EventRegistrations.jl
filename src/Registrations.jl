@@ -6,7 +6,7 @@ using JSON
 using Dates
 
 # Import from parent module
-import ..EventRegistrations: with_transaction_safe
+import ..EventRegistrations: with_transaction
 
 # Import from parent module's submodules
 using ..EmailParser
@@ -253,79 +253,82 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString)
     no_cost_config = false
 
     # Wrap all database modifications in a transaction (safe for nesting)
-    with_transaction_safe(db) do
-        # Record that we processed this email
+    # Record that we processed this email
+    with_transaction(db) do
         DBInterface.execute(db, """
             INSERT INTO processed_emails (file_hash, filename, processed_at, has_submission, event_id)
             VALUES (?, ?, ?, ?, ?)
         """, [file_hash, filename, now(), has_submission,
-              has_submission ? submission.event_id : nothing])
+                has_submission ? submission.event_id : nothing])
+    end
+    if has_submission
+        # Parse email date
+        email_date = haskey(parsed.headers, "date") ?
+            EmailParser.parse_email_date(parsed.headers["date"]) : now()
 
-        if has_submission
-            # Parse email date
-            email_date = haskey(parsed.headers, "date") ?
-                EmailParser.parse_email_date(parsed.headers["date"]) : now()
-
-            # Store raw submission
-            fields_json = JSON.json(submission.fields)
-
+        # Store raw submission
+        fields_json = JSON.json(submission.fields)
+        with_transaction(db) do
             DBInterface.execute(db, """
                 INSERT INTO submissions (id, file_hash, event_id, email, first_name, last_name,
-                                         fields, email_date, email_from, email_subject, created_at)
+                                            fields, email_date, email_from, email_subject, created_at)
                 VALUES (nextval('submission_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [file_hash, submission.event_id, submission.email,
-                  submission.first_name, submission.last_name, fields_json,
-                  email_date, get(parsed.headers, "from", nothing),
-                  get(parsed.headers, "subject", nothing), now()])
+                    submission.first_name, submission.last_name, fields_json,
+                    email_date, get(parsed.headers, "from", nothing),
+                    get(parsed.headers, "subject", nothing), now()])
+        end
 
-            # Get the submission ID we just inserted
-            sub_result = DBInterface.execute(db,
-                "SELECT currval('submission_id_seq')")
-            submission_id = first(collect(sub_result))[1]
+        # Get the submission ID we just inserted
+        sub_result = DBInterface.execute(db,
+            "SELECT currval('submission_id_seq')")
+        submission_id = first(collect(sub_result))[1]
 
-            # Check for existing registration (resubmission case)
-            existing = DBInterface.execute(db, """
-                SELECT id, reference_number FROM registrations
-                WHERE event_id = ? AND email = ?
-            """, [submission.event_id, submission.email])
-            existing_rows = collect(existing)
+        # Check for existing registration (resubmission case)
+        existing = DBInterface.execute(db, """
+            SELECT id, reference_number FROM registrations
+            WHERE event_id = ? AND email = ?
+        """, [submission.event_id, submission.email])
+        existing_rows = collect(existing)
 
-            # Calculate cost (returns nothing if no cost config exists)
-            computed_cost = calculate_cost(db, submission.event_id, submission.fields)
+        # Calculate cost (returns nothing if no cost config exists)
+        computed_cost = calculate_cost(db, submission.event_id, submission.fields)
 
-            if isempty(existing_rows)
-                # New registration
+        if isempty(existing_rows)
+            # New registration
+            with_transaction(db) do
                 DBInterface.execute(db, """
                     INSERT INTO registrations (id, event_id, email, reference_number,
-                                               first_name, last_name, fields, computed_cost,
-                                               latest_submission_id, registration_date, updated_at)
+                                                first_name, last_name, fields, computed_cost,
+                                                latest_submission_id, registration_date, updated_at)
                     VALUES (nextval('registration_id_seq'), ?, ?, 'TEMP', ?, ?, ?, ?, ?, ?, ?)
                 """, [submission.event_id, submission.email,
-                      submission.first_name, submission.last_name, fields_json,
-                      computed_cost, submission_id, email_date, now()])
+                        submission.first_name, submission.last_name, fields_json,
+                        computed_cost, submission_id, email_date, now()])
+            end
 
-                # Get the registration ID and generate reference number
-                reg_result = DBInterface.execute(db, "SELECT currval('registration_id_seq')")
-                reg_id = first(collect(reg_result))[1]
+            # Get the registration ID and generate reference number
+            reg_result = DBInterface.execute(db, "SELECT currval('registration_id_seq')")
+            reg_id = first(collect(reg_result))[1]
 
-                ref_number = generate_reference_number(submission.event_id, reg_id)
-
+            ref_number = generate_reference_number(submission.event_id, reg_id)
+            with_transaction(db) do
                 DBInterface.execute(db, """
                     UPDATE registrations SET reference_number = ? WHERE id = ?
                 """, [ref_number, reg_id])
-
-                is_new = true
-                if computed_cost === nothing
-                    no_cost_config = true
-                    @warn "New registration - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
-                else
-                    @info "New registration" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
-                end
+            end
+            is_new = true
+            if computed_cost === nothing
+                no_cost_config = true
+                @warn "New registration - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
             else
-                # Update existing registration (keep reference number!)
-                reg_id = existing_rows[1][1]
-                ref_number = existing_rows[1][2]
-
+                @info "New registration" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
+            end
+        else
+            # Update existing registration (keep reference number!)
+            reg_id = existing_rows[1][1]
+            ref_number = existing_rows[1][2]
+            with_transaction(db) do
                 DBInterface.execute(db, """
                     UPDATE registrations SET
                         first_name = ?,
@@ -336,18 +339,18 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString)
                         updated_at = ?
                     WHERE id = ?
                 """, [submission.first_name, submission.last_name, fields_json,
-                      computed_cost, submission_id, now(), reg_id])
-
-                is_update = true
-                if computed_cost === nothing
-                    no_cost_config = true
-                    @warn "Updated registration (resubmission) - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
-                else
-                    @info "Updated registration (resubmission)" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
-                end
+                        computed_cost, submission_id, now(), reg_id])
             end
-        end  # End if has_submission
-    end  # End with_transaction_safe
+
+            is_update = true
+            if computed_cost === nothing
+                no_cost_config = true
+                @warn "Updated registration (resubmission) - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
+            else
+                @info "Updated registration (resubmission)" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
+            end
+        end
+    end  # End if has_submission
 
     return (has_submission=has_submission, is_new=is_new, is_update=is_update, skipped=false, no_cost_config=no_cost_config)
 end
@@ -464,10 +467,12 @@ Multiple subsidies can be granted and they stack.
 function grant_subsidy!(db::DuckDB.DB, registration_id::Integer,
                         amount::Real; reason::String="", granted_by::String="")
     # Insert subsidy record
+    with_transaction(db) do
     DBInterface.execute(db, """
         INSERT INTO subsidies (id, registration_id, amount, reason, granted_by, granted_at)
         VALUES (nextval('subsidy_id_seq'), ?, ?, ?, ?, ?)
     """, [registration_id, amount, reason, granted_by, now()])
+    end
 
     @info "Granted subsidy" registration_id=registration_id amount=amount reason=reason
 end
@@ -637,8 +642,8 @@ function recalculate_costs!(db::DuckDB.DB, event_id::AbstractString;
     end
 
     # Apply all updates in a transaction (safe for nesting)
-    with_transaction_safe(db) do
-        for upd in updates
+    for upd in updates
+        with_transaction(db) do
             DBInterface.execute(db, """
                 UPDATE registrations SET computed_cost = ?, updated_at = ?
                 WHERE id = ?

@@ -18,14 +18,6 @@ function cmd_init(; db_path::String="events.duckdb", config_dir::String="config"
 
     db = init_project(db_path, config_dir)
     DBInterface.close!(db)
-
-    println("\n✓ Project initialized successfully!")
-    println("\nNext steps:")
-    println("  1. Place .eml files in an 'emails' directory")
-    println("  2. Run: eventreg sync")
-    println("     (This will process emails and auto-generate event configs)")
-    println("  3. Edit generated config files in config/events/")
-    println("  4. Run: eventreg sync again to apply cost rules")
     return 0
 end
 
@@ -130,32 +122,6 @@ function cmd_download_emails(;
         println("  Total on server: $(result.total_on_server)")
         return 0
     end
-end
-
-"""
-Generate field configuration (DEPRECATED - now auto-generated per event).
-This command is kept for backward compatibility but now recommends using event-specific configs.
-"""
-function cmd_generate_field_config(;
-    db_path::String="events.duckdb",
-    config_dir::String="config",
-    output::String=joinpath("config", "fields.toml"))
-
-    println("⚠ DEPRECATION NOTICE:")
-    println("The global fields.toml file is deprecated.")
-    println("Event-specific configurations are now automatically generated.")
-    println("")
-    println("Recommended workflow:")
-    println("  1. Run: eventreg sync")
-    println("     (Processes emails and auto-generates event configs)")
-    println("  2. Edit config files in: config/events/")
-    println("  3. Run: eventreg sync again to apply changes")
-    println("")
-    println("Each event config (config/events/<EVENT_ID>.toml) contains:")
-    println("  • [aliases] - Field name mappings specific to that event")
-    println("  • [costs] - Cost calculation rules using those aliases")
-
-    return 0
 end
 
 """
@@ -272,16 +238,7 @@ This loads:
 function cmd_sync_config(;
     db_path::String="events.duckdb",
     config_dir::String="config",
-    no_backup::Bool=false)
-
-    # Create backup before sync
-    if !no_backup && isfile(db_path)
-        println("Creating backup before sync...")
-        backup_path = backup_database(db_path; suffix="before-sync")
-        if backup_path !== nothing
-            println("  Backup: $backup_path")
-        end
-    end
+    )
 
     return with_database(db_path) do db
         println("Syncing event configurations to database...")
@@ -469,12 +426,11 @@ function cmd_status(; db_path::String="events.duckdb", config_dir::String="confi
     # Database
     println("Database:")
     println("  Path: $db_path")
-    if isfile(db_path)
-        println("  Status: ✓ Exists")
-        println("  Size: $(round(stat(db_path).size / 1024 / 1024, digits=2)) MB")
+    with_database(db_path) do db
+        if isfile(db_path)
+            println("  Status: ✓ Exists")
+            println("  Size: $(round(stat(db_path).size / 1024 / 1024, digits=2)) MB")
 
-        # Connect to get stats - use with_database for safety
-        with_database(db_path) do db
             # Count emails processed
             result = DBInterface.execute(db, "SELECT COUNT(*) FROM processed_emails")
             email_count = first(collect(result))[1]
@@ -489,55 +445,52 @@ function cmd_status(; db_path::String="events.duckdb", config_dir::String="confi
             result = DBInterface.execute(db, "SELECT COUNT(*) FROM registrations")
             registration_count = first(collect(result))[1]
             println("  Active registrations: $registration_count")
-        end
-    else
-        println("  Status: ❌ Not found (run 'eventreg init' to create)")
-    end
-    println()
-
-    # Configuration
-    println("Configuration:")
-    println("  Config directory: $config_dir")
-    if isdir(config_dir)
-        println("  Status: ✓ Exists")
-
-        # Check fields.toml
-        fields_path = joinpath(config_dir, "fields.toml")
-        if isfile(fields_path)
-            println("  Fields config: ✓ $fields_path")
         else
-            println("  Fields config: ❌ Not found (run 'eventreg generate-field-config')")
+            println("  Status: ❌ Not found (run 'eventreg init' to create)")
         end
 
-        # Check events directory
-        events_dir = joinpath(config_dir, "events")
-        if isdir(events_dir)
-            event_configs = filter(f -> endswith(f, ".toml"), readdir(events_dir))
-            println("  Event configs: $(length(event_configs)) files in $events_dir")
-            for config_file in event_configs
-                println("    - $(config_file)")
+        # Configuration
+        println("Configuration:")
+        println("  Config directory: $config_dir")
+        if isdir(config_dir)
+            println("  Status: ✓ Exists")
+
+            # Check fields.toml
+            fields_path = joinpath(config_dir, "fields.toml")
+            if isfile(fields_path)
+                println("  Fields config: ✓ $fields_path")
+            else
+                println("  Fields config: ❌ Not found (run 'eventreg generate-field-config')")
+            end
+
+            # Check events directory
+            events_dir = joinpath(config_dir, "events")
+            if isdir(events_dir)
+                event_configs = filter(f -> endswith(f, ".toml"), readdir(events_dir))
+                println("  Event configs: $(length(event_configs)) files in $events_dir")
+                for config_file in event_configs
+                    println("    - $(config_file)")
+                end
+            else
+                println("  Events directory: ❌ Not found")
+            end
+
+            # Check templates directory
+            templates_dir = joinpath(config_dir, "templates")
+            if isdir(templates_dir)
+                template_files = filter(f -> endswith(f, ".txt"), readdir(templates_dir))
+                println("  Templates: $(length(template_files)) files in $templates_dir")
+            else
+                println("  Templates directory: ❌ Not found")
             end
         else
-            println("  Events directory: ❌ Not found")
+            println("  Status: ❌ Not found (run 'eventreg init' to create)")
         end
+        println()
 
-        # Check templates directory
-        templates_dir = joinpath(config_dir, "templates")
-        if isdir(templates_dir)
-            template_files = filter(f -> endswith(f, ".txt"), readdir(templates_dir))
-            println("  Templates: $(length(template_files)) files in $templates_dir")
-        else
-            println("  Templates directory: ❌ Not found")
-        end
-    else
-        println("  Status: ❌ Not found (run 'eventreg init' to create)")
-    end
-    println()
-
-    # Events in database
-    if isfile(db_path)
-        println("Events in Database:")
-        with_database(db_path) do db
+        # Events in database
+        if isfile(db_path)
+            println("Events in Database:")
             result = DBInterface.execute(db, """
                 SELECT
                     e.event_id,
@@ -707,36 +660,36 @@ function cmd_sync(;
     dry_run_emails = parse(Bool, dry_run_emails)
     println("=== EventRegistrations Sync ===\n")
 
+
     # Step 1: Initialize database if necessary
-    if !isfile(db_path)
+    db = if !isfile(db_path)
         println("[1/10] Initializing database...")
-        db = init_project(db_path, config_dir)
-        DBInterface.close!(db)
+        init_project(db_path, config_dir)
     else
         println("[1/10] Database exists: $db_path")
+        init_database(db_path)
     end
+    try
+        println("Syncing event configurations to database...")
+        sync_event_configs_to_db!(db, config_dir)
+        println("\n✓ Configuration synced successfully!")
 
-    # Step 2: Download emails (if credentials exist)
-    println("\n[2/10] Checking for new emails...")
-    if isfile(credentials_path) || isfile("credentials.toml") || isfile("config/credentials.toml")
-        result = download_emails!(
-            credentials_path=credentials_path,
-            emails_dir=emails_dir,
-            verbose=false
-        )
-        if result.error_count == 0
-            println("  Downloaded: $(result.new_count) new, $(result.skipped_count) already local")
+        # Step 2: Download emails (if credentials exist)
+        println("\n[2/10] Checking for new emails...")
+        if isfile(credentials_path) || isfile("credentials.toml") || isfile("config/credentials.toml")
+            result = download_emails!(; credentials_path, emails_dir, verbose=false)
+            if result.error_count == 0
+                println("  Downloaded: $(result.new_count) new, $(result.skipped_count) already local")
+            else
+                println("  ⚠ Downloaded with errors: $(result.new_count) new, $(result.error_count) errors")
+            end
         else
-            println("  ⚠ Downloaded with errors: $(result.new_count) new, $(result.error_count) errors")
+            println("  Skipping (no credentials file found)")
         end
-    else
-        println("  Skipping (no credentials file found)")
-    end
 
-    # Step 3: Process emails
-    println("\n[3/10] Processing emails...")
-    stats_ref = Ref{Any}(nothing)
-    with_database(db_path) do db
+        # # Step 3: Process emails
+        println("\n[3/10] Processing emails...")
+        stats_ref = Ref{Any}(nothing)
         if isdir(emails_dir)
             stats = process_email_folder!(db, emails_dir;
                                           config_dir=config_dir,
@@ -749,23 +702,20 @@ function cmd_sync(;
         else
             println("  No emails directory found")
         end
-    end
 
-    stats = stats_ref[]
-    if stats !== nothing && stats.terminated
-        println("\nSync terminated by user to allow configuration edits.")
-        return 0
-    end
+        stats = stats_ref[]
+        if stats !== nothing && stats.terminated
+            println("\nSync terminated by user to allow configuration edits.")
+            return 0
+        end
 
-    # Step 3.5: Auto-generate event configs for new events
-    println("\n[3.5/10] Checking for new events without configuration...")
-    with_database(db_path) do db
+        # Step 3.5: Auto-generate event configs for new events
+        println("\n[3.5/10] Checking for new events without configuration...")
         # Get all events from registrations
         events_result = DBInterface.execute(db, """
             SELECT DISTINCT event_id FROM registrations
             ORDER BY event_id
         """)
-
         events_dir_path = joinpath(config_dir, "events")
         mkpath(events_dir_path)
 
@@ -792,24 +742,14 @@ function cmd_sync(;
         else
             println("  ✓ All events have configurations")
         end
-    end
 
-    # Step 4: Check config sync and track which events changed
-    println("\n[4/10] Checking configuration sync...")
-    changed_event_ids = String[]
-    with_database(db_path) do db
+        # Step 4: Check config sync and track which events changed
+        println("\n[4/10] Checking configuration sync...")
         unsynced = get_unsynced_configs(db, config_dir)
         if !isempty(unsynced)
             println("  ⚠ $(length(unsynced)) config files need syncing:")
             for file in unsynced
                 println("    - $(file.path)")
-                # Extract event_id from event config paths
-                if occursin("/events/", file.path) && endswith(file.path, ".toml")
-                    event_id_match = match(r"/events/(.+)\.toml$", file.path)
-                    if event_id_match !== nothing
-                        push!(changed_event_ids, event_id_match.captures[1])
-                    end
-                end
             end
             println("  Running sync...")
             sync_event_configs_to_db!(db, config_dir)
@@ -817,55 +757,26 @@ function cmd_sync(;
         else
             println("  ✓ All configurations in sync")
         end
-    end
 
-    # Step 5-6: Recalculate costs for changed events and NULL costs
-    println("\n[5/10] Recalculating costs...")
-    with_database(db_path) do db
+        # Step 5-6: Recalculate costs for changed events and NULL costs
+        println("\n[5/10] Recalculating costs...")
         recalculated = String[]
-
-        # First, recalculate for events with changed configs
-        if !isempty(changed_event_ids)
-            println("  Events with configuration changes:")
-            for evt_id in changed_event_ids
-                # Count registrations for this event
-                count_result = DBInterface.execute(db, """
-                    SELECT COUNT(*) FROM registrations WHERE event_id = ?
-                """, [evt_id])
-                count = first(collect(count_result))[1]
-
-                if count > 0
-                    println("    • Recalculating $evt_id ($count registrations)...")
-                    recalculate_costs!(db, evt_id)
-                    push!(recalculated, evt_id)
-                end
-            end
-        end
 
         # Then check for other events with NULL costs but existing config
         events = list_events(db)
         for event_row in events
             evt_id = event_row[1]
 
-            # Skip if we already recalculated this event
-            if evt_id in recalculated
-                continue
-            end
-
             # Check if event has registrations without costs but has config
             check = DBInterface.execute(db, """
                 SELECT COUNT(*)
                 FROM registrations r
                 JOIN events e ON e.event_id = r.event_id
-                WHERE r.event_id = ? AND r.computed_cost IS NULL AND e.cost_rules IS NOT NULL
-            """, [evt_id])
-            count = first(collect(check))[1]
+                WHERE r.event_id = ? AND e.cost_rules IS NOT NULL
+            """, [evt_id]) # AND r.computed_cost IS NULL
 
-            if count > 0
-                println("  Recalculating costs for $evt_id ($count NULL costs)...")
-                recalculate_costs!(db, evt_id)
-                push!(recalculated, evt_id)
-            end
+            recalculate_costs!(db, evt_id)
+            push!(recalculated, evt_id)
         end
 
         if isempty(recalculated)
@@ -873,15 +784,12 @@ function cmd_sync(;
         else
             println("  ✓ Recalculated costs for $(length(recalculated)) event(s)")
         end
-    end
-
-    # Step 7: Import bank transfers
-    println("\n[6/10] Checking for bank transfers...")
-    if isdir(bank_dir)
-        csv_files = filter(f -> endswith(lowercase(f), ".csv"), readdir(bank_dir))
-        if !isempty(csv_files)
-            println("  Found $(length(csv_files)) CSV files")
-            with_database(db_path) do db
+        # Step 7: Import bank transfers
+        println("\n[6/10] Checking for bank transfers...")
+        if isdir(bank_dir)
+            csv_files = filter(f -> endswith(lowercase(f), ".csv"), readdir(bank_dir))
+            if !isempty(csv_files)
+                println("  Found $(length(csv_files)) CSV files")
                 for csv_file in csv_files
                     full_path = joinpath(bank_dir, csv_file)
                     result = import_bank_csv!(db, full_path; delimiter=';', decimal_comma=true)
@@ -889,17 +797,15 @@ function cmd_sync(;
                         println("    $csv_file: $(result.new) new transfers")
                     end
                 end
+            else
+                println("  No CSV files found in $bank_dir")
             end
         else
-            println("  No CSV files found in $bank_dir")
+            println("  No bank transfers directory ($bank_dir)")
         end
-    else
-        println("  No bank transfers directory ($bank_dir)")
-    end
 
-    # Step 8: Match transfers
-    println("\n[7/10] Matching bank transfers...")
-    with_database(db_path) do db
+        # #Step 8: Match transfers
+        println("\n[7/10] Matching bank transfers...")
         if event_id !== nothing
             result = match_transfers!(db; event_id=event_id)
             println("  Matched: $(result.matched), Unmatched: $(length(result.unmatched))")
@@ -914,29 +820,23 @@ function cmd_sync(;
             end
             println("  Total matched: $total_matched")
         end
-    end
 
-    # Step 9: Load email configuration
-    println("\n[8/10] Loading email configuration...")
-    if isfile(credentials_path)
-        success = load_email_config_from_file!(credentials_path; dry_run=dry_run_emails)
-        if success
-            println("  ✓ Email configuration loaded (dry_run=$(dry_run_emails))")
+        # Step 9: Load email configuration
+        println("\n[8/10] Loading email configuration...")
+        if isfile(credentials_path)
+            success = load_email_config_from_file!(credentials_path; dry_run=dry_run_emails)
+            if success
+                println("  ✓ Email configuration loaded (dry_run=$(dry_run_emails))")
+            else
+                println("  ⚠ Failed to load email configuration")
+            end
         else
-            println("  ⚠ Failed to load email configuration")
+            println("  No email credentials found - emails will be skipped")
         end
-    else
-        println("  No email credentials found - emails will be skipped")
-    end
 
-    # Step 10: Send/resend emails
-    println("\n[9/10] Checking for emails to send...")
-    with_database(db_path) do db
-        target_events = if event_id !== nothing
-            [event_id]
-        else
-            [row[1] for row in list_events(db)]
-        end
+        # Step 10: Send/resend emails
+        println("\n[9/10] Checking for emails to send...")
+        target_events = [row[1] for row in list_events(db)]
 
         total_sent = 0
         for evt_id in target_events
@@ -950,11 +850,9 @@ function cmd_sync(;
         else
             println("  ✓ No emails need to be sent")
         end
-    end
 
-    # Step 11: Summary
-    println("\n[10/10] Generating summary...")
-    with_database(db_path) do db
+        # Step 11: Summary
+        println("\n[10/10] Generating summary...")
         target_event = if event_id !== nothing
             event_id
         else
@@ -975,27 +873,11 @@ function cmd_sync(;
                 println("  Outstanding: €$(overview.outstanding)")
             end
         end
+        println("\n=== Sync Complete ===\n")
+    finally
+        DBInterface.close!(db)
     end
-
-    println("\n=== Sync Complete ===\n")
     return 0
-end
-
-"""
-Create a backup of the database.
-"""
-function cmd_backup(; db_path::String="events.duckdb", suffix::String="manual")
-    println("Creating backup of database: $db_path")
-
-    backup_path = backup_database(db_path; suffix=suffix)
-
-    if backup_path !== nothing
-        println("✓ Backup created: $backup_path")
-        return 0
-    else
-        println("❌ Failed to create backup")
-        return 1
-    end
 end
 
 """
@@ -1434,8 +1316,7 @@ function run_cli(args::Vector{String})
         if startswith(arg, "--")
             if contains(arg, "=")
                 key, val = split(arg[3:end], "=", limit=2)
-                # Convert to appropriate type and ensure it's a String, not SubString
-                options[Symbol(replace(key, "-" => "_"))] = String(val)
+                options[Symbol(replace(key, "-" => "_"))] = string(val)
             else
                 # Boolean flag
                 options[Symbol(replace(arg[3:end], "-" => "_"))] = true
@@ -1525,12 +1406,8 @@ function run_cli(args::Vector{String})
         elseif command == "validate-config"
             event_id = length(positional) >= 1 ? positional[1] : nothing
             return cmd_validate_config(event_id; options...)
-        elseif command == "verify-database"
-            return cmd_verify_database(; options...)
         elseif command == "sync"
             return cmd_sync(; options...)
-        elseif command == "backup"
-            return cmd_backup(; options...)
         else
             println("❌ Error: Unknown command: $command")
             println("\nRun 'eventreg --help' for usage information.")
