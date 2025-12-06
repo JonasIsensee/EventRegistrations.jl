@@ -16,7 +16,7 @@ using Random: randstring
 # Import from parent module's submodule
 using ..Templates
 
-export send_confirmation_email!, send_pending_confirmations!, generate_email_content
+export generate_email_content
 export get_unsent_confirmations, preview_email, export_emails_to_files
 export configure!, EmailConfig
 """
@@ -146,7 +146,7 @@ function load_email_config_from_file!(path::String; dry_run::Bool=true)
         dry_run = dry_run
     )
 
-    @info "Loaded email configuration" server=smtp_server port=smtp_port from=from_address dry_run=dry_run
+    @info "Loaded email configuration" server=smtp_server port=smtp_port from=from_address dry_run=dry_run CONFIG
 
     return true
 end
@@ -332,11 +332,23 @@ end
 Generate a payment QR HTML block if configuration allows it.
 """
 function maybe_generate_payment_qr(amount::Float64, reference::String)
-    if !CONFIG.qr_enabled || amount ≤ 0.0
+    if !CONFIG.qr_enabled
+        @debug "QR code disabled in configuration" reference=reference
         return nothing
     end
 
-    if isempty(CONFIG.iban) || isempty(CONFIG.account_name)
+    if amount ≤ 0.0
+        @debug "QR code not generated: amount is zero or negative" reference=reference amount=amount
+        return nothing
+    end
+
+    if isempty(CONFIG.iban)
+        @warn "QR code not generated: IBAN not configured" reference=reference
+        return nothing
+    end
+
+    if isempty(CONFIG.account_name)
+        @warn "QR code not generated: account_name not configured" reference=reference
         return nothing
     end
 
@@ -430,14 +442,12 @@ function generate_email_content(;
         "sender_name" => escape_html(CONFIG.from_name),
     )
 
-    vars["qr_block"] = ""
+    # Generate QR code if enabled and appropriate
+    qr_html = maybe_generate_payment_qr(to_float(remaining), reference_number)
+    vars["qr_block"] = qr_html === nothing ? "" : qr_html
 
-    # Merge extra variables
+    # Merge extra variables (allowing override of qr_block if explicitly provided)
     merge!(vars, extra_vars)
-
-    if !haskey(vars, "qr_block")
-        vars["qr_block"] = ""
-    end
 
     return render_template(template, vars)
 end
@@ -517,145 +527,6 @@ function preview_email(db::DuckDB.DB, registration_id::Integer;
 end
 
 """
-Send confirmation email for a single registration.
-Returns true if successful (or in dry_run mode).
-"""
-function send_confirmation_email!(db::DuckDB.DB, registration_id::Integer;
-                                   force::Bool=false,
-                                   template_name::String="confirmation_email",
-                                   resend_reason::String="")
-    # Determine email type from template name
-    email_type = template_name
-
-    # Check if already sent (unless force)
-    if !force
-        existing = DBInterface.execute(db, """
-            SELECT id FROM confirmation_emails
-            WHERE registration_id = ? AND email_type = ? AND status = 'sent'
-            ORDER BY sent_at DESC
-            LIMIT 1
-        """, [registration_id, email_type])
-        if !isempty(collect(existing))
-            @info "Email already sent for registration" registration_id=registration_id type=email_type
-            return false
-        end
-    end
-
-    # Get registration details with cost breakdown
-    cost_result = DBInterface.execute(db, """
-        SELECT
-            r.computed_cost,
-            COALESCE(sub.total_subsidy, 0) as total_subsidy,
-            COALESCE(pay.total_paid, 0) as total_paid,
-            r.computed_cost - COALESCE(sub.total_subsidy, 0) - COALESCE(pay.total_paid, 0) as remaining,
-            r.reference_number
-        FROM registrations r
-        LEFT JOIN (
-            SELECT registration_id, SUM(amount) as total_subsidy
-            FROM subsidies
-            GROUP BY registration_id
-        ) sub ON sub.registration_id = r.id
-        LEFT JOIN (
-            SELECT pm.registration_id, SUM(bt.amount) as total_paid
-            FROM payment_matches pm
-            JOIN bank_transfers bt ON bt.id = pm.transfer_id
-            WHERE pm.registration_id IS NOT NULL
-            GROUP BY pm.registration_id
-        ) pay ON pay.registration_id = r.id
-        WHERE r.id = ?
-    """, [registration_id])
-
-    cost_row = first(collect(cost_result))
-    computed_cost = to_float(cost_row[1])
-    remaining = cost_row[4]
-    reference = cost_row[5]
-
-    remaining_amount = max(to_float(remaining), 0.0)
-
-    extra_vars = Dict{String,String}()
-
-    qr_block = maybe_generate_payment_qr(remaining_amount, reference)
-    if qr_block !== nothing
-        extra_vars["qr_block"] = qr_block
-    end
-
-    # Get registration details for email
-    email_preview = preview_email(db, registration_id;
-                                  template_name=template_name,
-                                  extra_vars=extra_vars)
-
-    success = false
-    error_msg = nothing
-
-    if CONFIG.dry_run
-        @info "DRY RUN - Would send email" to=email_preview.to subject=email_preview.subject type=email_type
-        println("\n--- EMAIL PREVIEW ---")
-        println("To: $(email_preview.to)")
-        println("Subject: $(email_preview.subject)")
-        println("Type: $email_type")
-        println("Cost: $computed_cost, Remaining: $remaining_amount")
-        println("---")
-        #println(email_preview.body)
-        println("--- END PREVIEW ---\n")
-        # DRY RUN: Don't record in database
-        return true
-    else
-        # Actually send email using SMTP
-        try
-            success = send_via_smtp(
-                email_preview.to,
-                email_preview.subject,
-                email_preview.body
-            )
-        catch e
-            success = false
-            error_msg = string(e)
-            @error "Failed to send email" exception=e
-        end
-    end
-
-    # Find previous email of this type (if any) for superseding
-    supersedes_id = nothing
-    if !isempty(resend_reason)
-        prev_result = DBInterface.execute(db, """
-            SELECT id FROM confirmation_emails
-            WHERE registration_id = ? AND email_type = ? AND status = 'sent'
-            ORDER BY sent_at DESC
-            LIMIT 1
-        """, [registration_id, email_type])
-        prev_rows = collect(prev_result)
-        if !isempty(prev_rows)
-            supersedes_id = prev_rows[1][1]
-        end
-    end
-
-    # Record the email attempt (only in non-dry-run mode)
-    status = success ? "sent" : "failed"
-    #with_transaction(db) do
-        DBInterface.execute(db, """
-            INSERT INTO confirmation_emails (
-                id, registration_id, email_type, sent_at, email_to,
-                cost_at_send, remaining_at_send, reference_sent, status,
-                error_message, resend_reason, supersedes_id, resends
-            )
-            VALUES (nextval('email_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, [registration_id, email_type, now(), email_preview.to,
-            Float64(computed_cost),
-            Float64(remaining),
-            reference, status,
-            error_msg, resend_reason, supersedes_id, 1])
-    #end
-
-    if success
-        @info "Email sent successfully" registration_id=registration_id to=email_preview.to type=email_type
-    else
-        @warn "Failed to send email" registration_id=registration_id type=email_type error=error_msg
-    end
-
-    return success
-end
-
-"""
 Check which registrations need confirmation emails resent due to balance changes.
 Returns list of (registration_id, reason, old_remaining, new_remaining).
 """
@@ -712,104 +583,6 @@ function get_registrations_needing_resend(db::DuckDB.DB, event_id::AbstractStrin
 end
 
 export get_registrations_needing_resend
-
-"""
-Resend emails for registrations where the balance has changed.
-Returns (sent_count, error_count).
-"""
-function resend_changed_balances!(db::DuckDB.DB, event_id::AbstractString;
-                                   template_name::String="confirmation_email",
-                                   dry_run::Union{Bool,Nothing}=nothing)
-    # Override global dry_run if specified
-    original_dry_run = CONFIG.dry_run
-    if dry_run !== nothing
-        CONFIG.dry_run = dry_run
-    end
-
-    try
-        needing_resend = get_registrations_needing_resend(db, event_id; email_type=template_name)
-
-        if isempty(needing_resend)
-            println("✓ No emails need to be resent (all balances unchanged)")
-            return (sent=0, errors=0)
-        end
-
-        println("Found $(length(needing_resend)) registrations with changed balances")
-
-        sent_count = 0
-        error_count = 0
-
-        for row in needing_resend
-            registration_id = row[1]
-            old_remaining = to_float(row[2])
-            new_remaining = to_float(row[3])
-            reason_code = row[4]
-
-            reason = if reason_code == "never_sent"
-                "Initial email"
-            elseif reason_code == "balance_changed"
-                "Saldo geändert von €$(format_currency(old_remaining)) auf €$(format_currency(new_remaining))"
-            else
-                "Balance update"
-            end
-
-            println("  Sending to registration $(registration_id): $reason")
-
-            success = send_confirmation_email!(
-                db, registration_id;
-                force=true,
-                template_name=template_name,
-                resend_reason=reason
-            )
-
-            if success
-                sent_count += 1
-            else
-                error_count += 1
-            end
-        end
-
-        println("\n✓ Resend complete: $sent_count sent, $error_count errors")
-        return (sent=sent_count, errors=error_count)
-
-    finally
-        # Restore original dry_run setting
-        CONFIG.dry_run = original_dry_run
-    end
-end
-
-export resend_changed_balances!
-
-"""
-Send confirmation emails for all registrations that haven't received one.
-"""
-function send_pending_confirmations!(db::DuckDB.DB, event_id::AbstractString;
-                                      template_name::String="confirmation_email")
-    # Find registrations without sent confirmations
-    result = DBInterface.execute(db, """
-        SELECT r.id
-        FROM registrations r
-        LEFT JOIN confirmation_emails ce ON ce.registration_id = r.id
-                                         AND ce.email_type = ?
-                                         AND ce.status = 'sent'
-        WHERE r.event_id = ? AND ce.id IS NULL
-    """, [template_name, event_id])
-
-    pending = collect(result)
-    sent = 0
-    failed = 0
-
-    for row in pending
-        if send_confirmation_email!(db, row[1]; template_name=template_name)
-            sent += 1
-        else
-            failed += 1
-        end
-    end
-
-    @info "Sent pending confirmations" event_id=event_id sent=sent failed=failed
-    return (sent=sent, failed=failed)
-end
 
 """
 Get list of registrations that haven't received confirmation emails.
@@ -1233,7 +1006,7 @@ function mark_email!(db::DuckDB.DB, queue_id::Integer, status::String;
                     nextval('email_id_seq'), ?, ?, CURRENT_TIMESTAMP, ?,
                     ?, ?, ?, 'sent', ?
                 )
-            """, [reg_id, email_type, email_to, cost, remaining, reference, reason])
+            """, [reg_id, email_type, email_to, Float64(cost), Float64(remaining), reference, reason])
         end
     end
 

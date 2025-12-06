@@ -819,6 +819,18 @@ function cmd_sync(;
 
         # Step 9: Queue emails for review (pending for manual review/sending)
         println("\n[9/9] Queuing emails for pending registrations...")
+
+        # Load email configuration for QR code generation
+        cred_paths = [credentials_path, "credentials.toml", "config/credentials.toml"]
+        cred_found = findfirst(isfile, cred_paths)
+        if cred_found !== nothing
+            actual_cred_path = cred_paths[cred_found]
+            load_email_config_from_file!(actual_cred_path; dry_run=true)
+            println("  ✓ Loaded email configuration from: $actual_cred_path")
+        else
+            println("  ⚠ No email credentials found - QR codes will not be generated")
+        end
+
         target_events = [row[1] for row in list_events(db)]
 
         total_queued = 0

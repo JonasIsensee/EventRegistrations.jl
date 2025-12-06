@@ -321,18 +321,17 @@ export manual_match!, get_payment_status, get_payment_summary
 export get_payment_history, get_payment_discrepancies
 
 # Re-export from ConfirmationEmails
-using .ConfirmationEmails: send_confirmation_email!, send_pending_confirmations!
 using .ConfirmationEmails: get_unsent_confirmations, preview_email, export_emails_to_files
 using .ConfirmationEmails: configure! as configure_email!, load_email_config_from_file!
-using .ConfirmationEmails: get_registrations_needing_resend, resend_changed_balances!
+using .ConfirmationEmails: get_registrations_needing_resend
 using .ConfirmationEmails: queue_email!, queue_pending_emails!, get_pending_emails
 using .ConfirmationEmails: count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
-export send_confirmation_email!, send_pending_confirmations!
+
 export get_unsent_confirmations, preview_email, export_emails_to_files
 export configure_email!, load_email_config_from_file!
 export queue_email!, queue_pending_emails!, get_pending_emails
 export count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
-export get_registrations_needing_resend, resend_changed_balances!
+export get_registrations_needing_resend
 
 # Re-export from EmailDownload
 using .EmailDownload: download_emails!, load_email_credentials
