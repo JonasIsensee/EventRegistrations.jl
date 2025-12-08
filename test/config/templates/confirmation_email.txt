@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Anmeldebestätigung</title>
+</head>
+<body style="font-family: Arial, sans-serif; color: #1f2933; background-color: #ffffff; line-height: 1.6; margin: 0; padding: 0;">
+    <div style="padding: 24px;">
+        <p>Liebe*r {first_name},</p>
+        <p>vielen Dank für deine Anmeldung zum <strong>{event_name}</strong>!</p>
+        <p>Bitte überweise deine Teilnahmegebühr zeitnah und vor Beginn des Probenwochenendes. Deine Übersicht:</p>
+        <div style="margin: 16px 0; padding: 16px; border: 1px solid #d2d6dc; border-radius: 8px; background-color: #f8fafc;">
+            <p style="margin: 0;">Referenznummer: <strong>{reference_number}</strong></p>
+            <p style="margin: 8px 0 0;">Teilnahmebeitrag: <strong>{cost} €</strong></p>
+            <p style="margin: 8px 0 0;">Offener Betrag: <strong>{remaining} €</strong></p>
+        </div>
+        {qr_block}
+        <div style="margin: 24px 0;">
+            <h3 style="margin-bottom: 8px; font-size: 18px;">Bankverbindung</h3>
+            <p style="margin: 0; white-space: pre-line;">{bank_details}</p>
+        </div>
+        {registration_fields}
+        <div style="margin: 24px 0;">
+            <p style="margin-bottom: 8px;">Hinweis: Du könntest diese E-Mail erneut erhalten, wenn eine der folgenden Situationen eintritt:</p>
+            <ul style="margin: 0 0 0 20px; padding: 0;">
+                <li style="margin-bottom: 4px;">du deine Anmeldung aktualisierst,</li>
+                <li style="margin-bottom: 4px;">wir die Kostenkalkulation anpassen müssen,</li>
+                <li style="margin-bottom: 4px;">wir eine (Teil-)Zahlung verbuchen,</li>
+                <li style="margin-bottom: 4px;">oder wir nach angemessener Zeit noch keinen Zahlungseingang sehen.</li>
+            </ul>
+        </div>
+        {additional_info}
+        <p style="margin-top: 32px;">Viele Grüße,<br>{sender_name}</p>
+    </div>
+</body>
+</html>

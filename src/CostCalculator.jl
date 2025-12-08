@@ -126,7 +126,7 @@ end
 Calculate cost without database (using rules directly).
 Returns just the total cost (backward compatible).
 """
-function calculate_cost(rules::Dict, fields::Dict{String, String})
+function calculate_cost(rules::AbstractDict, fields::Dict{String, String})
     result = calculate_cost_with_details(rules, fields)
     return result.total
 end
@@ -135,7 +135,7 @@ end
 Calculate cost with full details and warnings.
 This is the main calculation function that tracks everything.
 """
-function calculate_cost_with_details(rules::Dict, fields::Dict{String, String})::CostCalculationResult
+function calculate_cost_with_details(rules::AbstractDict, fields::Dict{String, String})::CostCalculationResult
     base = Float64(get(rules, "base", 0.0))
     total = base
     rule_costs = Tuple{String, Float64}[]
