@@ -35,11 +35,11 @@ ValidationResult(valid::Bool) = ValidationResult(valid, ValidationIssue[], Valid
 """
 Create a validation issue.
 """
-function make_error(code::Symbol, message::String; context::Dict{String,Any}=Dict{String,Any}())
+function make_error(code::Symbol, message::String; context::AbstractDict{String,Any}=Dict{String,Any}())
     return ValidationIssue(code, message, context)
 end
 
-function make_warning(code::Symbol, message::String; context::Dict{String,Any}=Dict{String,Any}())
+function make_warning(code::Symbol, message::String; context::AbstractDict{String,Any}=Dict{String,Any}())
     return ValidationIssue(code, message, context)
 end
 
@@ -115,7 +115,7 @@ end
 """
 Validate a registration's fields before database insertion.
 """
-function validate_registration(fields::Dict{String,String}, event_id::String;
+function validate_registration(fields::AbstractDict{String,String}, event_id::String;
                                db::Union{DuckDB.DB,Nothing}=nothing,
                                required_fields::Vector{String}=["email"])
     errors = ValidationIssue[]
@@ -194,7 +194,7 @@ end
 Validate cost configuration rules against actual registration data.
 This ensures rules reference fields that actually exist.
 """
-function validate_cost_config(rules::Dict, event_id::String, db::DuckDB.DB;
+function validate_cost_config(rules::AbstractDict, event_id::String, db::DuckDB.DB;
                               strict::Bool=false)
     errors = ValidationIssue[]
     warnings = ValidationIssue[]
@@ -288,7 +288,7 @@ end
 """
 Validate a single cost rule.
 """
-function validate_single_rule(rule::Dict, index::Int, actual_fields::Set{String},
+function validate_single_rule(rule::AbstractDict, index::Int, actual_fields::Set{String},
                               referenced_fields::Set{String}, strict::Bool)
     errors = ValidationIssue[]
     warnings = ValidationIssue[]
@@ -403,7 +403,7 @@ end
 Validate field aliases against actual registration data.
 Ensures aliases map to fields that actually exist.
 """
-function validate_field_aliases(aliases::Dict{String,String}, db::DuckDB.DB)
+function validate_field_aliases(aliases::AbstractDict{String,String}, db::DuckDB.DB)
     errors = ValidationIssue[]
     warnings = ValidationIssue[]
     info = String[]

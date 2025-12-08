@@ -79,7 +79,7 @@ Example:
     render_template("Hello {name}!", Dict("name" => "World"))
     # Returns: "Hello World!"
 """
-function render_template(template::AbstractString, vars::Dict)
+function render_template(template::AbstractString, vars::AbstractDict)
     result = template
 
     for (key, value) in vars
@@ -93,7 +93,7 @@ end
 """
 Load and render a template in one call.
 """
-function load_and_render(name::AbstractString, vars::Dict)
+function load_and_render(name::AbstractString, vars::AbstractDict)
     template = load_template(name)
     if template === nothing
         return nothing
@@ -221,7 +221,7 @@ Takes a Dict of field names and values, returns formatted string.
 
 Optionally filter out fields that should be excluded (like internal IDs).
 """
-function format_registration_fields(fields::Dict;
+function format_registration_fields(fields::AbstractDict;
                                      exclude::Vector{String}=String[],
                                      max_width::Int=40)
     if isempty(fields)

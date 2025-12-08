@@ -457,7 +457,7 @@ Preview email content for a registration.
 """
 function preview_email(db::DuckDB.DB, registration_id::Integer;
                        template_name::String="confirmation_email",
-                       extra_vars::Dict{String,String}=Dict{String,String}())
+                       extra_vars::AbstractDict{String,String}=Dict{String,String}())
     result = DBInterface.execute(db, """
         SELECT r.first_name, r.last_name, r.email, r.reference_number, r.computed_cost,
                COALESCE(e.event_name, r.event_id) as event_name,

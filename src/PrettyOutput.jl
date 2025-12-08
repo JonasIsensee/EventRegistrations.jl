@@ -111,7 +111,7 @@ struct RegistrationRow
     subsidy::Float64
     remaining::Float64
     status::PaymentStatus
-    fields::Dict{String,Any}
+    fields::AbstractDict{String,Any}
 end
 
 """
