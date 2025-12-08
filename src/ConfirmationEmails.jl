@@ -399,8 +399,8 @@ function generate_email_content(;
     subsidy_reason::String="",
     amount_paid::Real=0.0,
     cost_change_note::String="",
-    registration_fields::Dict=Dict(),
-    extra_vars::Dict{String,String}=Dict{String,String}()
+    registration_fields::AbstractDict=Dict(),
+    extra_vars::AbstractDict{String,String}=Dict{String,String}()
 )
     # Try to load external template
     template = load_template(template_name)
