@@ -728,6 +728,7 @@ function send_via_smtp(to::String, subject::String, body::String; attachments::V
             @info "Email sent successfully" to=to subject=subject
             return true
         else
+            println("  [SMTP DEBUG] Failed to send to $to")
             println("  [SMTP DEBUG] ✗ SMTP error code: $(resp.code)")
             println("  [SMTP DEBUG] Error message: $(resp.message)")
             @error "SMTP error" code=resp.code message=resp.message

@@ -283,125 +283,139 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString)
         """, [file_hash, filename, now(), has_submission,
                 has_submission ? submission.event_id : nothing])
     end
-    if has_submission
-        # Parse email date
-        email_date = haskey(parsed.headers, "date") ?
-            EmailParser.parse_email_date(parsed.headers["date"]) : now()
 
-        # Store raw submission
-        fields_json = JSON.json(submission.fields)
+    if !has_submission
+        return (; has_submission, is_new, is_update, skipped=true, no_cost_config)
+    end
+    if !(EmailParser.is_valid_email(submission.email))
+        @warn """
+        Detected registration with invalid email:
+        Vorname: $(submission.first_name)
+        Nachname: $(submission.last_name)
+        E-Mail: $(submission.email)
+        """
+        return (; has_submission, is_new, is_update, skipped=true, no_cost_config)
+    end
+
+    # Parse email date
+    email_date = haskey(parsed.headers, "date") ?
+        EmailParser.parse_email_date(parsed.headers["date"]) : now()
+
+
+
+    # Store raw submission
+    fields_json = JSON.json(submission.fields)
+    with_transaction(db) do
+        DBInterface.execute(db, """
+            INSERT INTO submissions (id, file_hash, event_id, email, first_name, last_name,
+                                        fields, email_date, email_from, email_subject, created_at)
+            VALUES (nextval('submission_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [file_hash, submission.event_id, submission.email,
+                submission.first_name, submission.last_name, fields_json,
+                email_date, get(parsed.headers, "from", nothing),
+                get(parsed.headers, "subject", nothing), now()])
+    end
+
+    # Get the submission ID we just inserted
+    sub_result = DBInterface.execute(db,
+        "SELECT currval('submission_id_seq')")
+    submission_id = first(collect(sub_result))[1]
+
+    # Check for existing registration (resubmission case)
+    existing = DBInterface.execute(db, """
+        SELECT id, reference_number FROM registrations
+        WHERE event_id = ? AND email = ?
+    """, [submission.event_id, submission.email])
+    existing_rows = collect(existing)
+
+    # Calculate cost (returns nothing if no cost config exists)
+    computed_cost = calculate_cost(db, submission.event_id, submission.fields)
+
+    # Get cost rules hash for versioning
+    cost_rules_hash = nothing
+    cost_computed_at = nothing
+    if computed_cost !== nothing
+        rules_result = DBInterface.execute(db,
+            "SELECT cost_rules FROM events WHERE event_id = ?",
+            [submission.event_id])
+        rules_rows = collect(rules_result)
+        if !isempty(rules_rows) && rules_rows[1][1] !== nothing
+            cost_rules_hash = string(hash(rules_rows[1][1]))
+            cost_computed_at = now()
+        end
+    end
+
+    if isempty(existing_rows)
+        # New registration
         with_transaction(db) do
             DBInterface.execute(db, """
-                INSERT INTO submissions (id, file_hash, event_id, email, first_name, last_name,
-                                            fields, email_date, email_from, email_subject, created_at)
-                VALUES (nextval('submission_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, [file_hash, submission.event_id, submission.email,
+                INSERT INTO registrations (id, event_id, email, reference_number,
+                                            first_name, last_name, fields, computed_cost,
+                                            cost_rules_hash, cost_computed_at,
+                                            latest_submission_id, registration_date, updated_at,
+                                            status, valid_from)
+                VALUES (nextval('registration_id_seq'), ?, ?, 'TEMP', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+            """, [submission.event_id, submission.email,
                     submission.first_name, submission.last_name, fields_json,
-                    email_date, get(parsed.headers, "from", nothing),
-                    get(parsed.headers, "subject", nothing), now()])
+                    computed_cost, cost_rules_hash, cost_computed_at,
+                    submission_id, email_date, now(), now()])
         end
 
-        # Get the submission ID we just inserted
-        sub_result = DBInterface.execute(db,
-            "SELECT currval('submission_id_seq')")
-        submission_id = first(collect(sub_result))[1]
+        # Get the registration ID and generate reference number
+        reg_result = DBInterface.execute(db, "SELECT currval('registration_id_seq')")
+        reg_id = first(collect(reg_result))[1]
 
-        # Check for existing registration (resubmission case)
-        existing = DBInterface.execute(db, """
-            SELECT id, reference_number FROM registrations
-            WHERE event_id = ? AND email = ?
-        """, [submission.event_id, submission.email])
-        existing_rows = collect(existing)
+        ref_number = generate_reference_number(submission.event_id, reg_id)
+        with_transaction(db) do
+            DBInterface.execute(db, """
+                UPDATE registrations SET reference_number = ? WHERE id = ?
+            """, [ref_number, reg_id])
+        end
 
-        # Calculate cost (returns nothing if no cost config exists)
-        computed_cost = calculate_cost(db, submission.event_id, submission.fields)
-
-        # Get cost rules hash for versioning
-        cost_rules_hash = nothing
-        cost_computed_at = nothing
+        # Log financial transaction for the charge (if cost was computed)
         if computed_cost !== nothing
-            rules_result = DBInterface.execute(db,
-                "SELECT cost_rules FROM events WHERE event_id = ?",
-                [submission.event_id])
-            rules_rows = collect(rules_result)
-            if !isempty(rules_rows) && rules_rows[1][1] !== nothing
-                cost_rules_hash = string(hash(rules_rows[1][1]))
-                cost_computed_at = now()
-            end
+            log_financial_transaction!(db, reg_id, "charge", -computed_cost;
+                reference_id=reg_id, reference_table="registrations",
+                effective_date=Date(email_date),
+                notes="Initial registration charge")
         end
 
-        if isempty(existing_rows)
-            # New registration
-            with_transaction(db) do
-                DBInterface.execute(db, """
-                    INSERT INTO registrations (id, event_id, email, reference_number,
-                                                first_name, last_name, fields, computed_cost,
-                                                cost_rules_hash, cost_computed_at,
-                                                latest_submission_id, registration_date, updated_at,
-                                                status, valid_from)
-                    VALUES (nextval('registration_id_seq'), ?, ?, 'TEMP', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-                """, [submission.event_id, submission.email,
-                        submission.first_name, submission.last_name, fields_json,
-                        computed_cost, cost_rules_hash, cost_computed_at,
-                        submission_id, email_date, now(), now()])
-            end
-
-            # Get the registration ID and generate reference number
-            reg_result = DBInterface.execute(db, "SELECT currval('registration_id_seq')")
-            reg_id = first(collect(reg_result))[1]
-
-            ref_number = generate_reference_number(submission.event_id, reg_id)
-            with_transaction(db) do
-                DBInterface.execute(db, """
-                    UPDATE registrations SET reference_number = ? WHERE id = ?
-                """, [ref_number, reg_id])
-            end
-
-            # Log financial transaction for the charge (if cost was computed)
-            if computed_cost !== nothing
-                log_financial_transaction!(db, reg_id, "charge", -computed_cost;
-                    reference_id=reg_id, reference_table="registrations",
-                    effective_date=Date(email_date),
-                    notes="Initial registration charge")
-            end
-
-            is_new = true
-            if computed_cost === nothing
-                no_cost_config = true
-                @warn "New registration - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
-            else
-                @info "New registration" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
-            end
+        is_new = true
+        if computed_cost === nothing
+            no_cost_config = true
+            @warn "New registration - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
         else
-            # Update existing registration (keep reference number!)
-            reg_id = existing_rows[1][1]
-            ref_number = existing_rows[1][2]
-            with_transaction(db) do
-                DBInterface.execute(db, """
-                    UPDATE registrations SET
-                        first_name = ?,
-                        last_name = ?,
-                        fields = ?,
-                        computed_cost = ?,
-                        cost_rules_hash = ?,
-                        cost_computed_at = ?,
-                        latest_submission_id = ?,
-                        updated_at = ?
-                    WHERE id = ?
-                """, [submission.first_name, submission.last_name, fields_json,
-                        computed_cost, cost_rules_hash, cost_computed_at,
-                        submission_id, now(), reg_id])
-            end
-
-            is_update = true
-            if computed_cost === nothing
-                no_cost_config = true
-                @warn "Updated registration (resubmission) - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
-            else
-                @info "Updated registration (resubmission)" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
-            end
+            @info "New registration" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
         end
-    end  # End if has_submission
+    else
+        # Update existing registration (keep reference number!)
+        reg_id = existing_rows[1][1]
+        ref_number = existing_rows[1][2]
+        with_transaction(db) do
+            DBInterface.execute(db, """
+                UPDATE registrations SET
+                    first_name = ?,
+                    last_name = ?,
+                    fields = ?,
+                    computed_cost = ?,
+                    cost_rules_hash = ?,
+                    cost_computed_at = ?,
+                    latest_submission_id = ?,
+                    updated_at = ?
+                WHERE id = ?
+            """, [submission.first_name, submission.last_name, fields_json,
+                    computed_cost, cost_rules_hash, cost_computed_at,
+                    submission_id, now(), reg_id])
+        end
+
+        is_update = true
+        if computed_cost === nothing
+            no_cost_config = true
+            @warn "Updated registration (resubmission) - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
+        else
+            @info "Updated registration (resubmission)" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
+        end
+    end
 
     return (has_submission=has_submission, is_new=is_new, is_update=is_update, skipped=false, no_cost_config=no_cost_config)
 end
