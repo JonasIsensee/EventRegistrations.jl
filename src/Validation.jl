@@ -5,7 +5,7 @@ using DBInterface
 using JSON
 
 export ValidationResult, ValidationError, ValidationWarning
-export validate_registration, validate_cost_config, validate_field_aliases
+export validate_cost_config, validate_field_aliases
 export format_validation_result
 
 """
@@ -108,83 +108,6 @@ function format_validation_result(result::ValidationResult; verbose::Bool=false)
     return join(lines, "\n")
 end
 
-# =============================================================================
-# REGISTRATION VALIDATION
-# =============================================================================
-
-"""
-Validate a registration's fields before database insertion.
-"""
-function validate_registration(fields::AbstractDict{String,String}, event_id::String;
-                               db::Union{DuckDB.DB,Nothing}=nothing,
-                               required_fields::Vector{String}=["email"])
-    errors = ValidationIssue[]
-    warnings = ValidationIssue[]
-    info = String[]
-
-    # Check required fields
-    for field in required_fields
-        # Check both exact match and common variations
-        found = false
-        for (k, v) in fields
-            if lowercase(k) == lowercase(field) || k == field
-                if isempty(strip(v))
-                    push!(errors, make_error(:missing_required,
-                        "Required field '$field' is empty",
-                        context=Dict{String,Any}("field" => field)))
-                else
-                    found = true
-                end
-                break
-            end
-        end
-
-        if !found
-            push!(errors, make_error(:missing_required,
-                "Required field '$field' not found in submission",
-                context=Dict{String,Any}("field" => field, "available_fields" => collect(keys(fields)))))
-        end
-    end
-
-    # Validate email format if present
-    email_value = nothing
-    for (k, v) in fields
-        if lowercase(k) in ["email", "e-mail", "e_mail"]
-            email_value = v
-            break
-        end
-    end
-
-    if email_value !== nothing && !isempty(email_value)
-        if !occursin(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email_value)
-            push!(errors, make_error(:invalid_email,
-                "Invalid email format: '$email_value'",
-                context=Dict{String,Any}("email" => email_value)))
-        end
-    end
-
-    # Check if event has cost configuration (warning only)
-    if db !== nothing
-        config_result = DBInterface.execute(db,
-            "SELECT event_id, cost_rules FROM events WHERE event_id = ?",
-            [event_id])
-        rows = collect(config_result)
-
-        if isempty(rows)
-            push!(warnings, make_warning(:no_event_config,
-                "No cost configuration exists for event '$event_id' - cost will be NULL",
-                context=Dict{String,Any}("event_id" => event_id)))
-        elseif rows[1][2] === nothing || rows[1][2] == ""
-            push!(warnings, make_warning(:empty_cost_rules,
-                "Event '$event_id' has no cost rules defined - only base cost will apply",
-                context=Dict{String,Any}("event_id" => event_id)))
-        end
-    end
-
-    push!(info, "Validated $(length(fields)) fields")
-
-    return ValidationResult(isempty(errors), errors, warnings, info)
-end
 
 # =============================================================================
 # COST CONFIG VALIDATION

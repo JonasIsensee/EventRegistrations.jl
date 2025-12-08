@@ -1315,34 +1315,6 @@ function cmd_export_registration_details(event_id::Union{String,Nothing}=nothing
     end
 end
 
-"""
-Export confirmation emails to text files.
-Useful when SMTP is not available for sending emails directly.
-"""
-function cmd_export_emails(event_id::Union{String,Nothing}=nothing,
-                           output_dir::String="emails_export";
-                           db_path::String="events.duckdb",
-                           template::String="confirmation_email")
-
-    return require_database(db_path) do db
-        # Default to most recent event if not specified
-        local_event_id = event_id
-        if local_event_id === nothing
-            local_event_id = get_most_recent_event(db)
-            if local_event_id === nothing
-                println("❌ Error: No events with registrations found")
-                return 1
-            end
-            println("Using most recent event: $local_event_id")
-        end
-
-        println("Exporting emails for $local_event_id to $output_dir...")
-        count = export_emails_to_files(db, local_event_id, output_dir; template_name=template)
-
-        println("✓ Exported $count email files to: $output_dir")
-        return 0
-    end
-end
 
 # =============================================================================
 # EMAIL QUEUE MANAGEMENT COMMANDS
@@ -1563,7 +1535,6 @@ EXPORTS:
     --name=<pattern>             Filter by name (regex pattern)
     --email=<pattern>            Filter by email (regex pattern)
     --since=<date>               Only registrations since date (yyyy-mm-dd)
-  export-emails [event-id] [output-dir]      Export confirmation emails to files
 
 COMMON OPTIONS:
   --db-path=<path>              Database file (default: events.duckdb)
@@ -1597,7 +1568,7 @@ EXAMPLES:
   eventreg export-payment-status --summary-only            # show only totals
   eventreg export-payment-status PWE_2026_01 report.pdf    # export to PDF
   eventreg export-registrations report.pdf                 # export registrations to PDF
-    eventreg export-registration-details PWE_2026_01 details.csv
+  eventreg export-registration-details PWE_2026_01 details.csv
   eventreg export-payment-status --format=latex            # generate LaTeX
 
 Run 'eventreg <command> --help' for more information on a command.
@@ -1719,10 +1690,6 @@ function run_cli(args::Vector{String})
             event_id = length(positional) >= 1 ? positional[1] : nothing
             output = length(positional) >= 2 ? positional[2] : nothing
             return cmd_export_registration_details(event_id, output; options...)
-        elseif command == "export-emails"
-            event_id = length(positional) >= 1 ? positional[1] : nothing
-            output_dir = length(positional) >= 2 ? positional[2] : "emails_export"
-            return cmd_export_emails(event_id, output_dir; options...)
         # Email queue management commands
         elseif command == "list-pending-emails"
             return cmd_list_pending_emails(; options...)

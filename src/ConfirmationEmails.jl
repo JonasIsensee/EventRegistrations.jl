@@ -748,42 +748,6 @@ function send_via_smtp(to::String, subject::String, body::String; attachments::V
     end
 end
 
-"""
-Export email content to files for manual sending.
-Useful when SMTP is not available.
-"""
-function export_emails_to_files(db::DuckDB.DB, event_id::AbstractString, output_dir::String;
-                                 template_name::String="confirmation_email")
-    mkpath(output_dir)
-
-    registrations = DBInterface.execute(db, """
-        SELECT r.id, r.reference_number, r.email
-        FROM registrations r
-        LEFT JOIN confirmation_emails ce ON ce.registration_id = r.id AND ce.status = 'sent'
-        WHERE r.event_id = ? AND ce.id IS NULL
-    """, [event_id])
-
-    count = 0
-    for row in registrations
-        reg_id, reference, email_addr = row
-        preview = preview_email(db, reg_id; template_name=template_name)
-
-        # Create email file
-        filename = joinpath(output_dir, "$(reference)_$(replace(email_addr, '@' => "_at_")).txt")
-
-        open(filename, "w") do f
-            write(f, "TO: $(preview.to)\n")
-            write(f, "SUBJECT: $(preview.subject)\n")
-            write(f, "---\n")
-            write(f, preview.body)
-        end
-
-        count += 1
-    end
-
-    @info "Exported email files" count=count directory=output_dir
-    return count
-end
 
 # =============================================================================
 # EMAIL QUEUE MANAGEMENT

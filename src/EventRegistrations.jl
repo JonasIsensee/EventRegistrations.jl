@@ -151,9 +151,9 @@ using .Schema: init_database
 export init_database
 
 # Re-export from Validation
-using .Validation: ValidationResult, validate_registration, validate_cost_config
+using .Validation: ValidationResult, validate_cost_config
 using .Validation: validate_field_aliases, format_validation_result
-export ValidationResult, validate_registration, validate_cost_config
+export ValidationResult, validate_cost_config
 export validate_field_aliases, format_validation_result
 
 # Re-export CostCalculationResult
