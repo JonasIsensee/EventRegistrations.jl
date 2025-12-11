@@ -153,7 +153,7 @@ const DEFAULT_TEMPLATES = Dict(
         </div>
         {registration_fields}
         <div style=\"margin: 24px 0;\">
-            <p style=\"margin-bottom: 8px;\">Hinweis: Du könntest diese E-Mail erneut erhalten, wenn eine der folgenden Situationen eintritt:</p>
+            <p style=\"margin-bottom: 8px;\"><strong>Hinweis:</strong> Du könntest diese E-Mail erneut erhalten, wenn eine der folgenden Situationen eintritt:</p>
             <ul style=\"margin: 0 0 0 20px; padding: 0;\">
                 <li style=\"margin-bottom: 4px;\">du deine Anmeldung aktualisierst,</li>
                 <li style=\"margin-bottom: 4px;\">wir die Kostenkalkulation anpassen müssen,</li>
@@ -161,8 +161,8 @@ const DEFAULT_TEMPLATES = Dict(
                 <li style=\"margin-bottom: 4px;\">oder wir nach angemessener Zeit noch keinen Zahlungseingang sehen.</li>
             </ul>
         </div>
-        {additional_info}
         <p><strong>Hinweis:</strong> Du kannst deine Anmeldung verändern, indem du das Formular erneut ausfüllst. Achte dabei bitte darauf dieselbe Email Adresse zu verwenden, damit die automatische Identifikation reibungslos funktioniert.</p>
+        {additional_info}
         <p style=\"margin-top: 32px;\">Viele Grüße,<br>{sender_name}</p>
     </div>
 </body>
