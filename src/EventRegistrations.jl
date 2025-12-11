@@ -305,11 +305,11 @@ using .CostCalculator: set_event_cost_rules, get_cost_rules, calculate_cost
 export set_event_cost_rules, get_cost_rules, calculate_cost
 
 # Re-export from Registrations
-using .Registrations: process_email_folder!, get_registrations, export_registrations
+using .Registrations: process_email_folder!, get_registrations
 using .Registrations: RegistrationDetailTable, get_registration_detail_table
 using .Registrations: grant_subsidy!, get_subsidies, revoke_subsidy!, grant_subsidies_batch!
 using .Registrations: get_registration_by_reference, recalculate_costs!
-export process_email_folder!, get_registrations, export_registrations
+export process_email_folder!, get_registrations
 export RegistrationDetailTable, get_registration_detail_table
 export grant_subsidy!, get_subsidies, revoke_subsidy!, grant_subsidies_batch!
 export get_registration_by_reference, recalculate_costs!
@@ -323,14 +323,14 @@ export manual_match!, get_payment_status, get_payment_summary
 export get_payment_history, get_payment_discrepancies
 
 # Re-export from ConfirmationEmails
-using .ConfirmationEmails: get_unsent_confirmations, preview_email, export_emails_to_files
+using .ConfirmationEmails: get_unsent_confirmations, preview_email
 using .ConfirmationEmails: configure! as configure_email!, load_email_config_from_file!
 using .ConfirmationEmails: get_registrations_needing_resend
 using .ConfirmationEmails: queue_email!, queue_pending_emails!, get_pending_emails
 using .ConfirmationEmails: queue_payment_confirmation!
 using .ConfirmationEmails: count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
 
-export get_unsent_confirmations, preview_email, export_emails_to_files
+export get_unsent_confirmations, preview_email
 export configure_email!, load_email_config_from_file!
 export queue_email!, queue_pending_emails!, get_pending_emails
 export queue_payment_confirmation!

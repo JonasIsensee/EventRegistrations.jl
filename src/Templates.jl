@@ -106,6 +106,30 @@ end
 # =============================================================================
 
 const DEFAULT_TEMPLATES = Dict(
+        "registration_confirmation" => """<!DOCTYPE html>
+<html lang=\"de\">
+<head>
+<meta charset=\"UTF-8\">
+<title>Anmeldebestätigung</title>
+</head>
+<body style=\"font-family: Arial, sans-serif; color: #1f2933; background-color: #ffffff; line-height: 1.6; margin: 0; padding: 0;\">
+    <div style=\"padding: 24px;\">
+        <p>Liebe*r {first_name},</p>
+        <p>vielen Dank für deine Anmeldung zum <strong>{event_name}</strong>!</p>
+        <p>Wir haben deine Anmeldung erhalten und werden sie bearbeiten. Du erhältst in Kürze eine weitere E-Mail mit den Zahlungsinformationen.</p>
+        <div style=\"margin: 16px 0; padding: 16px; border: 1px solid #d2d6dc; border-radius: 8px; background-color: #f8fafc;\">
+            <p style=\"margin: 0;\">Deine Referenznummer: <strong>{reference_number}</strong></p>
+            <p style=\"margin: 8px 0 0; font-size: 14px; color: #4a5568;\">Bitte bewahre diese Nummer für die spätere Überweisung auf.</p>
+        </div>
+        {registration_fields}
+        {additional_info}
+        <p><strong>Hinweis:</strong> Du kannst deine Anmeldung verändern, indem du das Formular erneut ausfüllst. Achte dabei bitte darauf dieselbe Email Adresse zu verwenden, damit die automatische Identifikation reibungslos funktioniert.</p>
+        <p style=\"margin-top: 32px;\">Viele Grüße,<br>{sender_name}</p>
+    </div>
+</body>
+</html>
+""",
+
         "confirmation_email" => """<!DOCTYPE html>
 <html lang=\"de\">
 <head>
@@ -138,6 +162,7 @@ const DEFAULT_TEMPLATES = Dict(
             </ul>
         </div>
         {additional_info}
+        <p><strong>Hinweis:</strong> Du kannst deine Anmeldung verändern, indem du das Formular erneut ausfüllst. Achte dabei bitte darauf dieselbe Email Adresse zu verwenden, damit die automatische Identifikation reibungslos funktioniert.</p>
         <p style=\"margin-top: 32px;\">Viele Grüße,<br>{sender_name}</p>
     </div>
 </body>
@@ -201,6 +226,10 @@ Get the list of available placeholders for a template type.
 """
 function get_template_placeholders(template_type::AbstractString)
     placeholders = Dict(
+        "registration_confirmation" => [
+            "first_name", "last_name", "event_name", "reference_number",
+            "registration_fields", "additional_info", "sender_name"
+        ],
         "confirmation_email" => [
             "first_name", "last_name", "event_name", "reference_number",
             "cost", "remaining", "registration_fields", "bank_details",

@@ -107,9 +107,9 @@ function calculate_cost(db::DuckDB.DB, event_id::AbstractString, fields::Abstrac
         # No event config exists - cost calculation should be deferred
         return nothing
     end
-
     base_cost = something(rows[1][1], 0.0)
     rules_json = rows[1][2]
+    ismissing(rules_json) && return nothing
 
     if rules_json === nothing || rules_json == ""
         # Event exists but no rules defined - use base cost only
@@ -276,7 +276,7 @@ function get_cost_rules(db::DuckDB.DB, event_id::AbstractString)
 
     base_cost = something(rows[1][1], 0.0)
     rules_json = rows[1][2]
-
+    ismissing(rules_json) && return nothing
     if rules_json === nothing || rules_json == ""
         return Dict("base" => base_cost, "rules" => [])
     end

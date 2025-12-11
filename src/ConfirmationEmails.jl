@@ -17,7 +17,7 @@ using Random: randstring
 using ..Templates
 
 export generate_email_content
-export get_unsent_confirmations, preview_email, export_emails_to_files
+export get_unsent_confirmations, preview_email
 export configure!, EmailConfig
 """
 Configuration for email sending.
@@ -781,8 +781,9 @@ function queue_email!(db::DuckDB.DB, registration_id::Integer;
     email_to, reference_number, computed_cost, remaining = reg_rows[1]
 
     # Convert to Float64 to avoid DuckDB binding issues with FixedDecimal
-    computed_cost_f = computed_cost === nothing ? nothing : Float64(computed_cost)
-    remaining_f = Float64(remaining)
+    # Handle NULL/missing values safely
+    computed_cost_f = (computed_cost === nothing || ismissing(computed_cost)) ? nothing : Float64(computed_cost)
+    remaining_f = (remaining === nothing || ismissing(remaining)) ? 0.0 : Float64(remaining)
 
     # Check if there's already a pending email with same content
     existing = DBInterface.execute(db, """
@@ -920,28 +921,162 @@ end
 
 export queue_payment_confirmation!
 
+
+
 """
-Queue emails for all registrations that need them (balance changed or never sent).
+Intelligently queue emails for all registrations that need them.
+Automatically chooses the appropriate template:
+- registration_confirmation: when computed_cost is NULL (no payment info yet)
+- confirmation_email: when computed_cost is set (payment request)
+
+Sends emails for ALL registrations (even fully paid) on:
+- First time (never sent)
+- When computed_cost changes (not just balance changes)
+
+Returns (registration_emails_queued, payment_emails_queued).
+"""
+function queue_pending_emails!(db::DuckDB.DB, event_id::AbstractString)
+    # Get all registrations with their email status
+    result = DBInterface.execute(db, """
+        WITH latest_registration_emails AS (
+            SELECT
+                ce.registration_id,
+                ce.sent_at,
+                ROW_NUMBER() OVER (PARTITION BY ce.registration_id ORDER BY ce.sent_at DESC) as rn
+            FROM confirmation_emails ce
+            JOIN registrations r ON r.id = ce.registration_id
+            WHERE r.event_id = ?
+              AND ce.email_type = 'registration_confirmation'
+              AND ce.status = 'sent'
+        ),
+        latest_payment_emails AS (
+            SELECT
+                ce.registration_id,
+                ce.cost_at_send,
+                ce.sent_at,
+                ROW_NUMBER() OVER (PARTITION BY ce.registration_id ORDER BY ce.sent_at DESC) as rn
+            FROM confirmation_emails ce
+            JOIN registrations r ON r.id = ce.registration_id
+            WHERE r.event_id = ?
+              AND ce.email_type = 'confirmation_email'
+              AND ce.status = 'sent'
+        )
+        SELECT
+            r.id as registration_id,
+            r.computed_cost,
+            lre.registration_id IS NOT NULL as has_registration_email,
+            lpe.registration_id IS NOT NULL as has_payment_email,
+            lpe.cost_at_send as last_sent_cost
+        FROM registrations r
+        LEFT JOIN latest_registration_emails lre ON lre.registration_id = r.id AND lre.rn = 1
+        LEFT JOIN latest_payment_emails lpe ON lpe.registration_id = r.id AND lpe.rn = 1
+        WHERE r.event_id = ?
+    """, [event_id, event_id, event_id])
+
+    registration_count = 0
+    payment_count = 0
+
+    for row in collect(result)
+        registration_id = row[1]
+        computed_cost = row[2]
+        has_registration_email = row[3]
+        has_payment_email = row[4]
+        last_sent_cost = row[5]
+
+        # Convert database booleans to Julia booleans (handle missing)
+        has_reg_email = something(has_registration_email, false)
+        has_pay_email = something(has_payment_email, false)
+
+        # If computed_cost is NULL, send registration_confirmation if not already sent
+        if computed_cost === nothing || ismissing(computed_cost)
+            if !has_reg_email
+                queue_id = queue_email!(db, registration_id;
+                                       template_name="registration_confirmation",
+                                       reason="initial")
+                if queue_id !== nothing
+                    registration_count += 1
+                end
+            end
+        else
+            # computed_cost is set, send confirmation_email (payment request)
+            # Send if: never sent OR cost changed (even if fully paid!)
+            should_send = false
+            reason = "initial"
+
+            if !has_pay_email
+                # First time - always send (even if fully paid)
+                should_send = true
+                reason = "initial"
+            elseif !ismissing(computed_cost) && computed_cost !== nothing &&
+                   !ismissing(last_sent_cost) && last_sent_cost !== nothing
+                # Check if COST changed (not balance - ignore payments/subsidies)
+                # Use small epsilon for floating point comparison
+                if abs(Float64(computed_cost) - Float64(last_sent_cost)) > 0.01
+                    should_send = true
+                    reason = "cost_changed"
+                end
+            end
+
+            # Send regardless of payment status (even if fully paid)
+            if should_send
+                queue_id = queue_email!(db, registration_id;
+                                       template_name="confirmation_email",
+                                       reason=reason)
+                if queue_id !== nothing
+                    payment_count += 1
+                end
+            end
+        end
+    end
+
+    return (registration_emails=registration_count, payment_emails=payment_count)
+end
+
+export queue_pending_emails!
+
+"""
+Queue payment request emails for registrations that have costs calculated
+but have not yet received a payment request email.
+
+This is useful after running recalculate-costs when costs were previously NULL.
+Sends to ALL registrations where:
+- computed_cost is NOT NULL
+- No confirmation_email (payment request) has been sent yet
+(Sends even if fully paid)
+
 Returns count of emails queued.
 """
-function queue_pending_emails!(db::DuckDB.DB, event_id::AbstractString;
-                               template_name::String="confirmation_email")
-    needing_email = get_registrations_needing_resend(db, event_id; email_type=template_name)
+function queue_payment_requests_for_event!(db::DuckDB.DB, event_id::AbstractString)
+    # Find registrations with costs but no payment email sent
+    result = DBInterface.execute(db, """
+        WITH latest_payment_emails AS (
+            SELECT
+                ce.registration_id,
+                ce.sent_at,
+                ROW_NUMBER() OVER (PARTITION BY ce.registration_id ORDER BY ce.sent_at DESC) as rn
+            FROM confirmation_emails ce
+            JOIN registrations r ON r.id = ce.registration_id
+            WHERE r.event_id = ?
+              AND ce.email_type = 'confirmation_email'
+              AND ce.status = 'sent'
+        )
+        SELECT
+            r.id as registration_id
+        FROM registrations r
+        LEFT JOIN latest_payment_emails lpe ON lpe.registration_id = r.id AND lpe.rn = 1
+        WHERE r.event_id = ?
+          AND r.computed_cost IS NOT NULL
+          AND lpe.registration_id IS NULL
+    """, [event_id, event_id])
 
     queued_count = 0
-    for row in needing_email
+    for row in collect(result)
         registration_id = row[1]
-        reason_code = row[4]
 
-        reason = if reason_code == "never_sent"
-            "initial"
-        elseif reason_code == "balance_changed"
-            "balance_changed"
-        else
-            "update"
-        end
-
-        queue_id = queue_email!(db, registration_id; template_name=template_name, reason=reason)
+        # Send to all registrations (even if fully paid)
+        queue_id = queue_email!(db, registration_id;
+                               template_name="confirmation_email",
+                               reason="costs_calculated")
         if queue_id !== nothing
             queued_count += 1
         end
@@ -950,7 +1085,7 @@ function queue_pending_emails!(db::DuckDB.DB, event_id::AbstractString;
     return queued_count
 end
 
-export queue_pending_emails!
+export queue_payment_requests_for_event!
 
 """
 Get all pending emails from the queue.

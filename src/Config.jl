@@ -780,24 +780,43 @@ function sync_event_configs_to_db!(db::DuckDB.DB, config_dir::AbstractString=CON
         end
         base_cost = get(config, "base", 0.0)
 
-        # Remove event_name from rules dict
-        rules = copy(config)
-        delete!(rules, "event_name")
-        # This would call set_event_cost_rules - but we need to avoid circular deps
-        # Instead, we'll do it directly here
-        rules_json =  JSON.json(rules)
-        rules_json = replace(rules_json, "€" => "\\u20AC")
-        with_transaction(db) do
-            DBInterface.execute(db,
-            """
-                INSERT INTO events (event_id, event_name, base_cost, cost_rules)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT (event_id) DO UPDATE SET
-                    event_name = COALESCE(EXCLUDED.event_name, events.event_name),
-                    base_cost = EXCLUDED.base_cost,
-                    cost_rules = EXCLUDED.cost_rules
-            """
-            , [event_id, event_name, base_cost, rules_json])
+        # Check if costs are actually configured (not just commented out)
+        # Only store cost_rules if the config contains actual cost data
+        has_costs = haskey(config, "base") || haskey(config, "rules") || haskey(config, "computed_fields")
+
+        if has_costs
+            # Remove event_name from rules dict
+            rules = copy(config)
+            delete!(rules, "event_name")
+            rules_json = JSON.json(rules)
+            rules_json = replace(rules_json, "€" => "\\u20AC")
+
+            with_transaction(db) do
+                DBInterface.execute(db,
+                """
+                    INSERT INTO events (event_id, event_name, base_cost, cost_rules)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT (event_id) DO UPDATE SET
+                        event_name = COALESCE(EXCLUDED.event_name, events.event_name),
+                        base_cost = EXCLUDED.base_cost,
+                        cost_rules = EXCLUDED.cost_rules
+                """
+                , [event_id, event_name, base_cost, rules_json])
+            end
+        else
+            # No costs configured - store NULL for cost_rules
+            with_transaction(db) do
+                DBInterface.execute(db,
+                """
+                    INSERT INTO events (event_id, event_name, base_cost, cost_rules)
+                    VALUES (?, ?, ?, NULL)
+                    ON CONFLICT (event_id) DO UPDATE SET
+                        event_name = COALESCE(EXCLUDED.event_name, events.event_name),
+                        base_cost = EXCLUDED.base_cost,
+                        cost_rules = NULL
+                """
+                , [event_id, event_name, base_cost])
+            end
         end
 
         # Record event config sync

@@ -14,7 +14,7 @@ using ..ReferenceNumbers
 using ..Config: generate_event_config_template, get_config_dir, get_registration_detail_columns
 using ..CostCalculator
 
-export process_email_folder!, get_registrations, export_registrations
+export process_email_folder!, get_registrations
 export RegistrationDetailTable, get_registration_detail_table
 export grant_subsidy!, get_subsidies, revoke_subsidy!, grant_subsidies_batch!
 export get_registration_by_reference, recalculate_costs!
@@ -136,7 +136,7 @@ function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString;
     terminated = false
 
     for filepath in eml_files
-        try
+        #try
             # Parse email to detect event_id before processing
             parsed = EmailParser.parse_eml(filepath)
             submission = EmailParser.extract_form_submission(parsed.body_html)
@@ -175,9 +175,9 @@ function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString;
                 skipped = stats.skipped + (result.skipped ? 1 : 0),
                 no_cost_config = stats.no_cost_config + (result.no_cost_config ? 1 : 0)
             )
-        catch e
-            @warn "Error processing email" filepath exception=e
-        end
+        # catch e
+        #     @warn "Error processing email" filepath exception=e
+        # end
     end
 
     # Report detected events

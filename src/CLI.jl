@@ -772,9 +772,10 @@ function cmd_sync(;
                 JOIN events e ON e.event_id = r.event_id
                 WHERE r.event_id = ? AND e.cost_rules IS NOT NULL
             """, [evt_id]) # AND r.computed_cost IS NULL
-
-            recalculate_costs!(db, evt_id)
-            push!(recalculated, evt_id)
+            if collect(check)[1][1] > 0
+                recalculate_costs!(db, evt_id)
+                push!(recalculated, evt_id)
+            end
         end
 
         if isempty(recalculated)
@@ -835,14 +836,23 @@ function cmd_sync(;
 
         target_events = [row[1] for row in list_events(db)]
 
-        total_queued = 0
+        total_registration_emails = 0
+        total_payment_emails = 0
         for evt_id in target_events
-            queued = queue_pending_emails!(db, evt_id; template_name="confirmation_email")
-            total_queued += queued
+            result = queue_pending_emails!(db, evt_id)
+            total_registration_emails += result.registration_emails
+            total_payment_emails += result.payment_emails
         end
 
+        total_queued = total_registration_emails + total_payment_emails
         if total_queued > 0
             println("  ✓ Queued $total_queued email(s)")
+            if total_registration_emails > 0
+                println("    - Registration confirmations (no payment): $total_registration_emails")
+            end
+            if total_payment_emails > 0
+                println("    - Payment requests: $total_payment_emails")
+            end
         else
             println("  ✓ No new emails to queue")
         end
@@ -1474,6 +1484,47 @@ function cmd_send_emails(;
     end
 end
 
+"""
+Queue payment request emails for an event.
+
+This is useful after running recalculate-costs when costs were previously NULL.
+Queues confirmation_email (payment request) for all registrations that:
+- Have computed_cost set (not NULL)
+- Have not yet received a payment request email
+- Are not fully paid
+"""
+function cmd_queue_payment_requests(event_id::String;
+    db_path::String="events.duckdb",
+    credentials_path::String="config/email_credentials.toml")
+
+    return require_database(db_path) do db
+        # Load email configuration for QR code generation
+        cred_paths = [credentials_path, "credentials.toml", "config/credentials.toml"]
+        cred_found = findfirst(isfile, cred_paths)
+        if cred_found !== nothing
+            actual_cred_path = cred_paths[cred_found]
+            load_email_config_from_file!(actual_cred_path; dry_run=true)
+            println("✓ Loaded email configuration from: $actual_cred_path")
+        else
+            println("⚠ No email credentials found - QR codes will not be generated")
+        end
+
+        println("Queuing payment request emails for event: $event_id")
+        queued = queue_payment_requests_for_event!(db, event_id)
+
+        if queued > 0
+            println("✓ Queued $queued payment request email(s)")
+            println("\nTo send the queued emails:")
+            println("  eventreg send-emails --event-id $event_id")
+        else
+            println("✓ No payment requests to queue")
+            println("  (All registrations either have no cost calculated, already received payment requests, or are fully paid)")
+        end
+
+        return 0
+    end
+end
+
 # =============================================================================
 # MAIN CLI ENTRY POINT
 # =============================================================================
@@ -1514,6 +1565,7 @@ EMAIL MANAGEMENT:
   list-pending-emails            List emails waiting to be sent
     --verbose, -v                Show full email content
     --event-id=<id>              Filter by event
+  queue-payment-requests <event-id>  Queue payment request emails after costs calculated
   mark-email <id> <status>       Mark email as 'sent' or 'discarded'
   send-emails                    Send all pending emails via SMTP
     --id=<id>                    Send specific email by ID
@@ -1708,6 +1760,14 @@ function run_cli(args::Vector{String})
                 options[:id] = parse(Int, id_val)
             end
             return cmd_send_emails(; options...)
+        elseif command == "queue-payment-requests"
+            if isempty(positional)
+                println("❌ Error: event-id required")
+                println("Usage: eventreg queue-payment-requests <event-id>")
+                return 1
+            end
+            event_id = positional[1]
+            return cmd_queue_payment_requests(event_id; options...)
         # Validation and maintenance commands
         elseif command == "validate-config"
             event_id = length(positional) >= 1 ? positional[1] : nothing
