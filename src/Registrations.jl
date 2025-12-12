@@ -11,7 +11,8 @@ import ..EventRegistrations: with_transaction
 # Import from parent module's submodules
 using ..EmailParser
 using ..ReferenceNumbers
-using ..Config: generate_event_config_template, get_config_dir, get_registration_detail_columns
+using ..Config: EventConfig, DEFAULT_CONFIG_DIR, generate_event_config_template,
+                 load_event_config, materialize_cost_rules, get_registration_detail_columns
 using ..CostCalculator
 
 export process_email_folder!, get_registrations
@@ -125,6 +126,7 @@ to pause processing.
 function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString;
                                config_dir::Union{Nothing,String}=nothing,
                                prompt_for_new_events::Bool=false)
+    effective_config_dir = config_dir === nothing ? DEFAULT_CONFIG_DIR : config_dir
     eml_files = filter(f -> endswith(lowercase(f), ".eml"), readdir(folder_path, join=true))
 
     # Track event IDs found in this batch
@@ -145,15 +147,13 @@ function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString;
                 push!(detected_event_ids, submission.event_id)
 
                 # Check if event has cost config
-                config_result = DBInterface.execute(db,
-                    "SELECT event_id FROM events WHERE event_id = ?",
-                    [submission.event_id])
-                if isempty(collect(config_result))
+                has_config = load_event_config(submission.event_id, effective_config_dir) !== nothing
+                if !has_config
                     push!(events_without_config, submission.event_id)
                 end
             end
 
-            result = process_single_email!(db, filepath)
+            result = process_single_email!(db, filepath; config_dir=effective_config_dir)
 
             # Track resubmissions
             if result.is_update && submission !== nothing
@@ -213,7 +213,7 @@ function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString;
     end
 
     if prompt_for_new_events && !isempty(events_without_config)
-        effective_config_dir = config_dir === nothing ? get_config_dir() : config_dir
+        effective_config_dir = config_dir === nothing ? DEFAULT_CONFIG_DIR : config_dir
         sorted_events = sort(collect(events_without_config))
         prompt_result = handle_new_event_prompts!(db, sorted_events, effective_config_dir)
         if !prompt_result.continue_sync
@@ -253,7 +253,7 @@ end
 """
 Process a single email file.
 """
-function process_single_email!(db::DuckDB.DB, filepath::AbstractString)
+function process_single_email!(db::DuckDB.DB, filepath::AbstractString; config_dir::AbstractString=DEFAULT_CONFIG_DIR)
     file_hash = compute_file_hash(filepath)
     filename = basename(filepath)
 
@@ -328,22 +328,14 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString)
     """, [submission.event_id, submission.email])
     existing_rows = collect(existing)
 
-    # Calculate cost (returns nothing if no cost config exists)
-    computed_cost = calculate_cost(db, submission.event_id, submission.fields)
+    cfg = load_event_config(submission.event_id, config_dir)
 
-    # Get cost rules hash for versioning
-    cost_rules_hash = nothing
-    cost_computed_at = nothing
-    if computed_cost !== nothing
-        rules_result = DBInterface.execute(db,
-            "SELECT cost_rules FROM events WHERE event_id = ?",
-            [submission.event_id])
-        rules_rows = collect(rules_result)
-        if !isempty(rules_rows) && rules_rows[1][1] !== nothing
-            cost_rules_hash = string(hash(rules_rows[1][1]))
-            cost_computed_at = now()
-        end
-    end
+    # Calculate cost (returns nothing if no cost config exists)
+    computed_cost = cfg === nothing ? nothing : calculate_cost(cfg, submission.fields)
+
+    # Use config file hash for versioning
+    cost_rules_hash = cfg === nothing ? nothing : cfg.config_hash
+    cost_computed_at = computed_cost === nothing ? nothing : now()
 
     if isempty(existing_rows)
         # New registration
@@ -502,7 +494,7 @@ function get_registration_detail_table(db::DuckDB.DB, event_id::AbstractString;
         "registration_date",
     ]
 
-    cfg_dir = config_dir === nothing ? get_config_dir() : config_dir
+    cfg_dir = config_dir === nothing ? DEFAULT_CONFIG_DIR : config_dir
     preferred_columns = try
         get_registration_detail_columns(event_id, cfg_dir)
     catch err
@@ -686,6 +678,7 @@ Use `strict=true` to fail on any validation errors instead of just warning.
 Use `dry_run=true` to preview changes without applying them.
 """
 function recalculate_costs!(db::DuckDB.DB, event_id::AbstractString;
+                            config_dir::AbstractString=DEFAULT_CONFIG_DIR,
                             strict::Bool=false, dry_run::Bool=false, verbose::Bool=false)
     registrations = get_registrations(db, event_id)
 
@@ -694,21 +687,13 @@ function recalculate_costs!(db::DuckDB.DB, event_id::AbstractString;
         return (success=true, updated=0, warnings=0, details=[])
     end
 
-    # Get cost rules
-    rules = CostCalculator.get_cost_rules(db, event_id)
-    if rules === nothing
-        error("No cost configuration found for event: $event_id")
+    cfg = load_event_config(event_id, config_dir)
+    if cfg === nothing
+        error("No cost configuration file found for event: $event_id")
     end
 
-    # Get cost rules hash for versioning
-    cost_rules_hash = nothing
-    rules_result = DBInterface.execute(db,
-        "SELECT cost_rules FROM events WHERE event_id = ?",
-        [event_id])
-    rules_rows = collect(rules_result)
-    if !isempty(rules_rows) && rules_rows[1][1] !== nothing
-        cost_rules_hash = string(hash(rules_rows[1][1]))
-    end
+    rules = materialize_cost_rules(cfg)
+    cost_rules_hash = cfg.config_hash
     cost_computed_at = now()
 
     # Pre-calculate all costs and collect warnings

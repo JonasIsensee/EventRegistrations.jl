@@ -160,26 +160,40 @@ end
 
 """Setup event configuration for testing"""
 function setup_test_event_config(db)
-    # Load field aliases (empty for now)
-    load_field_aliases(TEST_CONFIG_DIR)
+    mkpath(joinpath(TEST_CONFIG_DIR, "events"))
 
-    # Create simple cost rules for PWE_2026_01 in the correct format (Dict, not Vector)
-    rules_dict = Dict(
-        "base" => 0.0,
-        "rules" => [
-            Dict("field" => "Übernachtung Freitag", "value" => "Ja", "cost" => 25.0),
-            Dict("field" => "Übernachtung Samstag", "value" => "Ja", "cost" => 25.0),
-            Dict("field" => "Busfahrt Hinweg", "value" => "Ja", "cost" => 10.0),
-        ],
-        "computed_fields" => Dict()
-    )
+    config_toml = """
+[event]
+name = "Test Event"
 
-    # Set rules directly in database
-    set_event_cost_rules(db, "PWE_2026_01";
-        event_name="Test Event",
-        base_cost=0.0,
-        rules=rules_dict)
+[aliases]
+uebernachtung_fr = "Übernachtung Freitag"
+uebernachtung_sa = "Übernachtung Samstag"
+busfahrt_hin = "Busfahrt Hinweg"
 
+[costs]
+base = 0.0
+
+[[costs.rules]]
+field = "uebernachtung_fr"
+value = "Ja"
+cost = 25.0
+
+[[costs.rules]]
+field = "uebernachtung_sa"
+value = "Ja"
+cost = 25.0
+
+[[costs.rules]]
+field = "busfahrt_hin"
+value = "Ja"
+cost = 10.0
+"""
+
+    config_path = joinpath(TEST_CONFIG_DIR, "events", "PWE_2026_01.toml")
+    write(config_path, config_toml)
+
+    sync_event_configs_to_db!(db, TEST_CONFIG_DIR)
     println("  Configured event: PWE_2026_01")
 end
 
@@ -281,7 +295,7 @@ try
         setup_test_event_config(db)
 
         # Recalculate costs
-        recalculate_costs!(db, "PWE_2026_01")
+        recalculate_costs!(db, "PWE_2026_01"; config_dir=TEST_CONFIG_DIR)
 
         # Check Jonas's cost (2 nights initially, then resubmitted to 1 night + no bus)
         result = DBInterface.execute(db,

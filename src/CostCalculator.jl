@@ -3,7 +3,8 @@ module CostCalculator
 using JSON
 using DuckDB
 using DBInterface
-export calculate_cost, calculate_cost_with_details, set_event_cost_rules, get_cost_rules
+using ..Config: EventConfig, materialize_cost_rules
+export calculate_cost, calculate_cost_with_details
 export CostCalculationResult
 
 """
@@ -171,32 +172,10 @@ end
 # =============================================================================
 
 """
-Calculate cost for a registration based on event rules.
-Returns nothing if no cost configuration exists (allows deferrable cost calculation).
+Calculate cost using a parsed EventConfig. Returns nothing if no rules exist.
 """
-function calculate_cost(db::DuckDB.DB, event_id::AbstractString, fields::AbstractDict{String, String})
-    # Get cost rules for this event
-    result = DBInterface.execute(db,
-        "SELECT base_cost, cost_rules FROM events WHERE event_id = ?",
-        [event_id])
-
-    rows = collect(result)
-    if isempty(rows)
-        # No event config exists - cost calculation should be deferred
-        return nothing
-    end
-    base_cost = something(rows[1][1], 0.0)
-    rules_json = rows[1][2]
-    ismissing(rules_json) && return nothing
-
-    if rules_json === nothing || rules_json == ""
-        # Event exists but no rules defined - use base cost only
-        return Float64(base_cost)
-    end
-
-    rules = JSON.parse(rules_json)
-
-    # Use the Dict-based calculation
+function calculate_cost(cfg::EventConfig, fields::AbstractDict{String, String})
+    rules = materialize_cost_rules(cfg)
     return calculate_cost(rules, fields)
 end
 
@@ -322,49 +301,6 @@ function calculate_cost_with_details(rules::AbstractDict, fields::AbstractDict{S
     end
 
     return CostCalculationResult(total, base, rule_costs, matched_rules, unmatched_fields, warnings)
-end
-
-"""
-Set or update cost rules for an event.
-"""
-function set_event_cost_rules(db::DuckDB.DB, event_id::AbstractString;
-                               event_name::Union{String,Nothing}=nothing,
-                               base_cost::Real=0.0,
-                               rules::Union{Dict,Nothing}=nothing)
-    rules_json = rules === nothing ? nothing : JSON.json(rules)
-
-    # Upsert the event
-    DBInterface.execute(db, """
-            INSERT INTO events (event_id, event_name, base_cost, cost_rules)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT (event_id) DO UPDATE SET
-                event_name = COALESCE(EXCLUDED.event_name, events.event_name),
-                base_cost = EXCLUDED.base_cost,
-                cost_rules = EXCLUDED.cost_rules
-        """, [event_id, event_name, base_cost, rules_json])
-end
-
-"""
-Get cost rules for an event.
-"""
-function get_cost_rules(db::DuckDB.DB, event_id::AbstractString)
-    result = DBInterface.execute(db,
-        "SELECT base_cost, cost_rules FROM events WHERE event_id = ?",
-        [event_id])
-
-    rows = collect(result)
-    if isempty(rows)
-        return nothing
-    end
-
-    base_cost = something(rows[1][1], 0.0)
-    rules_json = rows[1][2]
-    ismissing(rules_json) && return nothing
-    if rules_json === nothing || rules_json == ""
-        return Dict("base" => base_cost, "rules" => [])
-    end
-
-    return JSON.parse(rules_json)
 end
 
 """

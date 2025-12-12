@@ -10,39 +10,32 @@ using SHA
 # Import from parent module
 import ..EventRegistrations: with_transaction
 
-export load_field_aliases, generate_field_config, resolve_field_name
-export load_event_config, load_event_aliases, generate_event_config_template
-export get_config_dir, ensure_config_dirs
+export DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs, load_field_aliases
+export materialize_cost_rules, get_registration_detail_columns
+export generate_field_config, generate_event_config_template
+export ensure_config_dirs
 export check_config_sync, get_unsynced_configs, record_config_sync
 export ConfigSyncStatus
-export get_registration_detail_columns
 
-# Default config directory (can be overridden)
-const CONFIG_DIR = Ref{String}("config")
+const DEFAULT_CONFIG_DIR = "config"
 
-# Current event ID for scoped alias resolution
-const CURRENT_EVENT_ID = Ref{Union{String,Nothing}}(nothing)
-
-# Event-specific alias cache: event_id -> Dict(alias -> actual)
-const EVENT_ALIASES = Dict{String, Dict{String, String}}()
-const EVENT_REVERSE_ALIASES = Dict{String, Dict{String, String}}()
-
-"""
-Get the current config directory.
-"""
-get_config_dir() = CONFIG_DIR[]
-
-"""
-Set the config directory.
-"""
-function set_config_dir!(path::AbstractString)
-    CONFIG_DIR[] = path
+struct EventConfig
+    event_id::String
+    name::String
+    config_path::String
+    config_hash::String
+    aliases::Dict{String,String}
+    reverse_aliases::Dict{String,String}
+    base_cost::Float64
+    rules::Vector{Dict{String,Any}}
+    computed_fields::Dict{String,Any}
+    export_registration_columns::Union{Nothing,Vector{String}}
 end
 
 """
 Ensure config directories exist.
 """
-function ensure_config_dirs(base_dir::AbstractString=CONFIG_DIR[])
+function ensure_config_dirs(base_dir::AbstractString=DEFAULT_CONFIG_DIR)
     mkpath(base_dir)
     mkpath(joinpath(base_dir, "events"))
     mkpath(joinpath(base_dir, "templates"))
@@ -50,127 +43,17 @@ function ensure_config_dirs(base_dir::AbstractString=CONFIG_DIR[])
 end
 
 # =============================================================================
-# FIELD ALIASES
+# FIELD ALIAS UTILITIES
 # =============================================================================
 
-# In-memory cache for field aliases
-const FIELD_ALIASES = Dict{String, String}()
-const REVERSE_ALIASES = Dict{String, String}()
-
 """
-Load field aliases (DEPRECATED - now uses event-specific aliases only).
-This function is kept for backward compatibility but does nothing.
-Field aliases are now defined in event-specific config files only.
+Load field aliases (kept for backward compatibility; now a no-op).
 """
-function load_field_aliases(config_dir::AbstractString=CONFIG_DIR[])
-    # Clear global caches - we only use event-specific aliases now
-    empty!(FIELD_ALIASES)
-    empty!(REVERSE_ALIASES)
-    return Dict{String, String}()
+function load_field_aliases(config_dir::AbstractString=DEFAULT_CONFIG_DIR)
+    return Dict{String,String}()
 end
 
-"""
-Resolve a field name - if it's an alias, return the actual name.
-If it's already an actual name, return it unchanged.
-"""
-function resolve_field_name(name::AbstractString)
-    # First check if it's an alias
-    if haskey(FIELD_ALIASES, name)
-        return FIELD_ALIASES[name]
-    end
-    # Otherwise return as-is (might be the actual field name)
-    return name
-end
-
-"""
-Get alias for a field name (reverse lookup).
-Returns the alias if one exists, otherwise the original name.
-"""
-function get_field_alias(actual_name::AbstractString)
-    return get(REVERSE_ALIASES, actual_name, actual_name)
-end
-
-"""
-Load event-specific field aliases from an event config file.
-Event configs can have their own [aliases] section that takes precedence over global aliases.
-Returns Dict mapping alias -> actual field name for that event.
-"""
-function load_event_aliases(event_id::AbstractString, config_dir::AbstractString=CONFIG_DIR[])
-    path = joinpath(config_dir, "events", "$event_id.toml")
-
-    if !isfile(path)
-        return Dict{String, String}()
-    end
-
-    config = TOML.parsefile(path)
-    aliases = get(config, "aliases", Dict())
-
-    # Convert to proper types
-    event_aliases = Dict{String, String}()
-    reverse_aliases = Dict{String, String}()
-
-    for (alias, actual) in aliases
-        event_aliases[string(alias)] = string(actual)
-        reverse_aliases[string(actual)] = string(alias)
-    end
-
-    # Cache for this event
-    EVENT_ALIASES[event_id] = event_aliases
-    EVENT_REVERSE_ALIASES[event_id] = reverse_aliases
-
-    return event_aliases
-end
-
-"""
-Set the current event context for alias resolution.
-This allows resolve_field_name and get_field_alias to use event-specific aliases.
-"""
-function set_current_event!(event_id::Union{String,Nothing})
-    CURRENT_EVENT_ID[] = event_id
-end
-
-"""
-Clear the current event context.
-"""
-function clear_current_event!()
-    CURRENT_EVENT_ID[] = nothing
-end
-
-"""
-Resolve a field name for a specific event.
-Checks event-specific aliases first, then falls back to global aliases.
-"""
-function resolve_field_name(name::AbstractString, event_id::AbstractString)
-    # First check event-specific aliases
-    if haskey(EVENT_ALIASES, event_id)
-        event_aliases = EVENT_ALIASES[event_id]
-        if haskey(event_aliases, name)
-            return event_aliases[name]
-        end
-    end
-    # Fall back to global aliases
-    if haskey(FIELD_ALIASES, name)
-        return FIELD_ALIASES[name]
-    end
-    # Return as-is
-    return name
-end
-
-"""
-Get alias for a field name for a specific event (reverse lookup).
-Checks event-specific reverse aliases first, then falls back to global.
-"""
-function get_field_alias(actual_name::AbstractString, event_id::AbstractString)
-    # First check event-specific reverse aliases
-    if haskey(EVENT_REVERSE_ALIASES, event_id)
-        event_reverse = EVENT_REVERSE_ALIASES[event_id]
-        if haskey(event_reverse, actual_name)
-            return event_reverse[actual_name]
-        end
-    end
-    # Fall back to global
-    return get(REVERSE_ALIASES, actual_name, actual_name)
-end
+get_field_alias(actual_name::AbstractString) = actual_name
 
 """
 Generate a fields.toml config file from existing submissions.
@@ -285,113 +168,75 @@ end
 # EVENT CONFIGURATION
 # =============================================================================
 
-"""
-Load event configuration from config/events/{event_id}.toml
+const REGISTRATION_BASE_COLUMNS = Set([
+    "id",
+    "reference_number",
+    "first_name",
+    "last_name",
+    "email",
+    "computed_cost",
+    "registration_date",
+])
 
-This function:
-1. Loads event-specific field aliases from the event config
-2. Converts cost rules, resolving all field aliases to actual field names
-"""
-function load_event_config(event_id::AbstractString, config_dir::AbstractString=CONFIG_DIR[])
-    path = joinpath(config_dir, "events", "$event_id.toml")
+resolve_alias(name::AbstractString, aliases::Dict{String,String}) = get(aliases, name, name)
 
-    if !isfile(path)
-        return nothing
+function parse_aliases(config::Dict)
+    aliases = Dict{String,String}()
+    reverse = Dict{String,String}()
+    raw_aliases = get(config, "aliases", Dict())
+    for (alias, actual) in raw_aliases
+        a = string(alias)
+        act = string(actual)
+        aliases[a] = act
+        reverse[act] = a
     end
-
-    config = TOML.parsefile(path)
-
-    # Load event-specific aliases first (these take precedence)
-    # This populates EVENT_ALIASES[event_id]
-    load_event_aliases(event_id, config_dir)
-
-    # Helper to resolve alias for this event specifically
-    resolve_alias = name -> resolve_field_name(name, event_id)
-
-    # Convert TOML structure to the format expected by CostCalculator
-    result = Dict{String, Any}()
-
-    # Event metadata
-    if haskey(config, "event")
-        result["event_name"] = get(config["event"], "name", event_id)
-    end
-
-    # Cost rules
-    if haskey(config, "costs")
-        costs = config["costs"]
-        result["base"] = get(costs, "base", 0.0)
-
-        # Convert rules, resolving field aliases
-        if haskey(costs, "rules")
-            rules = []
-            for rule in costs["rules"]
-                new_rule = Dict{String, Any}()
-                for (k, v) in rule
-                    if k == "field"
-                        # Resolve alias to actual field name (event-specific first)
-                        new_rule[k] = resolve_alias(v)
-                    else
-                        new_rule[k] = v
-                    end
-                end
-                push!(rules, new_rule)
-            end
-            result["rules"] = rules
-        end
-
-        # Convert computed_fields, resolving aliases
-        if haskey(costs, "computed_fields")
-            computed = Dict{String, Any}()
-            for (name, definition) in costs["computed_fields"]
-                if isa(definition, Dict) && haskey(definition, "sum_of")
-                    items = []
-                    for item in definition["sum_of"]
-                        new_item = Dict{String, Any}()
-                        for (k, v) in item
-                            if k == "field"
-                                new_item[k] = resolve_alias(v)
-                            else
-                                new_item[k] = v
-                            end
-                        end
-                        push!(items, new_item)
-                    end
-                    computed[name] = Dict("sum_of" => items)
-                end
-            end
-            result["computed_fields"] = computed
-        end
-    end
-
-    return result
+    return aliases, reverse
 end
 
-"""
-Return ordered columns for registration detail exports as defined in the
-event configuration.
-
-Looks for `[export.registration_details]` with a `columns` array. Entries are
-matched against known base columns, then resolved via event aliases to actual
-field names. Unknown entries are returned as-is to allow future extension.
-"""
-function get_registration_detail_columns(event_id::AbstractString,
-                                          config_dir::AbstractString=CONFIG_DIR[])
-    path = joinpath(config_dir, "events", "$event_id.toml")
-
-    if !isfile(path)
-        return nothing
+function parse_rules(costs::Dict, aliases::Dict{String,String})
+    rules = Vector{Dict{String,Any}}()
+    if haskey(costs, "rules")
+        for rule in costs["rules"]
+            new_rule = Dict{String,Any}()
+            for (k, v) in rule
+                if k == "field"
+                    new_rule[k] = resolve_alias(string(v), aliases)
+                else
+                    new_rule[k] = v
+                end
+            end
+            push!(rules, new_rule)
+        end
     end
+    return rules
+end
 
-    # Ensure event aliases are loaded for this event (used for resolution)
-    try
-        load_event_aliases(event_id, config_dir)
-    catch err
-        @warn "Failed to load event aliases for registration detail columns" event_id=event_id exception=err
+function parse_computed_fields(costs::Dict, aliases::Dict{String,String})
+    computed_fields = Dict{String,Any}()
+    if haskey(costs, "computed_fields")
+        for (name, definition) in costs["computed_fields"]
+            if isa(definition, Dict) && haskey(definition, "sum_of")
+                items = Vector{Dict{String,Any}}()
+                for item in definition["sum_of"]
+                    new_item = Dict{String,Any}()
+                    for (k, v) in item
+                        if k == "field"
+                            new_item[k] = resolve_alias(string(v), aliases)
+                        else
+                            new_item[k] = v
+                        end
+                    end
+                    push!(items, new_item)
+                end
+                computed_fields[string(name)] = Dict("sum_of" => items)
+            end
+        end
     end
+    return computed_fields
+end
 
-    config = TOML.parsefile(path)
+function parse_registration_detail_columns(config::Dict, aliases::Dict{String,String})
     export_section = get(config, "export", nothing)
-
     if !(export_section isa AbstractDict)
         return nothing
     end
@@ -406,16 +251,6 @@ function get_registration_detail_columns(event_id::AbstractString,
         return nothing
     end
 
-    base_columns = Set([
-        "id",
-        "reference_number",
-        "first_name",
-        "last_name",
-        "email",
-        "computed_cost",
-        "registration_date",
-    ])
-
     ordered = String[]
     seen = Set{String}()
 
@@ -423,21 +258,12 @@ function get_registration_detail_columns(event_id::AbstractString,
         if !(raw_entry isa AbstractString)
             continue
         end
-
         entry = strip(String(raw_entry))
         if isempty(entry)
             continue
         end
 
-        resolved = if entry in base_columns
-            entry
-        else
-            try
-                resolve_field_name(entry, event_id)
-            catch
-                entry
-            end
-        end
+        resolved = entry in REGISTRATION_BASE_COLUMNS ? entry : resolve_alias(entry, aliases)
 
         if !(resolved in seen)
             push!(ordered, resolved)
@@ -446,6 +272,67 @@ function get_registration_detail_columns(event_id::AbstractString,
     end
 
     return isempty(ordered) ? nothing : ordered
+end
+
+"""
+Load event configuration from config/events/{event_id}.toml into a typed EventConfig.
+"""
+function load_event_config(event_id::AbstractString, config_dir::AbstractString=DEFAULT_CONFIG_DIR)
+    path = joinpath(config_dir, "events", "$event_id.toml")
+    if !isfile(path)
+        return nothing
+    end
+
+    config = TOML.parsefile(path)
+    aliases, reverse_aliases = parse_aliases(config)
+    costs = get(config, "costs", Dict())
+
+    base_cost = Float64(get(costs, "base", 0.0))
+    rules = parse_rules(costs, aliases)
+    computed_fields = parse_computed_fields(costs, aliases)
+    export_columns = parse_registration_detail_columns(config, aliases)
+
+    event_name = get(get(config, "event", Dict()), "name", event_id) |> string
+    cfg_hash = compute_file_hash(path)
+
+    return EventConfig(event_id, event_name, path, cfg_hash,
+        aliases, reverse_aliases, base_cost, rules, computed_fields, export_columns)
+end
+
+function load_all_event_configs(config_dir::AbstractString=DEFAULT_CONFIG_DIR)
+    events_dir = joinpath(config_dir, "events")
+
+    if !isdir(events_dir)
+        return Dict{String, EventConfig}()
+    end
+
+    configs = Dict{String, EventConfig}()
+
+    for file in readdir(events_dir)
+        if endswith(file, ".toml")
+            event_id = file[1:end-5]
+            cfg = load_event_config(event_id, config_dir)
+            if cfg !== nothing
+                configs[event_id] = cfg
+            end
+        end
+    end
+
+    return configs
+end
+
+function materialize_cost_rules(cfg::EventConfig)
+    return Dict(
+        "base" => cfg.base_cost,
+        "rules" => cfg.rules,
+        "computed_fields" => cfg.computed_fields,
+    )
+end
+
+function get_registration_detail_columns(event_id::AbstractString,
+                                          config_dir::AbstractString=DEFAULT_CONFIG_DIR)
+    cfg = load_event_config(event_id, config_dir)
+    return cfg === nothing ? nothing : cfg.export_registration_columns
 end
 
 """
@@ -463,7 +350,7 @@ function generate_event_config_template(event_id::AbstractString,
                                          output_path::AbstractString;
                                          event_name::String="",
                                          db::Union{DuckDB.DB,Nothing}=nothing,
-                                         config_dir::AbstractString=CONFIG_DIR[])
+                                         config_dir::AbstractString=DEFAULT_CONFIG_DIR)
     # Try to load existing global field aliases (for suggestions)
     load_field_aliases(config_dir)
 
@@ -793,93 +680,32 @@ function generate_event_config_template(event_id::AbstractString,
 
     return actual_fields
 end
-
 """
-Load all event configs from config/events/ directory.
+Sync event configs from TOML files to database (metadata only).
+Stores event id, name, base cost, and records config hash for change detection.
 """
-function load_all_event_configs(config_dir::AbstractString=CONFIG_DIR[])
-    events_dir = joinpath(config_dir, "events")
-
-    if !isdir(events_dir)
-        return Dict{String, Any}()
-    end
-
-    configs = Dict{String, Any}()
-
-    for file in readdir(events_dir)
-        if endswith(file, ".toml")
-            event_id = file[1:end-5]  # Remove .toml extension
-            config = load_event_config(event_id, config_dir)
-            if config !== nothing
-                configs[event_id] = config
-            end
-        end
-    end
-
-    return configs
-end
-
-"""
-Sync event configs from TOML files to database.
-"""
-function sync_event_configs_to_db!(db::DuckDB.DB, config_dir::AbstractString=CONFIG_DIR[])
-    # Load event configs (event-specific aliases only)
+function sync_event_configs_to_db!(db::DuckDB.DB, config_dir::AbstractString=DEFAULT_CONFIG_DIR)
     configs = load_all_event_configs(config_dir)
-    for (event_id, config) in configs
-        event_name = get(config, "event_name", nothing)
-        if isnothing(event_name)
-            println("Why is event name notnhing?")
-            continue
-        end
-        base_cost = get(config, "base", 0.0)
-
-        # Check if costs are actually configured (not just commented out)
-        # Only store cost_rules if the config contains actual cost data
-        has_costs = haskey(config, "base") || haskey(config, "rules") || haskey(config, "computed_fields")
-
-        if has_costs
-            # Remove event_name from rules dict
-            rules = copy(config)
-            delete!(rules, "event_name")
-            rules_json = JSON.json(rules)
-            rules_json = replace(rules_json, "€" => "\\u20AC")
-
-            with_transaction(db) do
-                DBInterface.execute(db,
-                """
-                    INSERT INTO events (event_id, event_name, base_cost, cost_rules)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT (event_id) DO UPDATE SET
-                        event_name = COALESCE(EXCLUDED.event_name, events.event_name),
-                        base_cost = EXCLUDED.base_cost,
-                        cost_rules = EXCLUDED.cost_rules
-                """
-                , [event_id, event_name, base_cost, rules_json])
-            end
-        else
-            # No costs configured - store NULL for cost_rules
-            with_transaction(db) do
-                DBInterface.execute(db,
-                """
-                    INSERT INTO events (event_id, event_name, base_cost, cost_rules)
-                    VALUES (?, ?, ?, NULL)
-                    ON CONFLICT (event_id) DO UPDATE SET
-                        event_name = COALESCE(EXCLUDED.event_name, events.event_name),
-                        base_cost = EXCLUDED.base_cost,
-                        cost_rules = NULL
-                """
-                , [event_id, event_name, base_cost])
-            end
+    for (event_id, cfg) in configs
+        with_transaction(db) do
+            DBInterface.execute(db,
+            """
+                INSERT INTO events (event_id, event_name, base_cost, cost_rules)
+                VALUES (?, ?, ?, NULL)
+                ON CONFLICT (event_id) DO UPDATE SET
+                    event_name = COALESCE(EXCLUDED.event_name, events.event_name),
+                    base_cost = EXCLUDED.base_cost,
+                    cost_rules = NULL
+            """
+            , [event_id, cfg.name, cfg.base_cost])
         end
 
-        # Record event config sync
-        event_config_path = joinpath(config_dir, "events", "$event_id.toml")
-        if isfile(event_config_path)
-            record_config_sync(db, event_config_path)
+        if isfile(cfg.config_path)
+            record_config_sync(db, cfg.config_path)
         end
-    end  # End for loop
+    end
 
-    println("Synced $(length(configs)) event configs to database")
+    println("Synced $(length(configs)) event configs to database (metadata only)")
 end
 
 # =============================================================================
@@ -973,7 +799,7 @@ end
 Get list of all config files that need syncing.
 Checks all event configs (fields.toml is deprecated).
 """
-function get_unsynced_configs(db::DuckDB.DB, config_dir::AbstractString=CONFIG_DIR[])::Vector{ConfigSyncStatus}
+function get_unsynced_configs(db::DuckDB.DB, config_dir::AbstractString=DEFAULT_CONFIG_DIR)::Vector{ConfigSyncStatus}
     unsynced = ConfigSyncStatus[]
 
     # Check all event configs
@@ -997,7 +823,7 @@ end
 Get sync status for all config files.
 Returns a vector of (path, synced, needs_sync) tuples.
 """
-function get_all_config_sync_status(db::DuckDB.DB, config_dir::AbstractString=CONFIG_DIR[])
+function get_all_config_sync_status(db::DuckDB.DB, config_dir::AbstractString=DEFAULT_CONFIG_DIR)
     statuses = ConfigSyncStatus[]
 
     # Check all event configs (fields.toml is deprecated)

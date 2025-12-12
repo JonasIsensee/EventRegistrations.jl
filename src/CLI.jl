@@ -278,7 +278,8 @@ function cmd_recalculate_costs(event_id::String;
             println("(DRY RUN - no changes will be applied)")
         end
 
-        result = recalculate_costs!(db, event_id; strict=strict, dry_run=dry_run, verbose=verbose)
+        result = recalculate_costs!(db, event_id; config_dir=config_dir,
+                         strict=strict, dry_run=dry_run, verbose=verbose)
 
         if result.success
             if dry_run
@@ -496,11 +497,10 @@ function cmd_status(; db_path::String="events.duckdb", config_dir::String="confi
                     e.event_id,
                     e.event_name,
                     COUNT(r.id) as reg_count,
-                    e.base_cost,
-                    CASE WHEN e.cost_rules IS NOT NULL THEN '✓' ELSE '❌' END as has_rules
+                    e.base_cost
                 FROM events e
                 LEFT JOIN registrations r ON r.event_id = e.event_id
-                GROUP BY e.event_id, e.event_name, e.base_cost, e.cost_rules
+                GROUP BY e.event_id, e.event_name, e.base_cost
                 ORDER BY e.event_id
             """)
 
@@ -510,11 +510,13 @@ function cmd_status(; db_path::String="events.duckdb", config_dir::String="confi
             else
                 println("-" ^ 80)
                 for event in events
-                    event_id, event_name, reg_count, base_cost, has_rules = event
+                    event_id, event_name, reg_count, base_cost = event
+                    cfg = Config.load_event_config(event_id, config_dir)
+                    has_config = cfg === nothing ? "❌" : "✓"
                     println("  $event_id: $event_name")
                     println("    Registrations: $reg_count")
                     println("    Base cost: $(something(base_cost, 0)) €")
-                    println("    Cost rules: $has_rules")
+                    println("    Config file: $has_config")
                     println()
                 end
             end
@@ -563,13 +565,14 @@ function cmd_validate_config(event_id::Union{String,Nothing}=nothing;
             println("Validating event: $eid")
             println("-" ^ 60)
 
-            # Get cost rules
-            rules = get_cost_rules(db, eid)
-            if rules === nothing
-                println("  ⚠ No cost configuration found")
+            cfg = Config.load_event_config(eid, config_dir)
+            if cfg === nothing
+                println("  ⚠ No cost configuration file found")
                 println()
                 continue
             end
+
+            rules = Config.materialize_cost_rules(cfg)
 
             # Validate using the Validation module
             validation_result = validate_cost_config(rules, eid, db; strict=strict)
@@ -764,16 +767,19 @@ function cmd_sync(;
         events = list_events(db)
         for event_row in events
             evt_id = event_row[1]
+            cfg = Config.load_event_config(evt_id, config_dir)
+            if cfg === nothing
+                continue
+            end
 
-            # Check if event has registrations without costs but has config
             check = DBInterface.execute(db, """
                 SELECT COUNT(*)
                 FROM registrations r
-                JOIN events e ON e.event_id = r.event_id
-                WHERE r.event_id = ? AND e.cost_rules IS NOT NULL
-            """, [evt_id]) # AND r.computed_cost IS NULL
+                WHERE r.event_id = ?
+                  AND (r.computed_cost IS NULL OR r.cost_rules_hash IS NULL OR r.cost_rules_hash <> ?)
+            """, [evt_id, cfg.config_hash])
             if collect(check)[1][1] > 0
-                recalculate_costs!(db, evt_id)
+                recalculate_costs!(db, evt_id; config_dir=config_dir)
                 push!(recalculated, evt_id)
             end
         end

@@ -264,15 +264,12 @@ function verify_database(db_path::AbstractString)
             push!(results["warnings"], "$orphan_count registration(s) reference non-existent events")
         end
 
-        # Check for NULL costs where event has config
-        null_cost_check = DBInterface.execute(db, """
-            SELECT COUNT(*) FROM registrations r
-            JOIN events e ON r.event_id = e.event_id
-            WHERE r.computed_cost IS NULL AND e.cost_rules IS NOT NULL
-        """)
+        # Check for NULL costs
+        null_cost_check = DBInterface.execute(db,
+            "SELECT COUNT(*) FROM registrations WHERE computed_cost IS NULL")
         null_cost_count = first(collect(null_cost_check))[1]
         if null_cost_count > 0
-            push!(results["warnings"], "$null_cost_count registration(s) have NULL cost despite having cost rules")
+            push!(results["warnings"], "$null_cost_count registration(s) have NULL computed_cost")
         end
 
         results["integrity_ok"] = isempty(results["errors"])
@@ -289,19 +286,19 @@ end
 export verify_database
 
 # Re-export from Config
-using .Config: load_field_aliases, generate_field_config, resolve_field_name
-using .Config: load_event_config, load_event_aliases, generate_event_config_template, sync_event_configs_to_db!
-using .Config: ensure_config_dirs, get_config_dir, get_registration_detail_columns
-export load_field_aliases, generate_field_config, resolve_field_name
-export load_event_config, load_event_aliases, generate_event_config_template, sync_event_configs_to_db!
-export ensure_config_dirs, get_config_dir, get_registration_detail_columns
+using .Config: DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs, load_field_aliases
+using .Config: materialize_cost_rules, generate_field_config, generate_event_config_template, sync_event_configs_to_db!
+using .Config: ensure_config_dirs, get_registration_detail_columns
+export DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs, load_field_aliases
+export materialize_cost_rules, generate_field_config, generate_event_config_template, sync_event_configs_to_db!
+export ensure_config_dirs, get_registration_detail_columns
 
 # Re-export AppConfig types/functions (now included directly)
 export AppConfig, EmailConfig, load_app_config
 
 # Re-export from CostCalculator
-using .CostCalculator: set_event_cost_rules, get_cost_rules, calculate_cost
-export set_event_cost_rules, get_cost_rules, calculate_cost
+using .CostCalculator: calculate_cost
+export calculate_cost
 
 # Re-export from Registrations
 using .Registrations: process_email_folder!, get_registrations
