@@ -47,32 +47,6 @@ using Base: ScopedValues
 # =============================================================================
 
 """
-    with_database(f, db_path::AbstractString)
-
-Execute function `f` with a database connection, ensuring the connection
-is properly closed even if an error occurs.
-
-This is the recommended way to work with the database to prevent corruption.
-
-# Example
-```julia
-with_database("events.duckdb") do db
-    process_email_folder!(db, "emails")
-end
-```
-"""
-function with_database(f::Function, db_path::AbstractString)
-    db = init_database(db_path)
-    try
-        return f(db)
-    finally
-        DBInterface.close!(db)
-    end
-end
-
-export with_database
-
-"""
     require_database(f, db_path::AbstractString)
 
 Execute function `f` with a database connection, but ONLY if the database
@@ -185,105 +159,6 @@ using .Config: ConfigSyncStatus, check_config_sync, get_unsynced_configs
 using .Config: get_all_config_sync_status
 export ConfigSyncStatus, check_config_sync, get_unsynced_configs
 export get_all_config_sync_status
-
-
-
-"""
-    verify_database(db_path::AbstractString)
-
-Perform basic integrity checks on the database.
-Returns a named tuple with check results.
-
-Checks performed:
-- File exists and is readable
-- Can open and close connection
-- Core tables exist
-- No orphaned records
-"""
-function verify_database(db_path::AbstractString)
-    results = Dict{String, Any}(
-        "file_exists" => false,
-        "file_readable" => false,
-        "connection_ok" => false,
-        "tables_exist" => false,
-        "integrity_ok" => false,
-        "errors" => String[],
-        "warnings" => String[]
-    )
-
-    # Check file
-    if !isfile(db_path)
-        push!(results["errors"], "Database file does not exist: $db_path")
-        return (valid=false, results=results)
-    end
-    results["file_exists"] = true
-
-    # Check readable
-    try
-        open(db_path, "r") do f
-            read(f, 1)
-        end
-        results["file_readable"] = true
-    catch e
-        push!(results["errors"], "Cannot read database file: $e")
-        return (valid=false, results=results)
-    end
-
-    # Try to open connection
-    db = DuckDB.DB(db_path)
-    try
-        results["connection_ok"] = true
-
-        # Check core tables exist
-        required_tables = ["events", "registrations", "submissions", "processed_emails",
-                          "subsidies", "bank_transfers", "payment_matches"]
-        missing_tables = String[]
-
-        for table in required_tables
-            result = DBInterface.execute(db,
-                "SELECT 1 FROM information_schema.tables WHERE table_name = ?", [table])
-            if isempty(collect(result))
-                push!(missing_tables, table)
-            end
-        end
-
-        if isempty(missing_tables)
-            results["tables_exist"] = true
-        else
-            push!(results["warnings"], "Missing tables: $(join(missing_tables, ", "))")
-        end
-
-        # Check for orphaned records
-        orphan_check = DBInterface.execute(db, """
-            SELECT COUNT(*) FROM registrations r
-            LEFT JOIN events e ON r.event_id = e.event_id
-            WHERE e.event_id IS NULL
-        """)
-        orphan_count = first(collect(orphan_check))[1]
-        if orphan_count > 0
-            push!(results["warnings"], "$orphan_count registration(s) reference non-existent events")
-        end
-
-        # Check for NULL costs
-        null_cost_check = DBInterface.execute(db,
-            "SELECT COUNT(*) FROM registrations WHERE computed_cost IS NULL")
-        null_cost_count = first(collect(null_cost_check))[1]
-        if null_cost_count > 0
-            push!(results["warnings"], "$null_cost_count registration(s) have NULL computed_cost")
-        end
-
-        results["integrity_ok"] = isempty(results["errors"])
-
-    catch e
-        push!(results["errors"], "Database connection error: $e")
-        return (valid=false, results=results)
-    finally
-        DBInterface.close!(db)
-    end
-
-    return (valid=isempty(results["errors"]), results=results)
-end
-export verify_database
 
 # Re-export from Config
 using .Config: DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs, load_field_aliases
