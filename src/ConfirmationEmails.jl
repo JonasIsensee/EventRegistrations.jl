@@ -424,22 +424,22 @@ function generate_email_content(;
     fallback_info = isempty(strip(CONFIG.additional_info)) ? "Bei Fragen erreichst du uns unter $(CONFIG.from_address)." : CONFIG.additional_info
     info_html = isempty(strip(fallback_info)) ? "" : "<p style=\"margin: 24px 0;\">$(replace(escape_html(fallback_info), "\n" => "<br>"))</p>"
 
-    # Build variables dict
+    # Build variables dict (plain strings rely on Mustache escaping; HTML fragments use triple braces in templates)
     vars = Dict{String, Any}(
-        "first_name" => escape_html(first_name),
-        "last_name" => escape_html(last_name),
-        "event_name" => escape_html(event_name),
-        "reference_number" => escape_html(reference_number),
+        "first_name" => something(first_name, ""),
+        "last_name" => something(last_name, ""),
+        "event_name" => something(event_name, ""),
+        "reference_number" => reference_number,
         "cost" => format_currency(cost),
         "remaining" => format_currency(remaining),
         "subsidy_amount" => format_currency(subsidy_amount),
-        "subsidy_reason" => escape_html(subsidy_reason),
+        "subsidy_reason" => something(subsidy_reason, ""),
         "amount_paid" => format_currency(amount_paid),
-        "cost_change_note" => escape_html(cost_change_note),
+        "cost_change_note" => something(cost_change_note, ""),
         "registration_fields" => fields_html,
         "bank_details" => bank_details_html,
         "additional_info" => info_html,
-        "sender_name" => escape_html(CONFIG.from_name),
+        "sender_name" => CONFIG.from_name,
     )
 
     # Generate QR code if enabled and appropriate
@@ -886,11 +886,11 @@ function queue_payment_confirmation!(db::DuckDB.DB, registration_id::Integer, am
 
     # Prepare template variables
     vars = Dict{String, Any}(
-        "first_name" => escape_html(something(first_name, "")),
-        "event_name" => escape_html(something(event_name, event_id)),
-        "reference_number" => escape_html(reference_number),
+        "first_name" => something(first_name, ""),
+        "event_name" => something(event_name, event_id),
+        "reference_number" => reference_number,
         "amount_paid" => format_currency(amount_f),
-        "sender_name" => escape_html(CONFIG.from_name)
+        "sender_name" => CONFIG.from_name
     )
 
     body_text = render_template(template, vars)

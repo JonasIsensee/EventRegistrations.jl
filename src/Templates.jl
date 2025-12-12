@@ -1,10 +1,22 @@
 module Templates
 
+using Mustache
+
 export load_template, get_template_path, list_templates
 export render_template, ensure_default_templates, escape_html
 
-# Default templates directory
+# Default templates directory (user editable)
 const TEMPLATES_DIR = Ref{String}("config/templates")
+
+# Packaged default templates (read-only) used to seed missing user templates
+const PACKAGE_TEMPLATES_DIR = normpath(joinpath(@__DIR__, "..", "config", "templates"))
+
+# Default template names we manage
+const DEFAULT_TEMPLATE_FILES = [
+    "registration_confirmation",
+    "confirmation_email",
+    "payment_confirmation",
+]
 
 """
 Get the current templates directory.
@@ -37,9 +49,13 @@ escape_html(::Nothing) = ""
 Get full path to a template file.
 """
 function get_template_path(name::AbstractString)
-    # Add .txt extension if not present
-    filename = endswith(name, ".txt") ? name : "$name.txt"
-    return joinpath(TEMPLATES_DIR[], filename)
+    # Respect explicit extensions
+    if !isempty(splitext(name)[2])
+        return joinpath(TEMPLATES_DIR[], name)
+    end
+
+    # Use Mustache templates only
+    return joinpath(TEMPLATES_DIR[], "$name.mustache")
 end
 
 """
@@ -66,7 +82,13 @@ function list_templates()
         return String[]
     end
 
-    return [splitext(f)[1] for f in readdir(dir) if endswith(f, ".txt")]
+    names = String[]
+    for f in readdir(dir)
+        if endswith(f, ".mustache")
+            push!(names, splitext(f)[1])
+        end
+    end
+    return names
 end
 
 """
@@ -80,14 +102,9 @@ Example:
     # Returns: "Hello World!"
 """
 function render_template(template::AbstractString, vars::AbstractDict)
-    result = template
-
-    for (key, value) in vars
-        placeholder = "{$key}"
-        result = replace(result, placeholder => string(value))
-    end
-
-    return result
+    # Mustache escapes HTML by default for double-brace placeholders;
+    # use triple braces in templates for pre-escaped HTML fragments.
+    return Mustache.render(template, vars)
 end
 
 """
@@ -105,99 +122,27 @@ end
 # DEFAULT TEMPLATES
 # =============================================================================
 
-const DEFAULT_TEMPLATES = Dict(
-        "registration_confirmation" => """<!DOCTYPE html>
-<html lang=\"de\">
-<head>
-<meta charset=\"UTF-8\">
-<title>Anmeldebestätigung</title>
-</head>
-<body style=\"font-family: Arial, sans-serif; color: #1f2933; background-color: #ffffff; line-height: 1.6; margin: 0; padding: 0;\">
-    <div style=\"padding: 24px;\">
-        <p>Liebe*r {first_name},</p>
-        <p>vielen Dank für deine Anmeldung zum <strong>{event_name}</strong>!</p>
-        <p>Wir haben deine Anmeldung erhalten und werden sie bearbeiten. Du erhältst in Kürze eine weitere E-Mail mit den Zahlungsinformationen.</p>
-        <div style=\"margin: 16px 0; padding: 16px; border: 1px solid #d2d6dc; border-radius: 8px; background-color: #f8fafc;\">
-            <p style=\"margin: 0;\">Deine Referenznummer: <strong>{reference_number}</strong></p>
-            <p style=\"margin: 8px 0 0; font-size: 14px; color: #4a5568;\">Bitte bewahre diese Nummer für die spätere Überweisung auf.</p>
-        </div>
-        {registration_fields}
-        {additional_info}
-        <p><strong>Hinweis:</strong> Du kannst deine Anmeldung verändern, indem du das Formular erneut ausfüllst. Achte dabei bitte darauf dieselbe Email Adresse zu verwenden, damit die automatische Identifikation reibungslos funktioniert.</p>
-        <p style=\"margin-top: 32px;\">Viele Grüße,<br>{sender_name}</p>
-    </div>
-</body>
-</html>
-""",
-
-        "confirmation_email" => """<!DOCTYPE html>
-<html lang=\"de\">
-<head>
-<meta charset=\"UTF-8\">
-<title>Anmeldebestätigung</title>
-</head>
-<body style=\"font-family: Arial, sans-serif; color: #1f2933; background-color: #ffffff; line-height: 1.6; margin: 0; padding: 0;\">
-    <div style=\"padding: 24px;\">
-        <p>Liebe*r {first_name},</p>
-        <p>vielen Dank für deine Anmeldung zum <strong>{event_name}</strong>!</p>
-        <p>Bitte überweise deine Teilnahmegebühr zeitnah und vor Beginn des Probenwochenendes. Deine Übersicht:</p>
-        <div style=\"margin: 16px 0; padding: 16px; border: 1px solid #d2d6dc; border-radius: 8px; background-color: #f8fafc;\">
-            <p style=\"margin: 0;\">Referenznummer: <strong>{reference_number}</strong></p>
-            <p style=\"margin: 8px 0 0;\">Teilnahmebeitrag: <strong>{cost} €</strong></p>
-            <p style=\"margin: 8px 0 0;\">Offener Betrag: <strong>{remaining} €</strong></p>
-        </div>
-        {qr_block}
-        <div style=\"margin: 24px 0;\">
-            <h3 style=\"margin-bottom: 8px; font-size: 18px;\">Bankverbindung</h3>
-            <p style=\"margin: 0; white-space: pre-line;\">{bank_details}</p>
-        </div>
-        {registration_fields}
-        <div style=\"margin: 24px 0;\">
-            <p style=\"margin-bottom: 8px;\"><strong>Hinweis:</strong> Du könntest diese E-Mail erneut erhalten, wenn eine der folgenden Situationen eintritt:</p>
-            <ul style=\"margin: 0 0 0 20px; padding: 0;\">
-                <li style=\"margin-bottom: 4px;\">du deine Anmeldung aktualisierst,</li>
-                <li style=\"margin-bottom: 4px;\">wir die Kostenkalkulation anpassen müssen,</li>
-                <li style=\"margin-bottom: 4px;\">wir eine (Teil-)Zahlung verbuchen,</li>
-                <li style=\"margin-bottom: 4px;\">oder wir nach angemessener Zeit noch keinen Zahlungseingang sehen.</li>
-            </ul>
-        </div>
-        <p><strong>Hinweis:</strong> Du kannst deine Anmeldung verändern, indem du das Formular erneut ausfüllst. Achte dabei bitte darauf dieselbe Email Adresse zu verwenden, damit die automatische Identifikation reibungslos funktioniert.</p>
-        {additional_info}
-        <p style=\"margin-top: 32px;\">Viele Grüße,<br>{sender_name}</p>
-    </div>
-</body>
-</html>
-""",
-
-        "payment_confirmation" => """
-Liebe/r {first_name},
-
-vielen Dank! Wir haben deine Zahlung erhalten.
-
-Referenznummer: {reference_number}
-Bezahlt: {amount_paid} €
-
-Wir freuen uns auf dich!
-
-Viele Grüße,
-{sender_name}
 """
-)
-
-"""
-Ensure default template files exist.
-Creates any missing template files with default content.
+Ensure default template files exist by copying packaged defaults into the
+configured templates directory if they are missing. Packaged defaults live in
+`config/templates` alongside the source code; users are expected to edit the
+copies in their configured template directory.
 """
 function ensure_default_templates(templates_dir::AbstractString=TEMPLATES_DIR[])
     mkpath(templates_dir)
 
     created = String[]
 
-    for (name, content) in DEFAULT_TEMPLATES
-        path = joinpath(templates_dir, "$name.txt")
-        if !isfile(path)
-            write(path, content)
-            push!(created, name)
+    for name in DEFAULT_TEMPLATE_FILES
+        dest = joinpath(templates_dir, "$name.mustache")
+        if !isfile(dest)
+            src = joinpath(PACKAGE_TEMPLATES_DIR, "$name.mustache")
+            if isfile(src)
+                cp(src, dest; force=true)
+                push!(created, name)
+            else
+                @warn "Packaged default template missing" name=name src=src
+            end
         end
     end
 
@@ -206,19 +151,6 @@ function ensure_default_templates(templates_dir::AbstractString=TEMPLATES_DIR[])
     end
 
     return created
-end
-
-"""
-Reset a template to its default content.
-"""
-function reset_template_to_default(name::AbstractString)
-    if !haskey(DEFAULT_TEMPLATES, name)
-        error("No default template for: $name")
-    end
-
-    path = get_template_path(name)
-    write(path, DEFAULT_TEMPLATES[name])
-    @info "Reset template to default" name=name
 end
 
 """
