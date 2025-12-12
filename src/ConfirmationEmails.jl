@@ -22,40 +22,6 @@ export get_unsent_confirmations, preview_email
 export ensure_default_templates, list_templates
 const PACKAGE_TEMPLATES_DIR = normpath(joinpath(@__DIR__, "..", "config", "templates"))
 
-"""
-Escape a string for safe inclusion in HTML content.
-"""
-function escape_html(text::AbstractString)
-    return replace(text,
-        "&" => "&amp;",
-        "<" => "&lt;",
-        ">" => "&gt;",
-        '"' => "&quot;"
-    )
-end
-
-escape_html(value) = escape_html(string(value))
-escape_html(::Nothing) = ""
-
-"""
-Resolve template path for a template name.
-"""
-function get_template_path(cfg::EmailConfig, name::AbstractString)
-    if !isempty(splitext(name)[2])
-        return joinpath(cfg.templates_dir, name)
-    end
-    return joinpath(cfg.templates_dir, "$name.mustache")
-end
-
-function load_template(cfg::EmailConfig, name::AbstractString)
-    path = get_template_path(cfg, name)
-    if !isfile(path)
-        @warn "Template not found" name=name path=path
-        return nothing
-    end
-    return read(path, String)
-end
-
 function list_templates(cfg::EmailConfig)
     dir = cfg.templates_dir
     if !isdir(dir)
@@ -680,6 +646,64 @@ end
 # =============================================================================
 
 """
+Get all pending emails from the queue.
+Returns array of named tuples with queue entry details.
+Supports optional filtering by event and email_type.
+"""
+function get_pending_emails(db::DuckDB.DB;
+                            event_id::Union{String,Nothing}=nothing,
+                            email_type::Union{String,Nothing}=nothing)
+    query = """
+        SELECT eq.id, eq.registration_id, eq.email_to, eq.subject, eq.body_text,
+               eq.cost_at_queue, eq.remaining_at_queue, eq.reference_number,
+               eq.queue_reason, eq.queued_at, r.event_id, r.first_name, r.last_name,
+               eq.email_type
+        FROM email_queue eq
+        JOIN registrations r ON r.id = eq.registration_id
+        WHERE eq.status = 'pending'
+    """
+
+    params = Any[]
+    if event_id !== nothing
+        query *= """
+        AND r.event_id = ?
+        """
+        push!(params, event_id)
+    end
+    if email_type !== nothing
+        query *= """
+        AND eq.email_type = ?
+        """
+        push!(params, email_type)
+    end
+
+    query *= """
+        ORDER BY eq.queued_at ASC
+    """
+
+    result = isempty(params) ? DBInterface.execute(db, query) : DBInterface.execute(db, query, params)
+
+    return [(
+        id = row[1],
+        registration_id = row[2],
+        email_to = row[3],
+        subject = row[4],
+        body_text = row[5],
+        cost = row[6],
+        remaining = row[7],
+        reference_number = row[8],
+        reason = row[9],
+        queued_at = row[10],
+        event_id = row[11],
+        first_name = row[12],
+        last_name = row[13],
+        email_type = row[14]
+    ) for row in result]
+end
+
+export get_pending_emails
+
+"""
 Queue an email for later sending.
 Returns the queue entry ID, or nothing if email was already queued with same content.
 """
@@ -1012,58 +1036,6 @@ function queue_payment_requests_for_event!(cfg::EmailConfig, db::DuckDB.DB, even
 end
 
 export queue_payment_requests_for_event!
-
-"""
-Get all pending emails from the queue.
-Returns array of named tuples with queue entry details.
-"""
-function get_pending_emails(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing)
-    query = if event_id !== nothing
-        """
-        SELECT eq.id, eq.registration_id, eq.email_to, eq.subject, eq.body_text,
-               eq.cost_at_queue, eq.remaining_at_queue, eq.reference_number,
-               eq.queue_reason, eq.queued_at, r.event_id, r.first_name, r.last_name
-        FROM email_queue eq
-        JOIN registrations r ON r.id = eq.registration_id
-        WHERE eq.status = 'pending' AND r.event_id = ?
-        ORDER BY eq.queued_at ASC
-        """
-    else
-        """
-        SELECT eq.id, eq.registration_id, eq.email_to, eq.subject, eq.body_text,
-               eq.cost_at_queue, eq.remaining_at_queue, eq.reference_number,
-               eq.queue_reason, eq.queued_at, r.event_id, r.first_name, r.last_name
-        FROM email_queue eq
-        JOIN registrations r ON r.id = eq.registration_id
-        WHERE eq.status = 'pending'
-        ORDER BY eq.queued_at ASC
-        """
-    end
-
-    result = if event_id !== nothing
-        DBInterface.execute(db, query, [event_id])
-    else
-        DBInterface.execute(db, query)
-    end
-
-    return [(
-        id = row[1],
-        registration_id = row[2],
-        email_to = row[3],
-        subject = row[4],
-        body_text = row[5],
-        cost = row[6],
-        remaining = row[7],
-        reference_number = row[8],
-        reason = row[9],
-        queued_at = row[10],
-        event_id = row[11],
-        first_name = row[12],
-        last_name = row[13]
-    ) for row in result]
-end
-
-export get_pending_emails
 
 """
 Get count of pending emails by event.

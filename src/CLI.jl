@@ -176,54 +176,6 @@ function cmd_create_event_config(event_id::String;
 end
 
 """
-Check if config files need syncing to database.
-"""
-function cmd_check_sync(;
-    db_path::String="events.duckdb",
-    config_dir::String="config")
-
-    return require_database(db_path) do db
-        statuses = Config.get_all_config_sync_status(db, config_dir)
-
-        if isempty(statuses)
-            println("No config files found in $config_dir")
-            return 0
-        end
-
-        has_unsynced = false
-        println("\nConfig Sync Status:")
-        println("=" ^ 70)
-
-        for status in statuses
-            rel_path = replace(status.path, pwd() * "/" => "")
-            if status.needs_sync
-                has_unsynced = true
-                if status.synced_at === nothing
-                    println("  ⚠ $rel_path")
-                    println("      Never synced")
-                else
-                    println("  ⚠ $rel_path")
-                    println("      Modified since last sync ($(Dates.format(status.synced_at, "yyyy-mm-dd HH:MM")))")
-                end
-            else
-                println("  ✓ $rel_path")
-                println("      Synced: $(Dates.format(status.synced_at, "yyyy-mm-dd HH:MM"))")
-            end
-        end
-
-        println()
-        if has_unsynced
-            println("⚠ Some config files need syncing!")
-            println("Run: eventreg sync-config")
-            return 1
-        else
-            println("✓ All config files are in sync.")
-            return 0
-        end
-    end
-end
-
-"""
 Sync configuration files to database.
 Creates a backup before making changes.
 
@@ -289,31 +241,6 @@ function cmd_recalculate_costs(event_id::String;
             end
             if result.warnings > 0
                 println("⚠ $(result.warnings) warning(s) - review output above")
-            end
-        end
-        return 0
-    end
-end
-
-"""
-List all events with statistics.
-"""
-function cmd_list_events(; db_path::String="events.duckdb")
-    return require_database(db_path) do db
-        events = list_events(db)
-
-        if isempty(events)
-            println("No events found in database.")
-        else
-            println("\nEvents:")
-            println("-" ^ 80)
-            for event in events
-                event_id, event_name, reg_count, total_expected, paid_count = event
-                println("  $event_id: $event_name")
-                println("    Registrations: $reg_count")
-                println("    Total expected: $(something(total_expected, 0)) €")
-                println("    Payments received: $paid_count")
-                println()
             end
         end
         return 0
@@ -488,19 +415,75 @@ function cmd_status(; db_path::String="events.duckdb", config_dir::String="confi
     end
     println()
 
+    # Config sync summary (requires DB)
+    if db_exists
+        require_database(db_path) do db
+            statuses = Config.get_all_config_sync_status(db, config_dir)
+            if isempty(statuses)
+                println("Config sync: No config files found in $config_dir")
+            else
+                unsynced = filter(s -> s.needs_sync, statuses)
+                if isempty(unsynced)
+                    println("Config sync: ✓ All configs in sync")
+                else
+                    println("Config sync: ⚠ $(length(unsynced)) file(s) need syncing")
+                    for s in unsynced
+                        rel = replace(s.path, pwd() * "/" => "")
+                        println("  - $rel")
+                    end
+                end
+            end
+        end
+        println()
+    end
+
+    # Validation summary (lightweight)
+    if db_exists && isdir(config_dir)
+        require_database(db_path) do db
+            load_field_aliases(config_dir)
+            event_rows = collect(DBInterface.execute(db, "SELECT event_id FROM events"))
+            if isempty(event_rows)
+                println("Config validation: No events to validate")
+            else
+                missing = 0
+                invalid = 0
+                warnings = 0
+                for row in event_rows
+                    eid = row[1]
+                    cfg = Config.load_event_config(eid, config_dir)
+                    if cfg === nothing
+                        missing += 1
+                        continue
+                    end
+                    rules = Config.materialize_cost_rules(cfg)
+                    result = validate_cost_config(rules, eid, db; strict=false)
+                    warnings += length(result.warnings)
+                    invalid += result.valid ? 0 : 1
+                end
+                if missing == 0 && invalid == 0 && warnings == 0
+                    println("Config validation: ✓ All event configs valid")
+                else
+                    println("Config validation summary:")
+                    println("  Missing configs: $missing")
+                    println("  Invalid configs: $invalid")
+                    println("  Warnings: $warnings")
+                end
+            end
+        end
+        println()
+    end
+
     # Events in database
     if db_exists
         require_database(db_path) do db
             println("Events in Database:")
             result = DBInterface.execute(db, """
-                SELECT
-                    e.event_id,
-                    e.event_name,
-                    COUNT(r.id) as reg_count,
-                    e.base_cost
+                SELECT e.event_id,
+                       COALESCE(e.event_name, e.event_id) as name,
+                       COUNT(r.id) as reg_count
                 FROM events e
                 LEFT JOIN registrations r ON r.event_id = e.event_id
-                GROUP BY e.event_id, e.event_name, e.base_cost
+                GROUP BY e.event_id, name
                 ORDER BY e.event_id
             """)
 
@@ -508,16 +491,9 @@ function cmd_status(; db_path::String="events.duckdb", config_dir::String="confi
             if isempty(events)
                 println("  No events found")
             else
-                println("-" ^ 80)
-                for event in events
-                    event_id, event_name, reg_count, base_cost = event
-                    cfg = Config.load_event_config(event_id, config_dir)
-                    has_config = cfg === nothing ? "❌" : "✓"
-                    println("  $event_id: $event_name")
-                    println("    Registrations: $reg_count")
-                    println("    Base cost: $(something(base_cost, 0)) €")
-                    println("    Config file: $has_config")
-                    println()
+                for row in events
+                    eid, name, reg_count = row
+                    println("  - $eid : $name (registrations: $reg_count)")
                 end
             end
         end
@@ -529,124 +505,6 @@ end
 # =============================================================================
 # VALIDATION AND DATABASE MANAGEMENT COMMANDS
 # =============================================================================
-
-"""
-Validate event cost configuration against actual registration data.
-"""
-function cmd_validate_config(event_id::Union{String,Nothing}=nothing;
-                             db_path::String="events.duckdb",
-                             config_dir::String="config",
-                             strict::Bool=false,
-                             verbose::Bool=false)
-    return require_database(db_path) do db
-        println("Validating configuration...")
-        println()
-
-        # Load field aliases first
-        load_field_aliases(config_dir)
-
-        # Get events to validate
-        if event_id !== nothing
-            event_ids = [event_id]
-        else
-            result = DBInterface.execute(db, "SELECT event_id FROM events")
-            event_ids = [row[1] for row in collect(result)]
-        end
-
-        if isempty(event_ids)
-            println("No events found to validate.")
-            return 0
-        end
-
-        all_valid = true
-        total_warnings = 0
-
-        for eid in event_ids
-            println("Validating event: $eid")
-            println("-" ^ 60)
-
-            cfg = Config.load_event_config(eid, config_dir)
-            if cfg === nothing
-                println("  ⚠ No cost configuration file found")
-                println()
-                continue
-            end
-
-            rules = Config.materialize_cost_rules(cfg)
-
-            # Validate using the Validation module
-            validation_result = validate_cost_config(rules, eid, db; strict=strict)
-
-            if !validation_result.valid
-                all_valid = false
-            end
-            total_warnings += length(validation_result.warnings)
-
-            # Print results
-            println(format_validation_result(validation_result; verbose=verbose))
-            println()
-        end
-
-        # Summary
-        println("=" ^ 60)
-        if all_valid && total_warnings == 0
-            println("✅ All configurations valid!")
-        elseif all_valid
-            println("✅ Configurations valid with $total_warnings warning(s)")
-        else
-            println("❌ Configuration validation failed")
-            return 1
-        end
-
-        return 0
-    end
-end
-
-"""
-Verify database integrity.
-"""
-function cmd_verify_database(; db_path::String="events.duckdb", verbose::Bool=false)
-    println("Verifying database: $db_path")
-    println()
-
-    result = verify_database(db_path)
-
-    # Print detailed results
-    r = result.results
-
-    println("Checks:")
-    println("  File exists:      $(r["file_exists"] ? "✓" : "❌")")
-    println("  File readable:    $(r["file_readable"] ? "✓" : "❌")")
-    println("  Connection OK:    $(r["connection_ok"] ? "✓" : "❌")")
-    println("  Tables exist:     $(r["tables_exist"] ? "✓" : "❌")")
-    println("  Integrity OK:     $(r["integrity_ok"] ? "✓" : "❌")")
-    println()
-
-    if !isempty(r["errors"])
-        println("❌ Errors:")
-        for err in r["errors"]
-            println("  • $err")
-        end
-        println()
-    end
-
-    if !isempty(r["warnings"])
-        println("⚠️  Warnings:")
-        for warn in r["warnings"]
-            println("  • $warn")
-        end
-        println()
-    end
-
-    if result.valid
-        println("✅ Database verification passed")
-    else
-        println("❌ Database verification failed")
-        return 1
-    end
-
-    return 0
-end
 
 """
 Comprehensive sync command that does the full workflow.
@@ -870,8 +728,8 @@ function cmd_sync(;
             println("    eventreg list-pending-emails        # List all pending")
             println("    eventreg list-pending-emails -v     # List with full content")
             println("    eventreg send-emails                # Send all pending")
-            println("    eventreg mark-email <id> sent       # Mark as sent")
-            println("    eventreg mark-email <id> discarded  # Discard email")
+            println("    eventreg mark-email sent <id>       # Mark as sent")
+            println("    eventreg mark-email discarded <id>  # Discard email")
         end
 
         # Summary
@@ -1127,7 +985,9 @@ function cmd_export_registrations(event_id::Union{String,Nothing}=nothing,
                                    db_path::String="events.duckdb",
                                    format::String="terminal",
                                    filter::String="all",
-                                   output::Union{String,Nothing}=nothing)
+                                   output::Union{String,Nothing}=nothing,
+                                   details::Bool=false,
+                                   config_dir::String="config")
 
     # Allow output to be passed as positional or keyword argument
     actual_output = output_pos !== nothing ? output_pos : output
@@ -1144,7 +1004,7 @@ function cmd_export_registrations(event_id::Union{String,Nothing}=nothing,
             println("Using most recent event: $local_event_id")
         end
 
-        # Build filter from option
+        # Build filter from option (summary view only)
         reg_filter = if filter == "unpaid"
             RegistrationFilter(unpaid_only=true)
         elseif filter == "problems"
@@ -1153,14 +1013,6 @@ function cmd_export_registrations(event_id::Union{String,Nothing}=nothing,
             RegistrationFilter(paid_only=true)
         else
             RegistrationFilter()  # all
-        end
-
-        # Get registration data from database
-        table_data = get_registration_table_data(db, local_event_id)
-
-        if table_data.total_registrations == 0
-            println("No registrations found for event: $local_event_id")
-            return 0
         end
 
         # Determine output format and destination
@@ -1175,6 +1027,34 @@ function cmd_export_registrations(event_id::Union{String,Nothing}=nothing,
             elseif ext == ".csv"
                 output_format = "csv"
             end
+        end
+
+        if details
+            detail_table = get_registration_detail_table(db, local_event_id; config_dir=config_dir)
+            if isempty(detail_table.rows)
+                println("No registrations found for event: $local_event_id")
+                return 0
+            end
+
+            if output_format == "terminal"
+                print_registration_detail_table(detail_table)
+            elseif output_format == "csv"
+                output_path = actual_output === nothing ? "registration_details_$(local_event_id).csv" : actual_output
+                export_registration_detail_csv(detail_table, output_path)
+            else
+                println("❌ Error: Unsupported format for details view: $output_format")
+                println("Supported formats: terminal, csv")
+                return 1
+            end
+            return 0
+        end
+
+        # Summary view
+        table_data = get_registration_table_data(db, local_event_id)
+
+        if table_data.total_registrations == 0
+            println("No registrations found for event: $local_event_id")
+            return 0
         end
 
         if output_format == "terminal" || (actual_output === nothing && output_format == "terminal")
@@ -1277,55 +1157,6 @@ function export_registration_detail_csv(table::RegistrationDetailTable, output_p
     return output_path
 end
 
-function cmd_export_registration_details(event_id::Union{String,Nothing}=nothing,
-                                          output_pos::Union{String,Nothing}=nothing;
-                                          db_path::String="events.duckdb",
-                                          config_dir::String="config",
-                                          format::String="terminal",
-                                          output::Union{String,Nothing}=nothing)
-    actual_output = output_pos !== nothing ? output_pos : output
-
-    return require_database(db_path) do db
-        local_event_id = event_id
-        if local_event_id === nothing
-            local_event_id = get_most_recent_event(db)
-            if local_event_id === nothing
-                println("❌ Error: No events with registrations found")
-                return 1
-            end
-            println("Using most recent event: $local_event_id")
-        end
-
-    detail_table = get_registration_detail_table(db, local_event_id; config_dir=config_dir)
-
-        if isempty(detail_table.rows)
-            println("No registrations found for event: $local_event_id")
-            return 0
-        end
-
-        output_format = lowercase(string(format))
-        if actual_output !== nothing && output_format == "terminal"
-            ext = lowercase(splitext(actual_output)[2])
-            if ext == ".csv"
-                output_format = "csv"
-            end
-        end
-
-        if output_format == "terminal"
-            print_registration_detail_table(detail_table)
-        elseif output_format == "csv"
-            output_path = actual_output === nothing ? "registration_details_$(local_event_id).csv" : actual_output
-            export_registration_detail_csv(detail_table, output_path)
-        else
-            println("❌ Error: Unknown format: $output_format")
-            println("Supported formats: terminal, csv")
-            return 1
-        end
-
-        return 0
-    end
-end
-
 
 # =============================================================================
 # EMAIL QUEUE MANAGEMENT COMMANDS
@@ -1338,10 +1169,11 @@ With -v/--verbose flag, shows full email content.
 function cmd_list_pending_emails(;
     db_path::String="events.duckdb",
     event_id::Union{String,Nothing}=nothing,
+    email_type::Union{String,Nothing}=nothing,
     verbose::Bool=false)
 
     return require_database(db_path) do db
-        pending = get_pending_emails(db; event_id=event_id)
+        pending = get_pending_emails(db; event_id=event_id, email_type=email_type)
 
         if isempty(pending)
             println("✓ No pending emails in queue.")
@@ -1398,7 +1230,8 @@ function cmd_mark_email(status::String;
     db_path::String="events.duckdb",
     id::Union{Int,Nothing}=nothing,
     all::Bool=false,
-    event_id::Union{String,Nothing}=nothing)
+    event_id::Union{String,Nothing}=nothing,
+    email_type::Union{String,Nothing}=nothing)
 
     if !(status in ["sent", "discarded"])
         println("❌ Error: Status must be 'sent' or 'discarded'")
@@ -1412,6 +1245,7 @@ function cmd_mark_email(status::String;
         println("  eventreg mark-email $status <id>        # Mark single email")
         println("  eventreg mark-email $status --all       # Mark all pending emails")
         println("  eventreg mark-email $status --all --event-id=<id>  # For specific event")
+        println("  eventreg mark-email $status --all --type=<template> # Filter by email type")
         return 1
     end
 
@@ -1423,7 +1257,7 @@ function cmd_mark_email(status::String;
     return require_database(db_path) do db
         if all
             # Bulk operation
-            pending = get_pending_emails(db; event_id=event_id)
+            pending = get_pending_emails(db; event_id=event_id, email_type=email_type)
             if isempty(pending)
                 println("✓ No pending emails to mark as $status.")
                 return 0
@@ -1431,7 +1265,8 @@ function cmd_mark_email(status::String;
 
             event_msg = event_id !== nothing ? " for event $event_id" : ""
             action = status == "sent" ? "mark as sent" : "discard"
-            println("⚠ About to $action $(length(pending)) pending email(s)$event_msg")
+            type_msg = email_type !== nothing ? " of type $email_type" : ""
+            println("⚠ About to $action $(length(pending)) pending email(s)$event_msg$type_msg")
 
             marked_count = 0
             for email in pending
@@ -1445,7 +1280,7 @@ function cmd_mark_email(status::String;
         else
             # Single email operation
             result = DBInterface.execute(db, """
-                SELECT eq.email_to, eq.status, r.first_name, r.last_name
+                SELECT eq.email_to, eq.status, r.first_name, r.last_name, eq.email_type
                 FROM email_queue eq
                 JOIN registrations r ON r.id = eq.registration_id
                 WHERE eq.id = ?
@@ -1457,9 +1292,14 @@ function cmd_mark_email(status::String;
                 return 1
             end
 
-            email_to, current_status, first_name, last_name = rows[1]
+            email_to, current_status, first_name, last_name, queued_type = rows[1]
             if current_status != "pending"
                 println("❌ Error: Email is not pending (current status: $current_status)")
+                return 1
+            end
+
+            if email_type !== nothing && queued_type != email_type
+                println("❌ Error: Email type mismatch (queued as $queued_type)")
                 return 1
             end
 
@@ -1520,100 +1360,6 @@ function cmd_send_emails(;
     end
 end
 
-"""
-Queue payment request emails for an event.
-
-This is useful after running recalculate-costs when costs were previously NULL.
-Queues confirmation_email (payment request) for all registrations that:
-- Have computed_cost set (not NULL)
-- Have not yet received a payment request email
-- Are not fully paid
-"""
-function cmd_queue_payment_requests(event_id::String;
-    db_path::String="events.duckdb",
-    credentials_path::String="config/email_credentials.toml")
-
-    return require_database(db_path) do db
-        ctx = load_app_config(; config_dir="config", db_path=db_path,
-                               credentials_path=credentials_path,
-                               templates_dir=joinpath("config", "templates"),
-                               dry_run=true)
-        println("✓ Loaded email configuration (dry-run) for QR generation")
-
-        println("Queuing payment request emails for event: $event_id")
-        queued = queue_payment_requests_for_event!(ctx.email, db, event_id)
-
-        if queued > 0
-            println("✓ Queued $queued payment request email(s)")
-            println("\nTo send the queued emails:")
-            println("  eventreg send-emails --event-id $event_id")
-        else
-            println("✓ No payment requests to queue")
-            println("  (All registrations either have no cost calculated, already received payment requests, or are fully paid)")
-        end
-
-        return 0
-    end
-end
-
-"""
-Mark all registrations for an event as having received confirmation emails.
-This creates records in the confirmation_emails table WITHOUT actually sending emails.
-
-This is useful when:
-1. You've recreated the database but emails were previously sent
-2. You want to prevent the system from resending emails to everyone
-"""
-function cmd_mark_all_as_sent(event_id::String;
-    db_path::String="events.duckdb",
-    type::String="confirmation_email",
-    all::Bool=false)
-
-    if !all
-        println("❌ Error: Use --all flag to confirm bulk marking")
-        println("This will mark all registrations for '$event_id' as having received '$type' emails.")
-        println("\nUsage:")
-        println("  eventreg mark-all-as-sent <event-id> --all")
-        println("  eventreg mark-all-as-sent <event-id> --all --type=payment_confirmation")
-        return 1
-    end
-
-    # Validate type
-    valid_types = ["confirmation_email", "registration_confirmation", "payment_confirmation"]
-    if !(type in valid_types)
-        println("❌ Error: Invalid email type: $type")
-        println("Valid types: $(join(valid_types, ", "))")
-        return 1
-    end
-
-    return require_database(db_path) do db
-        # Verify event exists
-        event_result = DBInterface.execute(db, "SELECT event_id FROM events WHERE event_id = ?", [event_id])
-        if isempty(collect(event_result))
-            # Event might not be in events table yet, check registrations
-            reg_result = DBInterface.execute(db, "SELECT COUNT(*) FROM registrations WHERE event_id = ?", [event_id])
-            reg_count = first(collect(reg_result))[1]
-            if reg_count == 0
-                println("❌ Error: Event not found: $event_id")
-                return 1
-            end
-        end
-
-        println("⚠ Marking all registrations for '$event_id' as having received '$type' emails...")
-
-        count = mark_all_as_sent!(db, event_id; template_name=type, processed_by="cli")
-
-        if count > 0
-            println("✓ Marked $count registration(s) as sent")
-            println("  These registrations will NOT receive automatic emails of type '$type'")
-        else
-            println("✓ No registrations needed marking")
-            println("  (All registrations have already received '$type' emails)")
-        end
-
-        return 0
-    end
-end
 
 # =============================================================================
 # MAIN CLI ENTRY POINT
@@ -1632,17 +1378,13 @@ COMMANDS:
   generate-field-config          Generate field configuration
   create-event-config <id>       Create event config template
   sync-config                    Sync config files to database
-  check-sync                     Check if config files need syncing
   recalculate-costs <event-id>   Recalculate costs after config changes
-  list-events                    List all events
   list-registrations [event-id]  List registrations with filters
   event-overview <event-id>      Show event details
   status                         Show system status and configuration
 
 VALIDATION & MAINTENANCE:
-  validate-config [event-id]     Validate cost rules against actual data
   verify-database                Check database integrity
-  backup                         Create timestamped database backup
 
 PAYMENTS:
   import-bank-csv <file>         Import bank transfers
@@ -1655,16 +1397,12 @@ EMAIL MANAGEMENT:
   list-pending-emails            List emails waiting to be sent
     --verbose, -v                Show full email content
     --event-id=<id>              Filter by event
-  queue-payment-requests <event-id>  Queue payment request emails after costs calculated
   mark-email <status> <id>       Mark email as 'sent' or 'discarded'
   mark-email <status> --all      Mark all pending emails (useful after cost config changes)
     --event-id=<id>              Filter by event for bulk operations
   send-emails                    Send all pending emails via SMTP
     --id=<id>                    Send specific email by ID
     --event-id=<id>              Send only emails for specific event
-  mark-all-as-sent <event-id> --all  Mark all registrations as having received emails (after DB reset)
-    --type=<type>                Email type (confirmation_email, registration_confirmation, payment_confirmation)
-
 EXPORTS:
   export-payment-status [event-id] [output]  Payment status with color highlighting
     --format=<fmt>               Output: terminal, pdf, latex, csv
@@ -1672,10 +1410,9 @@ EXPORTS:
     --summary-only               Show only totals, not individual rows
   export-registrations [event-id] [output]   Export/print registration data
     --format=<fmt>               Output: terminal, pdf, latex, csv
-    --filter=<filter>            Filter: all, unpaid, problems, paid
-    export-registration-details [event-id] [output]  Export all registration fields
-        --format=<fmt>               Output: terminal, csv
-        # Column order via config/events/<event>.toml [export.registration_details]
+        --filter=<filter>            Filter: all, unpaid, problems, paid
+        --details                    Include all registration fields (terminal/csv)
+                # Column order via config/events/<event>.toml [export.registration_details]
   list-registrations [event-id]  Quick registration listing with filters
     --filter=<filter>            Filter: all, unpaid, problems, paid
     --name=<pattern>             Filter by name (regex pattern)
@@ -1784,16 +1521,12 @@ function run_cli(args::Vector{String})
             return cmd_create_event_config(positional[1]; options...)
         elseif command == "sync-config"
             return cmd_sync_config(; options...)
-        elseif command == "check-sync"
-            return cmd_check_sync(; options...)
         elseif command == "recalculate-costs"
             if isempty(positional)
                 println("❌ Error: event-id required")
                 return 1
             end
             return cmd_recalculate_costs(positional[1]; options...)
-        elseif command == "list-events"
-            return cmd_list_events(; options...)
         elseif command == "list-registrations"
             event_id = length(positional) >= 1 ? positional[1] : nothing
             return cmd_list_registrations(event_id; options...)
@@ -1837,10 +1570,6 @@ function run_cli(args::Vector{String})
             event_id = length(positional) >= 1 ? positional[1] : nothing
             output = length(positional) >= 2 ? positional[2] : nothing
             return cmd_export_registrations(event_id, output; options...)
-        elseif command == "export-registration-details"
-            event_id = length(positional) >= 1 ? positional[1] : nothing
-            output = length(positional) >= 2 ? positional[2] : nothing
-            return cmd_export_registration_details(event_id, output; options...)
         # Email queue management commands
         elseif command == "list-pending-emails"
             return cmd_list_pending_emails(; options...)
@@ -1866,26 +1595,7 @@ function run_cli(args::Vector{String})
                 options[:id] = parse(Int, id_val)
             end
             return cmd_send_emails(; options...)
-        elseif command == "queue-payment-requests"
-            if isempty(positional)
-                println("❌ Error: event-id required")
-                println("Usage: eventreg queue-payment-requests <event-id>")
-                return 1
-            end
-            event_id = positional[1]
-            return cmd_queue_payment_requests(event_id; options...)
-        elseif command == "mark-all-as-sent"
-            if isempty(positional)
-                println("❌ Error: event-id required")
-                println("Usage: eventreg mark-all-as-sent <event-id> --all")
-                return 1
-            end
-            event_id = positional[1]
-            return cmd_mark_all_as_sent(event_id; options...)
         # Validation and maintenance commands
-        elseif command == "validate-config"
-            event_id = length(positional) >= 1 ? positional[1] : nothing
-            return cmd_validate_config(event_id; options...)
         elseif command == "sync"
             return cmd_sync(; options...)
         else
