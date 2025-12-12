@@ -6,9 +6,14 @@
 # the EventRegistrations module. Submodule functions are accessed via qualified
 # names (e.g., get_registration_table_data).
 
+using Logging
 using Dates: Date, @dateformat_str
 using JSON
 using PrettyTables: pretty_table
+
+with_cli_logger(f::Function; io::IO=stdout) = with_logger(ConsoleLogger(io)) do
+    f()
+end
 
 include("project.jl")
 include("emails.jl")
@@ -120,153 +125,147 @@ Run 'eventreg <command> --help' for more information on a command.
 Main CLI dispatcher function.
 """
 function run_cli(args::Vector{String})
-    if isempty(args) || args[1] in ["--help", "-h", "help"]
-        println(HELP_TEXT)
-        return 0
-    end
+    return with_cli_logger() do
+        if isempty(args) || args[1] in ["--help", "-h", "help"]
+            @info HELP_TEXT
+            return 0
+        end
 
-    command = args[1]
-    cmd_args = args[2:end]
+        command = args[1]
+        cmd_args = args[2:end]
 
-    # Parse arguments
-    positional = String[]
-    options = Dict{Symbol, Any}()
+        # Parse arguments
+        positional = String[]
+        options = Dict{Symbol, Any}()
 
-    for arg in cmd_args
-        if startswith(arg, "--")
-            if contains(arg, "=")
-                key, val = split(arg[3:end], "=", limit=2)
-                options[Symbol(replace(key, "-" => "_"))] = string(val)
-            else
-                # Boolean flag
-                options[Symbol(replace(arg[3:end], "-" => "_"))] = true
-            end
-        elseif startswith(arg, "-") && length(arg) == 2
-            # Short flags (e.g., -v for verbose)
-            flag = arg[2]
-            if flag == 'v'
-                options[:verbose] = true
-            elseif flag == 'n'
-                options[:dry_run] = true
+        for arg in cmd_args
+            if startswith(arg, "--")
+                if contains(arg, "=")
+                    key, val = split(arg[3:end], "=", limit=2)
+                    options[Symbol(replace(key, "-" => "_"))] = string(val)
+                else
+                    # Boolean flag
+                    options[Symbol(replace(arg[3:end], "-" => "_"))] = true
+                end
+            elseif startswith(arg, "-") && length(arg) == 2
+                # Short flags (e.g., -v for verbose)
+                flag = arg[2]
+                if flag == 'v'
+                    options[:verbose] = true
+                elseif flag == 'n'
+                    options[:dry_run] = true
+                else
+                    push!(positional, arg)
+                end
             else
                 push!(positional, arg)
             end
-        else
-            push!(positional, arg)
         end
-    end
 
-    # Dispatch to command
-    try
-        if command == "init"
-            return cmd_init(; options...)
-        elseif command == "process-emails"
-            email_folder = isempty(positional) ? "emails" : positional[1]
-            return cmd_process_emails(email_folder; options...)
-        elseif command == "download-emails"
-            return cmd_download_emails(; options...)
-        elseif command == "generate-field-config"
-            return cmd_generate_field_config(; options...)
-        elseif command == "create-event-config"
-            if isempty(positional)
-                println("❌ Error: event-id required")
+        # Dispatch to command
+        try
+            if command == "init"
+                return cmd_init(; options...)
+            elseif command == "process-emails"
+                email_folder = isempty(positional) ? "emails" : positional[1]
+                return cmd_process_emails(email_folder; options...)
+            elseif command == "download-emails"
+                return cmd_download_emails(; options...)
+            elseif command == "generate-field-config"
+                return cmd_generate_field_config(; options...)
+            elseif command == "create-event-config"
+                if isempty(positional)
+                    @error "event-id required"
+                    return 1
+                end
+                return cmd_create_event_config(positional[1]; options...)
+            elseif command == "sync-config"
+                return cmd_sync_config(; options...)
+            elseif command == "recalculate-costs"
+                if isempty(positional)
+                    @error "event-id required"
+                    return 1
+                end
+                return cmd_recalculate_costs(positional[1]; options...)
+            elseif command == "list-registrations"
+                event_id = length(positional) >= 1 ? positional[1] : nothing
+                return cmd_list_registrations(event_id; options...)
+            elseif command == "event-overview"
+                if isempty(positional)
+                    @error "event-id required"
+                    return 1
+                end
+                return cmd_event_overview(positional[1]; options...)
+            elseif command == "status"
+                return cmd_status(; options...)
+            elseif command == "import-bank-csv"
+                if isempty(positional)
+                    @error "csv-file required"
+                    return 1
+                end
+                return cmd_import_bank_csv(positional[1]; options...)
+            elseif command == "match-transfers"
+                return cmd_match_transfers(; options...)
+            elseif command == "list-unmatched"
+                return cmd_list_unmatched(; options...)
+            elseif command == "manual-match"
+                if length(positional) < 2
+                    @error "transfer-id and reference required"
+                    return 1
+                end
+                transfer_id = parse(Int, positional[1])
+                return cmd_manual_match(transfer_id, positional[2]; options...)
+            elseif command == "grant-subsidy"
+                if length(positional) < 2
+                    @error "identifier and amount required"
+                    return 1
+                end
+                amount = parse(Float64, positional[2])
+                return cmd_grant_subsidy(positional[1], amount; options...)
+            elseif command == "export-payment-status"
+                event_id = length(positional) >= 1 ? positional[1] : nothing
+                output = length(positional) >= 2 ? positional[2] : nothing
+                return cmd_export_payment_status(event_id, output; options...)
+            elseif command == "export-registrations"
+                event_id = length(positional) >= 1 ? positional[1] : nothing
+                output = length(positional) >= 2 ? positional[2] : nothing
+                return cmd_export_registrations(event_id, output; options...)
+            # Email queue management commands
+            elseif command == "list-pending-emails"
+                return cmd_list_pending_emails(; options...)
+            elseif command == "mark-email"
+                if isempty(positional)
+                    @error """status required
+Usage:
+  eventreg mark-email <sent|discarded> <id>
+  eventreg mark-email <sent|discarded> --all"""
+                    return 1
+                end
+                status = positional[1]
+                # Check if ID was provided as positional or via --id option
+                id_val = length(positional) >= 2 ? parse(Int, positional[2]) : get(options, :id, nothing)
+                if id_val !== nothing
+                    options[:id] = id_val
+                end
+                return cmd_mark_email(status; options...)
+            elseif command == "send-emails"
+                # Check if --id was provided
+                id_val = get(options, :id, nothing)
+                if id_val !== nothing
+                    options[:id] = parse(Int, id_val)
+                end
+                return cmd_send_emails(; options...)
+            # Validation and maintenance commands
+            elseif command == "sync"
+                return cmd_sync(; options...)
+            else
+                @error "Unknown command" command=command
+                @info "Run 'eventreg --help' for usage information."
                 return 1
             end
-            return cmd_create_event_config(positional[1]; options...)
-        elseif command == "sync-config"
-            return cmd_sync_config(; options...)
-        elseif command == "recalculate-costs"
-            if isempty(positional)
-                println("❌ Error: event-id required")
-                return 1
-            end
-            return cmd_recalculate_costs(positional[1]; options...)
-        elseif command == "list-registrations"
-            event_id = length(positional) >= 1 ? positional[1] : nothing
-            return cmd_list_registrations(event_id; options...)
-        elseif command == "event-overview"
-            if isempty(positional)
-                println("❌ Error: event-id required")
-                return 1
-            end
-            return cmd_event_overview(positional[1]; options...)
-        elseif command == "status"
-            return cmd_status(; options...)
-        elseif command == "import-bank-csv"
-            if isempty(positional)
-                println("❌ Error: csv-file required")
-                return 1
-            end
-            return cmd_import_bank_csv(positional[1]; options...)
-        elseif command == "match-transfers"
-            return cmd_match_transfers(; options...)
-        elseif command == "list-unmatched"
-            return cmd_list_unmatched(; options...)
-        elseif command == "manual-match"
-            if length(positional) < 2
-                println("❌ Error: transfer-id and reference required")
-                return 1
-            end
-            transfer_id = parse(Int, positional[1])
-            return cmd_manual_match(transfer_id, positional[2]; options...)
-        elseif command == "grant-subsidy"
-            if length(positional) < 2
-                println("❌ Error: identifier and amount required")
-                return 1
-            end
-            amount = parse(Float64, positional[2])
-            return cmd_grant_subsidy(positional[1], amount; options...)
-        elseif command == "export-payment-status"
-            event_id = length(positional) >= 1 ? positional[1] : nothing
-            output = length(positional) >= 2 ? positional[2] : nothing
-            return cmd_export_payment_status(event_id, output; options...)
-        elseif command == "export-registrations"
-            event_id = length(positional) >= 1 ? positional[1] : nothing
-            output = length(positional) >= 2 ? positional[2] : nothing
-            return cmd_export_registrations(event_id, output; options...)
-        # Email queue management commands
-        elseif command == "list-pending-emails"
-            return cmd_list_pending_emails(; options...)
-        elseif command == "mark-email"
-            if isempty(positional)
-                println("❌ Error: status required")
-                println("Usage:")
-                println("  eventreg mark-email <sent|discarded> <id>")
-                println("  eventreg mark-email <sent|discarded> --all")
-                return 1
-            end
-            status = positional[1]
-            # Check if ID was provided as positional or via --id option
-            id_val = length(positional) >= 2 ? parse(Int, positional[2]) : get(options, :id, nothing)
-            if id_val !== nothing
-                options[:id] = id_val
-            end
-            return cmd_mark_email(status; options...)
-        elseif command == "send-emails"
-            # Check if --id was provided
-            id_val = get(options, :id, nothing)
-            if id_val !== nothing
-                options[:id] = parse(Int, id_val)
-            end
-            return cmd_send_emails(; options...)
-        # Validation and maintenance commands
-        elseif command == "sync"
-            return cmd_sync(; options...)
-        else
-            println("❌ Error: Unknown command: $command")
-            println("\nRun 'eventreg --help' for usage information.")
-            return 1
+        catch e
+            @error "Unhandled error" exception=(e, catch_backtrace())
+            return isa(e, InterruptException) ? 130 : 1
         end
-    catch e
-        println("❌ Error: $e")
-        if isa(e, InterruptException)
-            return 130
-        end
-        # Print stack trace for debugging
-        for (exc, bt) in Base.catch_stack()
-            showerror(stdout, exc, bt)
-            println()
-        end
-        return 1
     end
 end

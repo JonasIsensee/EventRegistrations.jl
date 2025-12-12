@@ -18,17 +18,98 @@ using ..EventRegistrations: EmailConfig
 
 
 export generate_email_content
-export get_unsent_confirmations, preview_email
-export ensure_default_templates, list_templates
-const PACKAGE_TEMPLATES_DIR = normpath(joinpath(@__DIR__, "..", "config", "templates"))
+export preview_email
+export ensure_default_templates
 
-function list_templates(cfg::EmailConfig)
-    dir = cfg.templates_dir
-    if !isdir(dir)
-        return String[]
-    end
-    return [splitext(f)[1] for f in readdir(dir) if endswith(f, ".mustache")]
+export load_template
+export ensure_default_templates, escape_html
+
+"""
+Escape a string for safe inclusion in HTML content.
+"""
+function escape_html(text::AbstractString)
+    return replace(text,
+        "&" => "&amp;",
+        "<" => "&lt;",
+        ">" => "&gt;",
+        '"' => "&quot;"
+    )
 end
+
+escape_html(value) = escape_html(string(value))
+escape_html(::Nothing) = ""
+
+"""
+Load a template from file.
+Returns the template content as a string, or nothing if not found.
+"""
+function load_template(cfg, name::AbstractString)
+    path = joinpath(cfg.templates_dir, name*".mustache")
+
+    if !isfile(path)
+        @error "Template not found" name=name path=path
+        return nothing
+    end
+
+    return read(path, String)
+end
+
+# =============================================================================
+# DEFAULT TEMPLATES
+# =============================================================================
+
+"""
+Format registration fields as a nice list for email display.
+Takes a Dict of field names and values, returns formatted string.
+
+Optionally filter out fields that should be excluded (like internal IDs).
+"""
+function format_registration_fields(fields::AbstractDict;
+                                     exclude::Vector{String}=String[],
+                                     max_width::Int=40)
+    if isempty(fields)
+        return ""
+    end
+
+    # Common fields to exclude from display
+    default_exclude = ["Vorname", "Nachname", "E-Mail", "Email", "First Name", "Last Name"]
+    all_exclude = vcat(default_exclude, exclude)
+
+    entries = String[]
+
+    for key in sort(collect(keys(fields)))
+        if key ∈ all_exclude
+            continue
+        end
+
+        raw_value = string(fields[key])
+        if isempty(strip(raw_value))
+            continue
+        end
+
+        clean_value = replace(raw_value, r"\s*\n\s*" => ", ")
+        escaped_key = escape_html(key)
+        escaped_value = escape_html(clean_value)
+        push!(entries, "<li style=\"margin: 4px 0;\"><strong>$(escaped_key):</strong> $(escaped_value)</li>")
+    end
+
+    if isempty(entries)
+        return ""
+    end
+
+    return """
+<div style="margin: 24px 0;">
+  <h3 style="margin-bottom: 8px; font-size: 18px;">Deine Angaben</h3>
+  <ul style="margin: 0 0 0 20px; padding: 0;">
+    $(join(entries, "\n    "))
+  </ul>
+</div>
+"""
+end
+
+export format_registration_fields
+
+const PACKAGE_TEMPLATES_DIR = normpath(joinpath(@__DIR__, "..", "config", "templates"))
 
 render_template(template::AbstractString, vars::AbstractDict) = Mustache.render(template, vars)
 
@@ -300,12 +381,8 @@ function generate_email_content(cfg::EmailConfig;
     registration_fields::AbstractDict=Dict(),
     extra_vars::AbstractDict{String,String}=Dict{String,String}()
 )
+    ensure_default_templates(cfg.templates_dir)
     template = load_template(cfg, template_name)
-
-    if template === nothing
-        ensure_default_templates(cfg.templates_dir)
-        template = load_template(cfg, template_name)
-    end
 
     if template === nothing
         error("Template not found: $template_name")
@@ -416,84 +493,6 @@ function preview_email(cfg::EmailConfig, db::DuckDB.DB, registration_id::Integer
         subject = "Anmeldebestätigung: $(row[6]) - $(row[4])",
         body = content
     )
-end
-
-"""
-Check which registrations need confirmation emails resent due to balance changes.
-Returns list of (registration_id, reason, old_remaining, new_remaining).
-"""
-function get_registrations_needing_resend(db::DuckDB.DB, event_id::AbstractString;
-                                           email_type::String="confirmation_email")
-    result = DBInterface.execute(db, """
-        WITH latest_emails AS (
-            SELECT
-                ce.registration_id,
-                ce.remaining_at_send,
-                ce.sent_at,
-                ROW_NUMBER() OVER (PARTITION BY ce.registration_id ORDER BY ce.sent_at DESC) as rn
-            FROM confirmation_emails ce
-            JOIN registrations r ON r.id = ce.registration_id
-            WHERE r.event_id = ?
-              AND ce.email_type = ?
-              AND ce.status = 'sent'
-        ),
-        current_balances AS (
-            SELECT
-                r.id as registration_id,
-                r.computed_cost - COALESCE(sub.total_subsidy, 0) - COALESCE(pay.total_paid, 0) as current_remaining
-            FROM registrations r
-            LEFT JOIN (
-                SELECT registration_id, SUM(amount) as total_subsidy
-                FROM subsidies
-                GROUP BY registration_id
-            ) sub ON sub.registration_id = r.id
-            LEFT JOIN (
-                SELECT pm.registration_id, SUM(bt.amount) as total_paid
-                FROM payment_matches pm
-                JOIN bank_transfers bt ON bt.id = pm.transfer_id
-                WHERE pm.registration_id IS NOT NULL
-                GROUP BY pm.registration_id
-            ) pay ON pay.registration_id = r.id
-            WHERE r.event_id = ?
-        )
-        SELECT
-            cb.registration_id,
-            COALESCE(le.remaining_at_send, 999999) as old_remaining,
-            cb.current_remaining as new_remaining,
-            CASE
-                WHEN le.registration_id IS NULL THEN 'never_sent'
-                WHEN cb.current_remaining != le.remaining_at_send THEN 'balance_changed'
-                ELSE 'no_change'
-            END as reason
-        FROM current_balances cb
-        LEFT JOIN latest_emails le ON le.registration_id = cb.registration_id AND le.rn = 1
-        WHERE cb.current_remaining != COALESCE(le.remaining_at_send, 999999)
-          AND cb.current_remaining != 0  -- Don't resend if fully paid
-    """, [event_id, email_type, event_id])
-
-    return collect(result)
-end
-
-export get_registrations_needing_resend
-
-"""
-Get list of registrations that haven't received confirmation emails.
-"""
-function get_unsent_confirmations(db::DuckDB.DB, event_id::AbstractString)
-    result = DBInterface.execute(db, """
-        SELECT r.id, r.reference_number, r.first_name, r.last_name, r.email,
-               r.computed_cost - COALESCE(sub.total_subsidy, 0) as effective_cost
-        FROM registrations r
-        LEFT JOIN confirmation_emails ce ON ce.registration_id = r.id AND ce.status = 'sent'
-        LEFT JOIN (
-            SELECT registration_id, SUM(amount) as total_subsidy
-            FROM subsidies
-            GROUP BY registration_id
-        ) sub ON sub.registration_id = r.id
-        WHERE r.event_id = ? AND ce.id IS NULL
-        ORDER BY r.registration_date
-    """, [event_id])
-    return collect(result)
 end
 
 """
@@ -823,11 +822,8 @@ function queue_payment_confirmation!(cfg::EmailConfig, db::DuckDB.DB, registrati
     end
 
     # Generate email content using payment_confirmation template
+    ensure_default_templates(cfg.templates_dir)
     template = load_template(cfg, "payment_confirmation")
-    if template === nothing
-        ensure_default_templates(cfg.templates_dir)
-        template = load_template(cfg, "payment_confirmation")
-    end
 
     if template === nothing
         @error "Payment confirmation template not found"
@@ -870,8 +866,6 @@ function queue_payment_confirmation!(cfg::EmailConfig, db::DuckDB.DB, registrati
 end
 
 export queue_payment_confirmation!
-
-
 
 """
 Intelligently queue emails for all registrations that need them.
@@ -983,59 +977,6 @@ function queue_pending_emails!(cfg::EmailConfig, db::DuckDB.DB, event_id::Abstra
 end
 
 export queue_pending_emails!
-
-"""
-Queue payment request emails for registrations that have costs calculated
-but have not yet received a payment request email.
-
-This is useful after running recalculate-costs when costs were previously NULL.
-Sends to ALL registrations where:
-- computed_cost is NOT NULL
-- No confirmation_email (payment request) has been sent yet
-(Sends even if fully paid)
-
-Returns count of emails queued.
-"""
-function queue_payment_requests_for_event!(cfg::EmailConfig, db::DuckDB.DB, event_id::AbstractString)
-    # Find registrations with costs but no payment email sent
-    result = DBInterface.execute(db, """
-        WITH latest_payment_emails AS (
-            SELECT
-                ce.registration_id,
-                ce.sent_at,
-                ROW_NUMBER() OVER (PARTITION BY ce.registration_id ORDER BY ce.sent_at DESC) as rn
-            FROM confirmation_emails ce
-            JOIN registrations r ON r.id = ce.registration_id
-            WHERE r.event_id = ?
-              AND ce.email_type = 'confirmation_email'
-              AND ce.status = 'sent'
-        )
-        SELECT
-            r.id as registration_id
-        FROM registrations r
-        LEFT JOIN latest_payment_emails lpe ON lpe.registration_id = r.id AND lpe.rn = 1
-        WHERE r.event_id = ?
-          AND r.computed_cost IS NOT NULL
-          AND lpe.registration_id IS NULL
-    """, [event_id, event_id])
-
-    queued_count = 0
-    for row in collect(result)
-        registration_id = row[1]
-
-        # Send to all registrations (even if fully paid)
-        queue_id = queue_email!(cfg, db, registration_id;
-                               template_name="confirmation_email",
-                               reason="costs_calculated")
-        if queue_id !== nothing
-            queued_count += 1
-        end
-    end
-
-    return queued_count
-end
-
-export queue_payment_requests_for_event!
 
 """
 Get count of pending emails by event.
@@ -1179,134 +1120,5 @@ end
 
 export send_all_pending_emails!
 
-# =============================================================================
-# BULK EMAIL MANAGEMENT
-# =============================================================================
-
-"""
-Discard all pending emails for a specific event (or all events if event_id is nothing).
-Returns count of emails discarded.
-
-This is useful when you need to clear the queue and regenerate fresh emails,
-such as after experimenting with cost configurations.
-"""
-function discard_all_pending_emails!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing)
-    query = if event_id !== nothing
-        """
-        UPDATE email_queue
-        SET status = 'discarded', processed_at = CURRENT_TIMESTAMP, processed_by = 'bulk_discard'
-        WHERE status = 'pending'
-          AND registration_id IN (SELECT id FROM registrations WHERE event_id = ?)
-        """
-    else
-        """
-        UPDATE email_queue
-        SET status = 'discarded', processed_at = CURRENT_TIMESTAMP, processed_by = 'bulk_discard'
-        WHERE status = 'pending'
-        """
-    end
-
-    if event_id !== nothing
-        DBInterface.execute(db, query, [event_id])
-    else
-        DBInterface.execute(db, query)
-    end
-
-    # Count how many were discarded
-    count_query = if event_id !== nothing
-        """
-        SELECT COUNT(*) FROM email_queue
-        WHERE status = 'discarded' AND processed_by = 'bulk_discard'
-          AND registration_id IN (SELECT id FROM registrations WHERE event_id = ?)
-        """
-    else
-        """
-        SELECT COUNT(*) FROM email_queue
-        WHERE status = 'discarded' AND processed_by = 'bulk_discard'
-        """
-    end
-
-    result = if event_id !== nothing
-        DBInterface.execute(db, count_query, [event_id])
-    else
-        DBInterface.execute(db, count_query)
-    end
-
-    count = first(collect(result))[1]
-
-    @info "Discarded pending emails" count=count event_id=event_id
-    return count
-end
-
-export discard_all_pending_emails!
-
-"""
-Bulk mark all registrations for an event as having received confirmation emails.
-This creates records in the confirmation_emails table WITHOUT actually sending emails.
-
-This is useful when:
-1. You've recreated the database but emails were previously sent
-2. You want to prevent the system from resending emails to everyone
-
-Parameters:
-- db: Database connection
-- event_id: Event ID to mark emails for
-- template_name: Email type to mark as sent ('confirmation_email', 'registration_confirmation', or 'payment_confirmation')
-- processed_by: Who marked these (default: 'bulk_manual_mark')
-
-Returns count of emails marked.
-"""
-function mark_all_as_sent!(db::DuckDB.DB, event_id::AbstractString;
-                           template_name::String="confirmation_email",
-                           processed_by::String="bulk_manual_mark")
-    # Validate template_name
-    valid_templates = ["confirmation_email", "registration_confirmation", "payment_confirmation"]
-    if !(template_name in valid_templates)
-        error("Invalid template name: $template_name. Must be one of: $(join(valid_templates, ", "))")
-    end
-
-    # Get all registrations for this event that haven't received this type of email
-    result = DBInterface.execute(db, """
-        SELECT r.id, r.email, r.reference_number, r.computed_cost,
-               COALESCE(r.computed_cost, 0) -
-               COALESCE((SELECT SUM(amount) FROM subsidies WHERE registration_id = r.id), 0) -
-               COALESCE((SELECT SUM(bt.amount) FROM bank_transfers bt
-                         JOIN payment_matches pm ON pm.transfer_id = bt.id
-                         WHERE pm.registration_id = r.id), 0) as remaining
-        FROM registrations r
-        LEFT JOIN confirmation_emails ce ON ce.registration_id = r.id
-                                          AND ce.email_type = ?
-                                          AND ce.status = 'sent'
-        WHERE r.event_id = ?
-          AND ce.id IS NULL
-    """, [template_name, event_id])
-
-    marked_count = 0
-    for row in collect(result)
-        registration_id, email_to, reference_number, computed_cost, remaining = row
-
-        # Convert to Float64, handling NULL/missing
-        cost_f = (computed_cost === nothing || ismissing(computed_cost)) ? 0.0 : Float64(computed_cost)
-        remaining_f = (remaining === nothing || ismissing(remaining)) ? 0.0 : Float64(remaining)
-
-        # Insert into confirmation_emails
-        DBInterface.execute(db, """
-            INSERT INTO confirmation_emails (
-                id, registration_id, email_type, sent_at, email_to,
-                cost_at_send, remaining_at_send, reference_sent, status, resend_reason
-            ) VALUES (
-                nextval('email_id_seq'), ?, ?, CURRENT_TIMESTAMP, ?,
-                ?, ?, ?, 'sent', 'bulk_marked'
-            )
-        """, [registration_id, template_name, email_to, cost_f, remaining_f, reference_number])
-
-        marked_count += 1
-    end
-
-    @info "Bulk marked emails as sent" count=marked_count event_id=event_id template_name=template_name
-    return marked_count
-end
-
-export mark_all_as_sent!
 
 end # module

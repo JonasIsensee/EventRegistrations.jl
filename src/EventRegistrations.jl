@@ -194,19 +194,15 @@ export manual_match!, get_payment_status, get_payment_summary
 export get_payment_history, get_payment_discrepancies
 
 # Re-export from ConfirmationEmails
-using .ConfirmationEmails: get_unsent_confirmations, preview_email
-using .ConfirmationEmails: get_registrations_needing_resend
+using .ConfirmationEmails: preview_email
 using .ConfirmationEmails: queue_email!, queue_pending_emails!, get_pending_emails
 using .ConfirmationEmails: queue_payment_confirmation!
 using .ConfirmationEmails: count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
-using .ConfirmationEmails: discard_all_pending_emails!, mark_all_as_sent!
 
-export get_unsent_confirmations, preview_email
+export preview_email
 export queue_email!, queue_pending_emails!, get_pending_emails
 export queue_payment_confirmation!
 export count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
-export get_registrations_needing_resend
-export discard_all_pending_emails!, mark_all_as_sent!
 
 # Re-export from EmailDownload
 using .EmailDownload: download_emails!, load_email_credentials
