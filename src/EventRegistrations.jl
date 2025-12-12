@@ -13,7 +13,7 @@ Features:
 Configuration Files:
 - config/fields.toml       - Field name aliases (short names → actual names)
 - config/events/*.toml     - Per-event cost rules
-- config/templates/*.txt   - Email templates
+- config/templates/*.mustache   - Email templates
 
 Usage:
     using EventRegistrations
@@ -135,7 +135,7 @@ export with_transaction
 # Include all submodules
 include("Schema.jl")
 include("Config.jl")
-include("Templates.jl")
+include("AppConfig.jl")
 include("EmailParser.jl")
 include("EmailDownload.jl")
 include("ReferenceNumbers.jl")
@@ -296,9 +296,8 @@ export load_field_aliases, generate_field_config, resolve_field_name
 export load_event_config, load_event_aliases, generate_event_config_template, sync_event_configs_to_db!
 export ensure_config_dirs, get_config_dir, get_registration_detail_columns
 
-# Re-export from Templates
-using .Templates: load_template, list_templates, ensure_default_templates
-export load_template, list_templates, ensure_default_templates
+# Re-export AppConfig types/functions (now included directly)
+export AppConfig, EmailConfig, load_app_config
 
 # Re-export from CostCalculator
 using .CostCalculator: set_event_cost_rules, get_cost_rules, calculate_cost
@@ -324,7 +323,6 @@ export get_payment_history, get_payment_discrepancies
 
 # Re-export from ConfirmationEmails
 using .ConfirmationEmails: get_unsent_confirmations, preview_email
-using .ConfirmationEmails: configure! as configure_email!, load_email_config_from_file!
 using .ConfirmationEmails: get_registrations_needing_resend
 using .ConfirmationEmails: queue_email!, queue_pending_emails!, get_pending_emails
 using .ConfirmationEmails: queue_payment_confirmation!
@@ -332,7 +330,6 @@ using .ConfirmationEmails: count_pending_emails, mark_email!, send_queued_email!
 using .ConfirmationEmails: discard_all_pending_emails!, mark_all_as_sent!
 
 export get_unsent_confirmations, preview_email
-export configure_email!, load_email_config_from_file!
 export queue_email!, queue_pending_emails!, get_pending_emails
 export queue_payment_confirmation!
 export count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
@@ -529,10 +526,9 @@ Creates:
 function setup_project!(config_dir::AbstractString="config")
     ensure_config_dirs(config_dir)
 
-    # Create default templates
+    # Create default templates in the configured directory
     templates_dir = joinpath(config_dir, "templates")
-    Templates.set_templates_dir!(templates_dir)
-    ensure_default_templates(templates_dir)
+    ConfirmationEmails.ensure_default_templates(templates_dir)
     return config_dir
 end
 export setup_project!

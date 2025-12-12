@@ -7,8 +7,9 @@ using Dates
 using SHA
 using DelimitedFiles
 
+
 # Import from parent module
-import ..EventRegistrations: with_transaction
+import ..EventRegistrations: with_transaction, EmailConfig
 
 # Import from parent module's submodules
 using ..ReferenceNumbers
@@ -272,7 +273,8 @@ end
 """
 Attempt to automatically match unmatched transfers to registrations.
 """
-function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing)
+function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing,
+                          email_cfg::Union{EmailConfig,Nothing}=nothing)
     # Get unmatched transfers
     transfers = DBInterface.execute(db, """
         SELECT bt.id, bt.reference_text, bt.amount, bt.sender_name
@@ -345,11 +347,12 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                     effective_date=transfer_date,
                     notes="Auto-matched payment (confidence: $(final_confidence))")
 
-                # Queue payment confirmation email (if email system is available)
-                try
-                    queue_payment_confirmation!(db, reg_id, amount)
-                catch e
-                    @debug "Payment confirmation not queued" exception=e
+                if email_cfg !== nothing
+                    try
+                        queue_payment_confirmation!(email_cfg, db, reg_id, amount)
+                    catch e
+                        @debug "Payment confirmation not queued" exception=e
+                    end
                 end
 
                 matched += 1
@@ -418,11 +421,12 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                             effective_date=transfer_date,
                             notes="Auto-matched by name+amount (confidence: 0.6)")
 
-                        # Queue payment confirmation email (if email system is available)
-                        try
-                            queue_payment_confirmation!(db, reg_id, amount)
-                        catch e
-                            @debug "Payment confirmation not queued" exception=e
+                        if email_cfg !== nothing
+                            try
+                                queue_payment_confirmation!(email_cfg, db, reg_id, amount)
+                            catch e
+                                @debug "Payment confirmation not queued" exception=e
+                            end
                         end
 
                         matched += 1
@@ -483,7 +487,8 @@ end
 Manually match a transfer to a registration.
 """
 function manual_match!(db::DuckDB.DB, transfer_id::Integer, registration_id::Integer;
-                       notes::String="")
+                       notes::String="", transfer_date::Union{Date,Nothing}=nothing,
+                       email_cfg::Union{EmailConfig,Nothing}=nothing)
     # Get transfer details for financial transaction logging
     transfer_result = DBInterface.execute(db,
         "SELECT transfer_date, amount FROM bank_transfers WHERE id = ?",
@@ -535,11 +540,13 @@ function manual_match!(db::DuckDB.DB, transfer_id::Integer, registration_id::Int
         notes="Manual match: $(notes)")
 
     # Queue payment confirmation email (if email system is available)
-    try
-        queue_payment_confirmation!(db, registration_id, amount)
-    catch e
-        @debug "Payment confirmation not queued" exception=e
-    end
+        if email_cfg !== nothing
+            try
+                queue_payment_confirmation!(email_cfg, db, registration_id, amount)
+            catch e
+                @debug "Payment confirmation not queued" exception=e
+            end
+        end
 
     @info "Manual match created" transfer_id=transfer_id registration_id=registration_id
 end

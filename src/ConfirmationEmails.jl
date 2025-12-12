@@ -5,59 +5,134 @@ using DBInterface
 using Dates
 using JSON
 using SMTPClient
-using TOML
 using Base64: base64encode
 using ColorTypes: Gray, N0f8
 using PNGFiles
 using QRCode
 using Printf: @sprintf
 using Random: randstring
+using Mustache
 
-# Import from parent module's submodule
-using ..Templates
+# Bring EmailConfig from parent module
+using ..EventRegistrations: EmailConfig
+
 
 export generate_email_content
 export get_unsent_confirmations, preview_email
-export configure!, EmailConfig
+export ensure_default_templates, list_templates
+const PACKAGE_TEMPLATES_DIR = normpath(joinpath(@__DIR__, "..", "config", "templates"))
+
 """
-Configuration for email sending.
+Escape a string for safe inclusion in HTML content.
 """
-mutable struct EmailConfig
-    smtp_server::String
-    smtp_port::Int
-    username::String
-    password::String
-    from_address::String
-    from_name::String
-    bank_details::String
-    additional_info::String
-    account_name::String
-    iban::String
-    bic::String
-    bank_name::String
-    qr_message::String
-    qr_enabled::Bool
-    dry_run::Bool  # If true, don't actually send emails
+function escape_html(text::AbstractString)
+    return replace(text,
+        "&" => "&amp;",
+        "<" => "&lt;",
+        ">" => "&gt;",
+        '"' => "&quot;"
+    )
 end
 
-# Default config (needs to be configured before use)
-const CONFIG = EmailConfig(
-    "",     # smtp_server
-    587,    # smtp_port
-    "",     # username
-    "",     # password
-    "",     # from_address
-    "",     # from_name
-    "",     # bank_details
-    "",     # additional_info
-    "",     # account_name
-    "",     # iban
-    "",     # bic
-    "",     # bank_name
-    "",     # qr_message
-    true,    # qr_enabled
-    true    # dry_run
-)
+escape_html(value) = escape_html(string(value))
+escape_html(::Nothing) = ""
+
+"""
+Resolve template path for a template name.
+"""
+function get_template_path(cfg::EmailConfig, name::AbstractString)
+    if !isempty(splitext(name)[2])
+        return joinpath(cfg.templates_dir, name)
+    end
+    return joinpath(cfg.templates_dir, "$name.mustache")
+end
+
+function load_template(cfg::EmailConfig, name::AbstractString)
+    path = get_template_path(cfg, name)
+    if !isfile(path)
+        @warn "Template not found" name=name path=path
+        return nothing
+    end
+    return read(path, String)
+end
+
+function list_templates(cfg::EmailConfig)
+    dir = cfg.templates_dir
+    if !isdir(dir)
+        return String[]
+    end
+    return [splitext(f)[1] for f in readdir(dir) if endswith(f, ".mustache")]
+end
+
+render_template(template::AbstractString, vars::AbstractDict) = Mustache.render(template, vars)
+
+function ensure_default_templates(templates_dir::AbstractString)
+    mkpath(templates_dir)
+
+    created = String[]
+    for name in ["registration_confirmation", "confirmation_email", "payment_confirmation"]
+        dest = joinpath(templates_dir, "$name.mustache")
+        if !isfile(dest)
+            src = joinpath(PACKAGE_TEMPLATES_DIR, "$name.mustache")
+            if isfile(src)
+                cp(src, dest; force=true)
+                push!(created, name)
+            else
+                @warn "Packaged default template missing" name=name src=src
+            end
+        end
+    end
+
+    if !isempty(created)
+        @info "Created default templates" templates=created directory=templates_dir
+    end
+    return created
+end
+
+"""
+Format registration fields as HTML list.
+"""
+function format_registration_fields(fields::AbstractDict;
+                                     exclude::Vector{String}=String[],
+                                     max_width::Int=40)
+    if isempty(fields)
+        return ""
+    end
+
+    default_exclude = ["Vorname", "Nachname", "E-Mail", "Email", "First Name", "Last Name"]
+    all_exclude = vcat(default_exclude, exclude)
+
+    entries = String[]
+
+    for key in sort(collect(keys(fields)))
+        if key ∈ all_exclude
+            continue
+        end
+
+        raw_value = string(fields[key])
+        if isempty(strip(raw_value))
+            continue
+        end
+
+        clean_value = replace(raw_value, r"\s*\n\s*" => ", ")
+        escaped_key = escape_html(key)
+        escaped_value = escape_html(clean_value)
+        push!(entries, "<li style=\"margin: 4px 0;\"><strong>$(escaped_key):</strong> $(escaped_value)</li>")
+    end
+
+    if isempty(entries)
+        return ""
+    end
+
+    return """
+<div style="margin: 24px 0;">
+  <h3 style="margin-bottom: 8px; font-size: 18px;">Deine Angaben</h3>
+  <ul style="margin: 0 0 0 20px; padding: 0;">
+    $(join(entries, "\n    "))
+  </ul>
+</div>
+"""
+end
 
 struct EmailAttachment
     filename::String
@@ -66,150 +141,7 @@ struct EmailAttachment
     disposition::String
 end
 
-"""
-Load email configuration from TOML file.
-The same file can be used for both POP3 download and SMTP sending.
-
-Expected format:
-```toml
-[email]
-server = "mail.example.com"
-username = "user@example.com"
-password = "yourpassword"
-port = 995  # POP3 port (optional, defaults to 995)
-
-[smtp]
-server = "mail.example.com"  # optional, defaults to email.server
-port = 587  # optional, defaults to 587
-username = "user@example.com"  # optional, defaults to email.username
-password = "yourpassword"  # optional, defaults to email.password
-from_address = "user@example.com"  # optional, defaults to smtp.username or email.username
-from_name = "Event Registration"
-bank_details = "IBAN: DE..."
-additional_info = "..."
-```
-"""
-function load_email_config_from_file!(path::String; dry_run::Bool=true)
-    if !isfile(path)
-        @warn "Credentials file not found" path=path
-        return false
-    end
-
-    config = TOML.parsefile(path)
-
-    # Get email/POP3 settings
-    email_section = get(config, "email", Dict())
-    smtp_section = get(config, "smtp", Dict())
-
-    # SMTP server (use email server if smtp server not specified)
-    smtp_server = get(smtp_section, "server", get(email_section, "server", ""))
-
-    # SMTP port (default 587 for STARTTLS)
-    smtp_port = get(smtp_section, "port", 587)
-
-    # Username and password (use email credentials if smtp not specified)
-    username = get(smtp_section, "username", get(email_section, "username", ""))
-    password = get(smtp_section, "password", get(email_section, "password", ""))
-
-    # From address (default to username if not specified)
-    from_address = get(smtp_section, "from_address", username)
-
-    # Other settings
-    from_name = get(smtp_section, "from_name", "Event Registration")
-    bank_details = get(smtp_section, "bank_details", "")
-    additional_info = get(smtp_section, "additional_info", "")
-
-    bank_section = get(config, "bank", Dict())
-
-    account_name = get(bank_section, "account_name", get(smtp_section, "from_name", get(email_section, "username", "")))
-    iban = replace(get(bank_section, "iban", ""), ' ' => "")
-    bic = get(bank_section, "bic", "")
-    bank_name = get(bank_section, "bank_name", "")
-    qr_message = get(bank_section, "remittance", "")
-    qr_enabled = get(bank_section, "enable_qr", true)
-
-    configure!(;
-        smtp_server = smtp_server,
-        smtp_port = smtp_port,
-        username = username,
-        password = password,
-        from_address = from_address,
-        from_name = from_name,
-        bank_details = bank_details,
-        additional_info = additional_info,
-        account_name = account_name,
-        iban = iban,
-        bic = bic,
-        bank_name = bank_name,
-        qr_message = qr_message,
-        qr_enabled = qr_enabled,
-        dry_run = dry_run
-    )
-
-    @info "Loaded email configuration" server=smtp_server port=smtp_port from=from_address dry_run=dry_run CONFIG
-
-    return true
-end
-
-export load_email_config_from_file!
-
-"""
-Configure email settings manually.
-"""
-function configure!(;
-    smtp_server::String="",
-    smtp_port::Int=587,
-    username::String="",
-    password::String="",
-    from_address::String="",
-    from_name::String="",
-    bank_details::String="",
-    additional_info::String="",
-    account_name::String="",
-    iban::String="",
-    bic::String="",
-    bank_name::String="",
-    qr_message::String="",
-    qr_enabled::Bool=true,
-    dry_run::Bool=true
-)
-    CONFIG.smtp_server = smtp_server
-    CONFIG.smtp_port = smtp_port
-    CONFIG.username = username
-    CONFIG.password = password
-    CONFIG.from_address = from_address
-    CONFIG.from_name = from_name
-    CONFIG.bank_details = bank_details
-    CONFIG.additional_info = additional_info
-    CONFIG.account_name = account_name
-    CONFIG.iban = replace(iban, ' ' => "")
-    CONFIG.bic = bic
-    CONFIG.bank_name = bank_name
-    CONFIG.qr_message = qr_message
-    CONFIG.qr_enabled = qr_enabled
-    if isempty(CONFIG.iban)
-        m = match(r"IBAN:\s*([A-Z0-9 ]+)", CONFIG.bank_details)
-        if m !== nothing
-            CONFIG.iban = replace(m.captures[1], ' ' => "")
-        end
-    end
-    if isempty(CONFIG.account_name)
-        lines = split(CONFIG.bank_details, '\n')
-        if !isempty(lines)
-            first_line = strip(lines[1])
-            if !isempty(first_line)
-                CONFIG.account_name = first_line
-            end
-        end
-    end
-    if isempty(CONFIG.bic)
-        m = match(r"BIC:\s*([A-Z0-9]+)", CONFIG.bank_details)
-        if m !== nothing
-            CONFIG.bic = m.captures[1]
-        end
-    end
-    CONFIG.dry_run = dry_run
-end
+"""Email configuration is provided via `EmailConfig`; no globals are mutated here."""
 
 """
 Format a number as currency string.
@@ -231,27 +163,27 @@ end
 Prepare bank details text for a specific reference number.
 Replaces placeholders and falls back to structured data when needed.
 """
-function prepare_bank_details(reference_number::String)
-    details = strip(CONFIG.bank_details)
+function prepare_bank_details(cfg::EmailConfig, reference_number::String)
+    details = strip(cfg.bank_details)
 
     if isempty(details)
         parts = String[]
-        if !isempty(CONFIG.account_name)
-            push!(parts, CONFIG.account_name)
-        elseif !isempty(CONFIG.from_name)
-            push!(parts, CONFIG.from_name)
+        if !isempty(cfg.account_name)
+            push!(parts, cfg.account_name)
+        elseif !isempty(cfg.from_name)
+            push!(parts, cfg.from_name)
         end
 
-        if !isempty(CONFIG.bank_name)
-            push!(parts, CONFIG.bank_name)
+        if !isempty(cfg.bank_name)
+            push!(parts, cfg.bank_name)
         end
 
-        if !isempty(CONFIG.iban)
-            push!(parts, "IBAN: $(format_iban(CONFIG.iban))")
+        if !isempty(cfg.iban)
+            push!(parts, "IBAN: $(format_iban(cfg.iban))")
         end
 
-        if !isempty(CONFIG.bic)
-            push!(parts, "BIC: $(uppercase(CONFIG.bic))")
+        if !isempty(cfg.bic)
+            push!(parts, "BIC: $(uppercase(cfg.bic))")
         end
 
         details = join(parts, "\n")
@@ -331,8 +263,8 @@ end
 """
 Generate a payment QR HTML block if configuration allows it.
 """
-function maybe_generate_payment_qr(amount::Float64, reference::String)
-    if !CONFIG.qr_enabled
+function maybe_generate_payment_qr(cfg::EmailConfig, amount::Float64, reference::String)
+    if !cfg.qr_enabled
         @debug "QR code disabled in configuration" reference=reference
         return nothing
     end
@@ -342,12 +274,12 @@ function maybe_generate_payment_qr(amount::Float64, reference::String)
         return nothing
     end
 
-    if isempty(CONFIG.iban)
+    if isempty(cfg.iban)
         @warn "QR code not generated: IBAN not configured" reference=reference
         return nothing
     end
 
-    if isempty(CONFIG.account_name)
+    if isempty(cfg.account_name)
         @warn "QR code not generated: account_name not configured" reference=reference
         return nothing
     end
@@ -356,10 +288,10 @@ function maybe_generate_payment_qr(amount::Float64, reference::String)
         payload = generate_sepa_qr_payload(
             amount = amount,
             reference = string(strip(reference)),
-            recipient = CONFIG.account_name,
-            iban = CONFIG.iban,
-            bic = CONFIG.bic,
-            remittance = isempty(CONFIG.qr_message) ? CONFIG.bank_name : CONFIG.qr_message
+            recipient = cfg.account_name,
+            iban = cfg.iban,
+            bic = cfg.bic,
+            remittance = isempty(cfg.qr_message) ? cfg.bank_name : cfg.qr_message
         )
 
         png_bytes = qr_payload_to_png(payload)
@@ -387,7 +319,7 @@ end
 Generate email content from external template file.
 Falls back to creating default templates if they don't exist.
 """
-function generate_email_content(;
+function generate_email_content(cfg::EmailConfig;
     template_name::String="confirmation_email",
     first_name::String="",
     last_name::String="",
@@ -402,29 +334,25 @@ function generate_email_content(;
     registration_fields::AbstractDict=Dict(),
     extra_vars::AbstractDict{String,String}=Dict{String,String}()
 )
-    # Try to load external template
-    template = load_template(template_name)
+    template = load_template(cfg, template_name)
 
     if template === nothing
-        # Ensure default templates exist and try again
-        ensure_default_templates()
-        template = load_template(template_name)
+        ensure_default_templates(cfg.templates_dir)
+        template = load_template(cfg, template_name)
     end
 
     if template === nothing
         error("Template not found: $template_name")
     end
 
-    # Format registration fields for email display
     fields_html = strip(format_registration_fields(registration_fields))
 
-    bank_details_text = prepare_bank_details(reference_number)
+    bank_details_text = prepare_bank_details(cfg, reference_number)
     bank_details_html = isempty(strip(bank_details_text)) ? "" : replace(escape_html(bank_details_text), "\n" => "<br>")
 
-    fallback_info = isempty(strip(CONFIG.additional_info)) ? "Bei Fragen erreichst du uns unter $(CONFIG.from_address)." : CONFIG.additional_info
+    fallback_info = isempty(strip(cfg.additional_info)) ? "Bei Fragen erreichst du uns unter $(cfg.from_address)." : cfg.additional_info
     info_html = isempty(strip(fallback_info)) ? "" : "<p style=\"margin: 24px 0;\">$(replace(escape_html(fallback_info), "\n" => "<br>"))</p>"
 
-    # Build variables dict (plain strings rely on Mustache escaping; HTML fragments use triple braces in templates)
     vars = Dict{String, Any}(
         "first_name" => something(first_name, ""),
         "last_name" => something(last_name, ""),
@@ -439,14 +367,12 @@ function generate_email_content(;
         "registration_fields" => fields_html,
         "bank_details" => bank_details_html,
         "additional_info" => info_html,
-        "sender_name" => CONFIG.from_name,
+        "sender_name" => cfg.from_name,
     )
 
-    # Generate QR code if enabled and appropriate
-    qr_html = maybe_generate_payment_qr(to_float(remaining), reference_number)
+    qr_html = maybe_generate_payment_qr(cfg, to_float(remaining), reference_number)
     vars["qr_block"] = qr_html === nothing ? "" : qr_html
 
-    # Merge extra variables (allowing override of qr_block if explicitly provided)
     merge!(vars, extra_vars)
 
     return render_template(template, vars)
@@ -455,7 +381,7 @@ end
 """
 Preview email content for a registration.
 """
-function preview_email(db::DuckDB.DB, registration_id::Integer;
+function preview_email(cfg::EmailConfig, db::DuckDB.DB, registration_id::Integer;
                        template_name::String="confirmation_email",
                        extra_vars::AbstractDict{String,String}=Dict{String,String}())
     result = DBInterface.execute(db, """
@@ -505,7 +431,7 @@ function preview_email(db::DuckDB.DB, registration_id::Integer;
         Dict()
     end
 
-    content = generate_email_content(
+    content = generate_email_content(cfg;
         template_name = template_name,
         first_name = something(row[1], ""),
         last_name = something(row[2], ""),
@@ -634,23 +560,23 @@ end
 Send email via SMTP.
 Requires SMTPClient.jl or similar package.
 """
-function send_via_smtp(to::String, subject::String, body::String; attachments::Vector{EmailAttachment}=EmailAttachment[])
-    if isempty(CONFIG.smtp_server)
+function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::String; attachments::Vector{EmailAttachment}=EmailAttachment[])
+    if isempty(cfg.smtp_server)
         @error "SMTP server not configured"
         return false
     end
 
     try
         println("\n[SMTP DEBUG] Preparing to send email...")
-        println("  Server: $(CONFIG.smtp_server):$(CONFIG.smtp_port)")
-        println("  From: $(CONFIG.from_name) <$(CONFIG.from_address)>")
+        println("  Server: $(cfg.smtp_server):$(cfg.smtp_port)")
+        println("  From: $(cfg.from_name) <$(cfg.from_address)>")
         println("  To: $to")
         println("  Subject: $subject")
         println("  Body length: $(length(body)) characters")
 
         # Prepare email message
-        from_email = CONFIG.from_address
-        from_name = CONFIG.from_name
+        from_email = cfg.from_address
+        from_name = cfg.from_name
 
         # Encode subject line for non-ASCII characters (RFC 2047)
         encoded_subject = encode_mime_header(subject)
@@ -699,17 +625,17 @@ function send_via_smtp(to::String, subject::String, body::String; attachments::V
         println("  [SMTP DEBUG] Connecting to SMTP server...")
 
         # Send using SMTPClient
-        use_ssl = CONFIG.smtp_port == 465 || CONFIG.smtp_port == 587
+        use_ssl = cfg.smtp_port == 465 || cfg.smtp_port == 587
         opt = SendOptions(
             isSSL = use_ssl,
-            username = CONFIG.username,
-            passwd = CONFIG.password
+            username = cfg.username,
+            passwd = cfg.password
         )
 
-        url = "smtp://$(CONFIG.smtp_server):$(CONFIG.smtp_port)"
+        url = "smtp://$(cfg.smtp_server):$(cfg.smtp_port)"
 
         println("  [SMTP DEBUG] URL: $url")
-        println("  [SMTP DEBUG] Username: $(CONFIG.username)")
+        println("  [SMTP DEBUG] Username: $(cfg.username)")
         println("  [SMTP DEBUG] SSL: $(use_ssl)")
 
         # Send the email
@@ -757,7 +683,7 @@ end
 Queue an email for later sending.
 Returns the queue entry ID, or nothing if email was already queued with same content.
 """
-function queue_email!(db::DuckDB.DB, registration_id::Integer;
+function queue_email!(cfg::EmailConfig, db::DuckDB.DB, registration_id::Integer;
                       template_name::String="confirmation_email",
                       reason::String="balance_changed")
     # Get registration data
@@ -800,7 +726,7 @@ function queue_email!(db::DuckDB.DB, registration_id::Integer;
     end
 
     # Generate email content
-    preview = preview_email(db, registration_id; template_name=template_name)
+    preview = preview_email(cfg, db, registration_id; template_name=template_name)
 
     # Insert into queue
     DBInterface.execute(db, """
@@ -834,7 +760,7 @@ Returns the queue entry ID, or nothing if unable to queue.
 This should be called after a payment is matched to a registration.
 The payment_confirmation template will be used.
 """
-function queue_payment_confirmation!(db::DuckDB.DB, registration_id::Integer, amount_paid::Real)
+function queue_payment_confirmation!(cfg::EmailConfig, db::DuckDB.DB, registration_id::Integer, amount_paid::Real)
     # Get registration data
     reg_result = DBInterface.execute(db, """
         SELECT r.email, r.reference_number, r.first_name, r.event_id,
@@ -873,10 +799,10 @@ function queue_payment_confirmation!(db::DuckDB.DB, registration_id::Integer, am
     end
 
     # Generate email content using payment_confirmation template
-    template = load_template("payment_confirmation")
+    template = load_template(cfg, "payment_confirmation")
     if template === nothing
-        ensure_default_templates()
-        template = load_template("payment_confirmation")
+        ensure_default_templates(cfg.templates_dir)
+        template = load_template(cfg, "payment_confirmation")
     end
 
     if template === nothing
@@ -890,7 +816,7 @@ function queue_payment_confirmation!(db::DuckDB.DB, registration_id::Integer, am
         "event_name" => something(event_name, event_id),
         "reference_number" => reference_number,
         "amount_paid" => format_currency(amount_f),
-        "sender_name" => CONFIG.from_name
+        "sender_name" => cfg.from_name
     )
 
     body_text = render_template(template, vars)
@@ -935,7 +861,7 @@ Sends emails for ALL registrations (even fully paid) on:
 
 Returns (registration_emails_queued, payment_emails_queued).
 """
-function queue_pending_emails!(db::DuckDB.DB, event_id::AbstractString)
+function queue_pending_emails!(cfg::EmailConfig, db::DuckDB.DB, event_id::AbstractString)
     # Get all registrations with their email status
     result = DBInterface.execute(db, """
         WITH latest_registration_emails AS (
@@ -990,7 +916,7 @@ function queue_pending_emails!(db::DuckDB.DB, event_id::AbstractString)
         # If computed_cost is NULL, send registration_confirmation if not already sent
         if computed_cost === nothing || ismissing(computed_cost)
             if !has_reg_email
-                queue_id = queue_email!(db, registration_id;
+                queue_id = queue_email!(cfg, db, registration_id;
                                        template_name="registration_confirmation",
                                        reason="initial")
                 if queue_id !== nothing
@@ -1019,7 +945,7 @@ function queue_pending_emails!(db::DuckDB.DB, event_id::AbstractString)
 
             # Send regardless of payment status (even if fully paid)
             if should_send
-                queue_id = queue_email!(db, registration_id;
+                queue_id = queue_email!(cfg, db, registration_id;
                                        template_name="confirmation_email",
                                        reason=reason)
                 if queue_id !== nothing
@@ -1046,7 +972,7 @@ Sends to ALL registrations where:
 
 Returns count of emails queued.
 """
-function queue_payment_requests_for_event!(db::DuckDB.DB, event_id::AbstractString)
+function queue_payment_requests_for_event!(cfg::EmailConfig, db::DuckDB.DB, event_id::AbstractString)
     # Find registrations with costs but no payment email sent
     result = DBInterface.execute(db, """
         WITH latest_payment_emails AS (
@@ -1074,7 +1000,7 @@ function queue_payment_requests_for_event!(db::DuckDB.DB, event_id::AbstractStri
         registration_id = row[1]
 
         # Send to all registrations (even if fully paid)
-        queue_id = queue_email!(db, registration_id;
+        queue_id = queue_email!(cfg, db, registration_id;
                                template_name="confirmation_email",
                                reason="costs_calculated")
         if queue_id !== nothing
@@ -1216,7 +1142,7 @@ export mark_email!
 Send a queued email and update its status.
 Returns true if sent successfully.
 """
-function send_queued_email!(db::DuckDB.DB, queue_id::Integer)
+function send_queued_email!(cfg::EmailConfig, db::DuckDB.DB, queue_id::Integer)
     # Get queue entry
     result = DBInterface.execute(db, """
         SELECT eq.email_to, eq.subject, eq.body_text, eq.registration_id,
@@ -1234,7 +1160,7 @@ function send_queued_email!(db::DuckDB.DB, queue_id::Integer)
     email_to, subject, body_text, reg_id, cost, remaining, reference = rows[1]
 
     # Check if dry_run mode
-    if CONFIG.dry_run
+    if cfg.dry_run
         println("  [DRY RUN] Would send email to: $email_to")
         println("  [DRY RUN] Subject: $subject")
         mark_email!(db, queue_id, "sent"; processed_by="dry_run")
@@ -1242,7 +1168,7 @@ function send_queued_email!(db::DuckDB.DB, queue_id::Integer)
     end
 
     # Actually send the email
-    success = send_via_smtp(email_to, subject, body_text)
+    success = send_via_smtp(cfg, email_to, subject, body_text)
 
     if success
         mark_email!(db, queue_id, "sent"; processed_by="smtp")
@@ -1260,7 +1186,7 @@ export send_queued_email!
 Send all pending emails in the queue.
 Returns (sent_count, error_count).
 """
-function send_all_pending_emails!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing)
+function send_all_pending_emails!(cfg::EmailConfig, db::DuckDB.DB; event_id::Union{String,Nothing}=nothing)
     pending = get_pending_emails(db; event_id=event_id)
 
     sent_count = 0
@@ -1268,7 +1194,7 @@ function send_all_pending_emails!(db::DuckDB.DB; event_id::Union{String,Nothing}
 
     for email in pending
         println("  Sending to $(email.email_to) ($(email.first_name) $(email.last_name))...")
-        success = send_queued_email!(db, email.id)
+        success = send_queued_email!(cfg, db, email.id)
         if success
             sent_count += 1
         else

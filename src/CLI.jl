@@ -477,7 +477,7 @@ function cmd_status(; db_path::String="events.duckdb", config_dir::String="confi
         # Check templates directory
         templates_dir = joinpath(config_dir, "templates")
         if isdir(templates_dir)
-            template_files = filter(f -> endswith(f, ".txt"), readdir(templates_dir))
+            template_files = filter(f -> endswith(f, ".mustache"), readdir(templates_dir))
             println("  Templates: $(length(template_files)) files in $templates_dir")
         else
             println("  Templates directory: ❌ Not found")
@@ -823,23 +823,18 @@ function cmd_sync(;
         # Step 9: Queue emails for review (pending for manual review/sending)
         println("\n[9/9] Queuing emails for pending registrations...")
 
-        # Load email configuration for QR code generation
-        cred_paths = [credentials_path, "credentials.toml", "config/credentials.toml"]
-        cred_found = findfirst(isfile, cred_paths)
-        if cred_found !== nothing
-            actual_cred_path = cred_paths[cred_found]
-            load_email_config_from_file!(actual_cred_path; dry_run=true)
-            println("  ✓ Loaded email configuration from: $actual_cred_path")
-        else
-            println("  ⚠ No email credentials found - QR codes will not be generated")
-        end
+        ctx = load_app_config(; config_dir=config_dir, db_path=db_path,
+                               credentials_path=credentials_path,
+                               templates_dir=joinpath(config_dir, "templates"),
+                               dry_run=true)
+        println("  ✓ Loaded email configuration (dry-run)")
 
         target_events = [row[1] for row in list_events(db)]
 
         total_registration_emails = 0
         total_payment_emails = 0
         for evt_id in target_events
-            result = queue_pending_emails!(db, evt_id)
+            result = queue_pending_emails!(ctx.email, db, evt_id)
             total_registration_emails += result.registration_emails
             total_payment_emails += result.payment_emails
         end
@@ -1481,29 +1476,15 @@ function cmd_send_emails(;
     credentials_path::String="config/email_credentials.toml")
 
     return require_database(db_path) do db
-        # Load email configuration
-        cred_paths = [credentials_path, "credentials.toml", "config/credentials.toml"]
-        cred_found = findfirst(isfile, cred_paths)
-
-        if cred_found === nothing
-            println("❌ Error: No email credentials found!")
-            println("Create a credentials file with SMTP settings.")
-            return 1
-        end
-
-        actual_cred_path = cred_paths[cred_found]
-        println("Loading email configuration from: $actual_cred_path")
-        success = load_email_config_from_file!(actual_cred_path; dry_run=false)
-
-        if !success
-            println("❌ Error: Failed to load email configuration")
-            return 1
-        end
+        ctx = load_app_config(; config_dir="config", db_path=db_path,
+                               credentials_path=credentials_path,
+                               templates_dir=joinpath("config", "templates"),
+                               dry_run=false)
 
         if id !== nothing
             # Send specific email
             println("Sending email ID $id...")
-            success = send_queued_email!(db, id)
+            success = send_queued_email!(ctx.email, db, id)
             if success
                 println("✓ Email sent successfully!")
             else
@@ -1519,7 +1500,7 @@ function cmd_send_emails(;
             end
 
             println("Sending $(length(pending)) pending email(s)...")
-            result = send_all_pending_emails!(db; event_id=event_id)
+            result = send_all_pending_emails!(ctx.email, db; event_id=event_id)
 
             println("\n✓ Email sending complete!")
             println("  Sent: $(result.sent)")
@@ -1547,19 +1528,14 @@ function cmd_queue_payment_requests(event_id::String;
     credentials_path::String="config/email_credentials.toml")
 
     return require_database(db_path) do db
-        # Load email configuration for QR code generation
-        cred_paths = [credentials_path, "credentials.toml", "config/credentials.toml"]
-        cred_found = findfirst(isfile, cred_paths)
-        if cred_found !== nothing
-            actual_cred_path = cred_paths[cred_found]
-            load_email_config_from_file!(actual_cred_path; dry_run=true)
-            println("✓ Loaded email configuration from: $actual_cred_path")
-        else
-            println("⚠ No email credentials found - QR codes will not be generated")
-        end
+        ctx = load_app_config(; config_dir="config", db_path=db_path,
+                               credentials_path=credentials_path,
+                               templates_dir=joinpath("config", "templates"),
+                               dry_run=true)
+        println("✓ Loaded email configuration (dry-run) for QR generation")
 
         println("Queuing payment request emails for event: $event_id")
-        queued = queue_payment_requests_for_event!(db, event_id)
+        queued = queue_payment_requests_for_event!(ctx.email, db, event_id)
 
         if queued > 0
             println("✓ Queued $queued payment request email(s)")
