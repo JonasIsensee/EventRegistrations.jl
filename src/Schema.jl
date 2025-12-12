@@ -32,8 +32,6 @@ function init_database(db_path::AbstractString)
         CREATE TABLE IF NOT EXISTS events (
             event_id VARCHAR PRIMARY KEY,
             event_name VARCHAR,
-            base_cost DECIMAL(10,2) DEFAULT 0,
-            cost_rules JSON,  -- JSON object mapping field patterns to costs
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)

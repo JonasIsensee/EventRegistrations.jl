@@ -115,7 +115,7 @@ function cmd_export_registrations(event_id::Union{String,Nothing}=nothing,
                                    filter::String="all",
                                    output::Union{String,Nothing}=nothing,
                                    details::Bool=false,
-                                   config_dir::String="config")
+                                   events_dir::String="events")
 
     # Allow output to be passed as positional or keyword argument
     actual_output = output_pos !== nothing ? output_pos : output
@@ -157,7 +157,7 @@ function cmd_export_registrations(event_id::Union{String,Nothing}=nothing,
         end
 
         if details
-            detail_table = get_registration_detail_table(db, local_event_id; config_dir=config_dir)
+            detail_table = get_registration_detail_table(db, local_event_id; events_dir)
             if isempty(detail_table.rows)
                 @info "No registrations found for event" event_id=local_event_id
                 return 0

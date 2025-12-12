@@ -633,12 +633,11 @@ try
 
         # Verify event was created in events table with cost rules
         event_result = DBInterface.execute(db,
-            "SELECT event_name, cost_rules FROM events WHERE event_id = ?",
+            "SELECT event_name FROM events WHERE event_id = ?",
             [test_event_id])
         event_rows = collect(event_result)
 
         @test !isempty(event_rows)
-        @test event_rows[1][2] !== nothing  # cost_rules should be set
         println("  ✓ Event synced to events table with cost rules")
 
         # Step 5: Test that check_config_sync works correctly

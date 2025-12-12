@@ -675,14 +675,12 @@ function sync_event_configs_to_db!(db::DuckDB.DB, config_dir::AbstractString=DEF
         with_transaction(db) do
             DBInterface.execute(db,
             """
-                INSERT INTO events (event_id, event_name, base_cost, cost_rules)
+                INSERT INTO events (event_id, event_name)
                 VALUES (?, ?, ?, NULL)
                 ON CONFLICT (event_id) DO UPDATE SET
                     event_name = COALESCE(EXCLUDED.event_name, events.event_name),
-                    base_cost = EXCLUDED.base_cost,
-                    cost_rules = NULL
             """
-            , [event_id, cfg.name, cfg.base_cost])
+            , [event_id, cfg.name])
         end
 
         if isfile(cfg.config_path)
