@@ -23,8 +23,8 @@ function cmd_sync(;
         init_database(db_path)
     end
     try
-        @info "Syncing event configurations to database..." config_dir=config_dir
-        sync_event_configs_to_db!(db, config_dir)
+        @info "Syncing event configurations to database..." events_dir
+        sync_event_configs_to_db!(db, events_dir)
         @info "✓ Configuration synced successfully!"
 
         ctx = load_app_config(; config_dir, db_path, credentials_path,
