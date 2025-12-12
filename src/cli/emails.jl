@@ -13,8 +13,7 @@ function cmd_process_emails(email_folder::String="emails";
 
     return require_database(db_path) do db
         @info "Processing emails" folder=email_folder
-        stats = process_email_folder!(db, email_folder;
-                            prompt_for_new_events=!nonstop)
+        stats = process_email_folder!(db, email_folder; prompt_for_new_events=false)
 
         if stats.terminated
             @warn "⚠ Processing halted by user request to edit configuration."

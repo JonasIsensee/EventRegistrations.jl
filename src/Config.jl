@@ -10,7 +10,7 @@ using SHA
 # Import from parent module
 import ..EventRegistrations: with_transaction
 
-export DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs, load_field_aliases
+export DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs
 export materialize_cost_rules, get_registration_detail_columns
 export generate_field_config, generate_event_config_template
 export ensure_config_dirs
@@ -46,12 +46,6 @@ end
 # FIELD ALIAS UTILITIES
 # =============================================================================
 
-"""
-Load field aliases (kept for backward compatibility; now a no-op).
-"""
-function load_field_aliases(config_dir::AbstractString=DEFAULT_CONFIG_DIR)
-    return Dict{String,String}()
-end
 
 get_field_alias(actual_name::AbstractString) = actual_name
 
@@ -277,11 +271,9 @@ end
 """
 Load event configuration from config/events/{event_id}.toml into a typed EventConfig.
 """
-function load_event_config(event_id::AbstractString, config_dir::AbstractString=DEFAULT_CONFIG_DIR)
-    path = joinpath(config_dir, "events", "$event_id.toml")
-    if !isfile(path)
-        return nothing
-    end
+function load_event_config(event_id::AbstractString, events_dir::AbstractString="events")
+    path = joinpath(events_dir, "$event_id.toml")
+    !isfile(path) && return nothing
 
     config = TOML.parsefile(path)
     aliases, reverse_aliases = parse_aliases(config)
@@ -299,19 +291,14 @@ function load_event_config(event_id::AbstractString, config_dir::AbstractString=
         aliases, reverse_aliases, base_cost, rules, computed_fields, export_columns)
 end
 
-function load_all_event_configs(config_dir::AbstractString=DEFAULT_CONFIG_DIR)
-    events_dir = joinpath(config_dir, "events")
-
-    if !isdir(events_dir)
-        return Dict{String, EventConfig}()
-    end
-
+function load_all_event_configs(events_dir::AbstractString="events")
     configs = Dict{String, EventConfig}()
+    !isdir(events_dir) && return configs
 
     for file in readdir(events_dir)
         if endswith(file, ".toml")
             event_id = file[1:end-5]
-            cfg = load_event_config(event_id, config_dir)
+            cfg = load_event_config(event_id, events_dir)
             if cfg !== nothing
                 configs[event_id] = cfg
             end
@@ -330,9 +317,9 @@ function materialize_cost_rules(cfg::EventConfig)
 end
 
 function get_registration_detail_columns(event_id::AbstractString,
-                                          config_dir::AbstractString=DEFAULT_CONFIG_DIR)
-    cfg = load_event_config(event_id, config_dir)
-    return cfg === nothing ? nothing : cfg.export_registration_columns
+                                          events_dir::AbstractString="events")
+    cfg = load_event_config(event_id, events_dir)
+    return isnothing(cfg) ? nothing : cfg.export_registration_columns
 end
 
 """
@@ -350,9 +337,7 @@ function generate_event_config_template(event_id::AbstractString,
                                          output_path::AbstractString;
                                          event_name::String="",
                                          db::Union{DuckDB.DB,Nothing}=nothing,
-                                         config_dir::AbstractString=DEFAULT_CONFIG_DIR)
-    # Try to load existing global field aliases (for suggestions)
-    load_field_aliases(config_dir)
+                                        )
 
     # If we have a database, get actual fields for this event
     actual_fields = String[]

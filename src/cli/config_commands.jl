@@ -9,13 +9,13 @@ Creates a UNIFIED config file containing both:
 """
 function cmd_create_event_config(event_id::String;
     name::String=event_id,
-    config_dir::String="config",
+    events_dir::String="events",
     db_path::String="events.duckdb")
 
-    output_path = joinpath(config_dir, "events", "$event_id.toml")
+    output_path = joinpath(events_dir, "$event_id.toml")
 
     # Ensure events directory exists
-    mkpath(joinpath(config_dir, "events"))
+    mkpath(dirname(output_path))
 
     @info "Creating unified event configuration (aliases + cost rules)..."
 
@@ -25,8 +25,7 @@ function cmd_create_event_config(event_id::String;
         try
             fields = generate_event_config_template(event_id, output_path;
                                                     event_name=name,
-                                                    db=db,
-                                                    config_dir=config_dir)
+                                                    db)
             if !isempty(fields)
                 @info "Generated aliases and example cost rules" fields=length(fields)
             end
@@ -35,7 +34,7 @@ function cmd_create_event_config(event_id::String;
         end
     else
         # Fallback to generic template
-        generate_event_config_template(event_id, output_path; event_name=name, config_dir=config_dir)
+        generate_event_config_template(event_id, output_path; event_name=name)
     end
 
     @info """✓ Event configuration created: $output_path

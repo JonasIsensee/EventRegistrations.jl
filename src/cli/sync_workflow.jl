@@ -6,6 +6,7 @@ Comprehensive sync command that does the full workflow.
 function cmd_sync(;
     db_path::String="events.duckdb",
     config_dir::String="config",
+    events_dir::String="events",
     emails_dir::String="emails",
     bank_dir::String="bank_transfers",
     credentials_path::Union{String,Nothing}=nothing,
@@ -47,9 +48,7 @@ function cmd_sync(;
         @info "[3/9] Processing emails..." emails_dir=emails_dir
         stats_ref = Ref{Any}(nothing)
         if isdir(emails_dir)
-            stats = process_email_folder!(db, emails_dir;
-                                            config_dir=config_dir,
-                                            prompt_for_new_events=!nonstop)
+            stats = process_email_folder!(db, emails_dir; events_dir, prompt_for_new_events=false)
             stats_ref[] = stats
             @info "Email processing summary" processed=stats.processed new=stats.new_registrations updates=stats.updates
             if stats.no_cost_config > 0
@@ -71,18 +70,18 @@ function cmd_sync(;
             SELECT DISTINCT event_id FROM registrations
             ORDER BY event_id
         """)
-        events_dir_path = joinpath(config_dir, "events")
-        mkpath(events_dir_path)
+        events_dir = "events"
+        mkpath(events_dir)
 
         generated_count = 0
         for row in events_result
             evt_id = row[1]
-            config_path = joinpath(events_dir_path, "$(evt_id).toml")
+            config_path = joinpath(events_dir, "$(evt_id).toml")
 
             if !isfile(config_path)
                 @info "Generating config for new event" event_id=evt_id
                 try
-                    generate_event_config_template(evt_id, config_path; db=db, config_dir=config_dir)
+                    generate_event_config_template(evt_id, config_path; db=db)
                     @info "Created event config" path=config_path
                     generated_count += 1
                 catch e

@@ -158,13 +158,13 @@ function cmd_send_emails(;
     db_path::String="events.duckdb",
     event_id::Union{String,Nothing}=nothing,
     id::Union{Int,Nothing}=nothing,
-    credentials_path::String="config/email_credentials.toml")
+    credentials_path::Union{Nothing,String}=nothing)
 
+    ctx = load_app_config(; config_dir="config", db_path,
+                            credentials_path,
+                            templates_dir=joinpath("config", "templates"),
+                            dry_run=false)
     require_database(db_path) do db
-        ctx = load_app_config(; config_dir="config", db_path=db_path,
-                                credentials_path=credentials_path,
-                                templates_dir=joinpath("config", "templates"),
-                                dry_run=false)
 
         if id !== nothing
             # Send specific email
@@ -178,22 +178,29 @@ function cmd_send_emails(;
             end
         else
             # Send all pending
-            pending = get_pending_emails(db; event_id=event_id)
+            pending = get_pending_emails(db; event_id)
             if isempty(pending)
                 @info "✓ No pending emails to send."
                 return 0
             end
 
             @info "Sending pending emails" count=length(pending) event_id=event_id
-            result = send_all_pending_emails!(ctx.email, db; event_id=event_id)
+            sent_count = 0
+            error_count = 0
+            for email in pending
+                @info "  Sending to $(email.email_to) ($(email.first_name) $(email.last_name))..."
+                success = send_queued_email!(cfg, db, email.id)
+                sent_count += success
+                error_count += !success
+            end
 
             summary = [
                 "✓ Email sending complete!",
-                "Sent: $(result.sent)",
+                "Sent: $(sent_count)",
             ]
 
-            if result.errors > 0
-                push!(summary, "⚠ Errors: $(result.errors)")
+            if error_count > 0
+                push!(summary, "⚠ Errors: $(error_count)")
                 @warn join(summary, "\n")
                 return 1
             end

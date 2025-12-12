@@ -578,9 +578,7 @@ try
         EventRegistrations.Config.generate_event_config_template(
             test_event_id,
             config_path;
-            db=db,
-            config_dir=TEST_CONFIG_DIR
-        )
+            db)
 
         @test isfile(config_path)
         println("  ✓ Generated config file: $config_path")

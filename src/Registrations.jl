@@ -12,7 +12,8 @@ import ..EventRegistrations: with_transaction
 using ..EmailParser
 using ..ReferenceNumbers
 using ..Config: EventConfig, DEFAULT_CONFIG_DIR, generate_event_config_template,
-                 load_event_config, materialize_cost_rules, get_registration_detail_columns
+                 load_event_config, materialize_cost_rules, get_registration_detail_columns,
+                 sync_event_configs_to_db!
 using ..CostCalculator
 
 export process_email_folder!, get_registrations
@@ -88,17 +89,16 @@ Interactively offer to create configuration files for newly detected events.
 Returns a NamedTuple indicating whether processing should continue and which
 configuration files were created.
 """
-function handle_new_event_prompts!(db::DuckDB.DB, events::Vector{String}, config_dir::AbstractString)
-    mkpath(joinpath(config_dir, "events"))
+function handle_new_event_prompts!(db::DuckDB.DB, events::Vector{String}, events_dir::AbstractString)
+    mkpath(events_dir)
     created_configs = Dict{String,String}()
 
     for event_id in events
         println("\n⚠ New event detected without cost configuration: $event_id")
-        create_config = prompt_user_bool("Create configuration for $event_id now?"; default=true)
-        if create_config
-            config_path = joinpath(config_dir, "events", "$(event_id).toml")
+        if prompt_user_bool("Create configuration for $event_id now?"; default=true)
+            config_path = joinpath(events_dir, "$(event_id).toml")
             try
-                generate_event_config_template(event_id, config_path; db=db, config_dir=config_dir)
+                generate_event_config_template(event_id, config_path; db)
                 println("  ✓ Created event configuration at $config_path")
                 created_configs[event_id] = config_path
             catch err
@@ -118,17 +118,19 @@ end
 """
 Process all .eml files in a folder.
 Handles resubmissions by updating existing registrations while preserving reference numbers.
-Reports newly detected event IDs and suggests configuration generation.
+Reports newly detected event IDs and auto-creates missing event configs by default, loading
+them into the database for immediate use.
 When `prompt_for_new_events=true`, interactively offers to scaffold missing
 event configuration files and may return `terminated=true` if the user chooses
 to pause processing.
 """
 function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString;
-                               config_dir::Union{Nothing,String}=nothing,
-                               prompt_for_new_events::Bool=false)
-    effective_config_dir = config_dir === nothing ? DEFAULT_CONFIG_DIR : config_dir
+                               events_dir::Union{Nothing,String}="events",
+                               prompt_for_new_events::Bool=false,)
     eml_files = filter(f -> endswith(lowercase(f), ".eml"), readdir(folder_path, join=true))
 
+    mkpath(events_dir)
+    auto_created_configs = Dict{String,String}()
     # Track event IDs found in this batch
     detected_event_ids = Set{String}()
     events_without_config = Set{String}()
@@ -143,17 +145,31 @@ function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString;
             parsed = EmailParser.parse_eml(filepath)
             submission = EmailParser.extract_form_submission(parsed.body_html)
 
-            if submission !== nothing
+            if !isnothing(submission)
                 push!(detected_event_ids, submission.event_id)
 
-                # Check if event has cost config
-                has_config = load_event_config(submission.event_id, effective_config_dir) !== nothing
+                cfg = load_event_config(submission.event_id, events_dir)
+                has_config = !isnothing(cfg)
+
+                if !has_config && !haskey(auto_created_configs, submission.event_id)
+                    config_path = joinpath(events_dir, "$(submission.event_id).toml")
+                    generate_event_config_template(submission.event_id, config_path; db)
+                    cfg = load_event_config(submission.event_id, events_dir)
+                    if isnothing(cfg)
+                        @warn "Auto-created config could not be loaded" event_id=submission.event_id path=config_path
+                    else
+                        auto_created_configs[submission.event_id] = config_path
+                        has_config = true
+                        @info "Auto-created event configuration" event_id=submission.event_id path=config_path
+                    end
+                end
+
                 if !has_config
                     push!(events_without_config, submission.event_id)
                 end
             end
 
-            result = process_single_email!(db, filepath; config_dir=effective_config_dir)
+            result = process_single_email!(db, filepath; events_dir)
 
             # Track resubmissions
             if result.is_update && submission !== nothing
@@ -191,6 +207,18 @@ function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString;
         end
     end
 
+    # Load newly created configs into the database so costs can be applied immediately
+    if !isempty(auto_created_configs)
+        println("\n" * "="^80)
+        println("Auto-created event configurations:")
+        for (event_id, path) in sort(collect(auto_created_configs); by=first)
+            println("  - $event_id -> $path")
+        end
+        sync_event_configs_to_db!(db, events_dir)
+        println("  ✓ Loaded new configurations into the database")
+        println("="^80)
+    end
+
     # Suggest config generation for events without config
     if !isempty(events_without_config)
         println("\n" * "="^80)
@@ -213,9 +241,8 @@ function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString;
     end
 
     if prompt_for_new_events && !isempty(events_without_config)
-        effective_config_dir = config_dir === nothing ? DEFAULT_CONFIG_DIR : config_dir
         sorted_events = sort(collect(events_without_config))
-        prompt_result = handle_new_event_prompts!(db, sorted_events, effective_config_dir)
+        prompt_result = handle_new_event_prompts!(db, sorted_events, events_dir)
         if !prompt_result.continue_sync
             terminated = true
         end
@@ -253,7 +280,7 @@ end
 """
 Process a single email file.
 """
-function process_single_email!(db::DuckDB.DB, filepath::AbstractString; config_dir::AbstractString=DEFAULT_CONFIG_DIR)
+function process_single_email!(db::DuckDB.DB, filepath::AbstractString; events_dir::AbstractString="events")
     file_hash = compute_file_hash(filepath)
     filename = basename(filepath)
 
@@ -328,7 +355,7 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString; config_d
     """, [submission.event_id, submission.email])
     existing_rows = collect(existing)
 
-    cfg = load_event_config(submission.event_id, config_dir)
+    cfg = load_event_config(submission.event_id, events_dir)
 
     # Calculate cost (returns nothing if no cost config exists)
     computed_cost = cfg === nothing ? nothing : calculate_cost(cfg, submission.fields)
@@ -474,7 +501,7 @@ end
 Build a tabular view of all registration details for an event.
 """
 function get_registration_detail_table(db::DuckDB.DB, event_id::AbstractString;
-                                       config_dir::Union{Nothing,String}=nothing)
+                                       events_dir::Union{Nothing,String}=nothing)
     event_result = DBInterface.execute(db,
         "SELECT event_name FROM events WHERE event_id = ?",
         [event_id])
@@ -494,11 +521,10 @@ function get_registration_detail_table(db::DuckDB.DB, event_id::AbstractString;
         "registration_date",
     ]
 
-    cfg_dir = config_dir === nothing ? DEFAULT_CONFIG_DIR : config_dir
     preferred_columns = try
-        get_registration_detail_columns(event_id, cfg_dir)
+        get_registration_detail_columns(event_id, events_dir)
     catch err
-        @warn "Failed to load registration detail column order" event_id=event_id config_dir=cfg_dir exception=err
+        @warn "Failed to load registration detail column order" event_id=event_id events_dir=events_dir exception=err
         nothing
     end
 
@@ -678,7 +704,7 @@ Use `strict=true` to fail on any validation errors instead of just warning.
 Use `dry_run=true` to preview changes without applying them.
 """
 function recalculate_costs!(db::DuckDB.DB, event_id::AbstractString;
-                            config_dir::AbstractString=DEFAULT_CONFIG_DIR,
+                            events_dir::AbstractString="events",
                             strict::Bool=false, dry_run::Bool=false, verbose::Bool=false)
     registrations = get_registrations(db, event_id)
 
@@ -687,7 +713,7 @@ function recalculate_costs!(db::DuckDB.DB, event_id::AbstractString;
         return (success=true, updated=0, warnings=0, details=[])
     end
 
-    cfg = load_event_config(event_id, config_dir)
+    cfg = load_event_config(event_id, events_dir)
     if cfg === nothing
         error("No cost configuration file found for event: $event_id")
     end

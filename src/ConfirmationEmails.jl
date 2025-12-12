@@ -1040,30 +1040,5 @@ end
 
 export send_queued_email!
 
-"""
-Send all pending emails in the queue.
-Returns (sent_count, error_count).
-"""
-function send_all_pending_emails!(cfg::EmailConfig, db::DuckDB.DB; event_id::Union{String,Nothing}=nothing)
-    pending = get_pending_emails(db; event_id=event_id)
-
-    sent_count = 0
-    error_count = 0
-
-    for email in pending
-        println("  Sending to $(email.email_to) ($(email.first_name) $(email.last_name))...")
-        success = send_queued_email!(cfg, db, email.id)
-        if success
-            sent_count += 1
-        else
-            error_count += 1
-        end
-    end
-
-    return (sent=sent_count, errors=error_count)
-end
-
-export send_all_pending_emails!
-
 
 end # module

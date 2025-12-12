@@ -42,9 +42,6 @@ COMMANDS:
   event-overview <event-id>      Show event details
   status                         Show system status and configuration
 
-VALIDATION & MAINTENANCE:
-  verify-database                Check database integrity
-
 PAYMENTS:
   import-bank-csv <file>         Import bank transfers
   match-transfers                Match transfers to registrations
@@ -84,7 +81,6 @@ COMMON OPTIONS:
   --verbose                     Show detailed output
   --strict                      Fail on warnings (for validate-config, recalculate-costs)
   --dry-run                     Preview changes without applying (for recalculate-costs)
-  --check-sync                  Warn if config files need syncing
   --nonstop                     Disable interactive prompts (auto-continue)
 
 EXAMPLES:
@@ -92,10 +88,8 @@ EXAMPLES:
   eventreg sync                                            # full workflow
   eventreg process-emails emails/
   eventreg status
-  eventreg check-sync                                      # check config sync status
   eventreg validate-config PWE_2026_01 --verbose
   eventreg recalculate-costs PWE_2026_01 --dry-run --check-sync
-  eventreg backup
   eventreg import-bank-csv bank_transfers/january.csv
   eventreg match-transfers --event-id=PWE_2026_01
   eventreg list-registrations --filter=unpaid              # list unpaid registrations
@@ -109,14 +103,12 @@ EXAMPLES:
   eventreg mark-email sent --all                           # mark all as sent without sending
   eventreg mark-email discarded --all                      # discard all pending
   eventreg mark-email discarded --all --event-id=PWE_2026_01  # discard for specific event
-  eventreg mark-all-as-sent PWE_2026_01 --all              # mark all as sent (after DB reset)
   eventreg export-payment-status                           # colored terminal output
   eventreg export-payment-status --filter=unpaid           # show only unpaid
   eventreg export-payment-status --summary-only            # show only totals
   eventreg export-payment-status PWE_2026_01 report.pdf    # export to PDF
-  eventreg export-registrations report.pdf                 # export registrations to PDF
-  eventreg export-registration-details PWE_2026_01 details.csv
   eventreg export-payment-status --format=latex            # generate LaTeX
+  eventreg export-registrations report.pdf                 # export registrations to PDF
 
 Run 'eventreg <command> --help' for more information on a command.
 """

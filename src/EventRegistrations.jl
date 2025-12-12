@@ -165,7 +165,7 @@ using .Config: DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_even
 using .Config: materialize_cost_rules, generate_field_config, generate_event_config_template, sync_event_configs_to_db!
 using .Config: ensure_config_dirs, get_registration_detail_columns
 export DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs, load_field_aliases
-export materialize_cost_rules, generate_field_config, generate_event_config_template, sync_event_configs_to_db!
+export materialize_cost_rules, generate_field_config, sync_event_configs_to_db!
 export ensure_config_dirs, get_registration_detail_columns
 
 # Re-export AppConfig types/functions (now included directly)
@@ -197,13 +197,12 @@ export get_payment_history, get_payment_discrepancies
 using .ConfirmationEmails: preview_email
 using .ConfirmationEmails: queue_email!, queue_pending_emails!, get_pending_emails
 using .ConfirmationEmails: queue_payment_confirmation!
-using .ConfirmationEmails: count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
+using .ConfirmationEmails: count_pending_emails, mark_email!, send_queued_email!
 
 export preview_email
 export queue_email!, queue_pending_emails!, get_pending_emails
 export queue_payment_confirmation!
-export count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
-
+export count_pending_emails, mark_email!, send_queued_email!
 using .EmailDownload: download_emails!
 
 # Re-export from ReferenceNumbers (for manual use)
