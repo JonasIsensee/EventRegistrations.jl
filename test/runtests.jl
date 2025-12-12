@@ -295,6 +295,161 @@ try
         println("  ✓ Cost calculation working (Jonas: $cost €)")
     end
 
+    @testset "5b. Bundled Options - Conditional Rules" begin
+        println("\n=== Test 5b: Bundled Options ===")
+
+        # Setup: Overnight includes meals, but meals can be booked separately
+        rules = Dict(
+            "base" => 0.0,
+            "rules" => [
+                # Overnight Friday = 50€ (includes dinner + breakfast)
+                Dict("field" => "Übernachtung Freitag", "value" => "Ja", "cost" => 50.0),
+
+                # Overnight Saturday = 50€ (includes dinner + breakfast)
+                Dict("field" => "Übernachtung Samstag", "value" => "Ja", "cost" => 50.0),
+
+                # Dinner Friday = 15€ (only if NOT staying overnight Friday)
+                Dict("field" => "Abendessen Freitag", "value" => "Ja", "cost" => 15.0,
+                     "unless" => Dict("field" => "Übernachtung Freitag", "value" => "Ja")),
+
+                # Breakfast Saturday = 10€ (only if NOT staying overnight Friday or Saturday)
+                Dict("field" => "Frühstück Samstag", "value" => "Ja", "cost" => 10.0,
+                     "unless" => [
+                         Dict("field" => "Übernachtung Freitag", "value" => "Ja"),
+                         Dict("field" => "Übernachtung Samstag", "value" => "Ja")
+                     ]),
+
+                # Early bird discount = -20€ (only if registered before deadline)
+                Dict("field" => "Rabatt Frühbucher", "value" => "Ja", "cost" => -20.0,
+                     "only_if" => Dict("field" => "Anmeldung vor Deadline", "value" => "Ja")),
+
+                # Student discount = -10€ (only if both student AND member)
+                Dict("field" => "Rabatt Student", "value" => "Ja", "cost" => -10.0,
+                     "only_if" => [
+                         Dict("field" => "Student", "value" => "Ja"),
+                         Dict("field" => "Mitglied", "value" => "Ja")
+                     ])
+            ]
+        )
+
+        # Test Case 1: Staying overnight Friday (meals included)
+        fields1 = Dict(
+            "Übernachtung Freitag" => "Ja",
+            "Übernachtung Samstag" => "Nein",
+            "Abendessen Freitag" => "Ja",
+            "Frühstück Samstag" => "Ja"
+        )
+        cost1 = EventRegistrations.CostCalculator.calculate_cost(rules, fields1)
+        @test cost1 == 50.0  # Only overnight cost, meals not charged (bundled)
+        println("  ✓ Case 1: Overnight includes meals (50€)")
+
+        # Test Case 2: Not staying overnight (meals charged separately)
+        fields2 = Dict(
+            "Übernachtung Freitag" => "Nein",
+            "Übernachtung Samstag" => "Nein",
+            "Abendessen Freitag" => "Ja",
+            "Frühstück Samstag" => "Ja"
+        )
+        cost2 = EventRegistrations.CostCalculator.calculate_cost(rules, fields2)
+        @test cost2 == 25.0  # 15€ dinner + 10€ breakfast
+        println("  ✓ Case 2: Meals charged separately (25€)")
+
+        # Test Case 3: Staying overnight Saturday only (breakfast included, dinner not)
+        fields3 = Dict(
+            "Übernachtung Freitag" => "Nein",
+            "Übernachtung Samstag" => "Ja",
+            "Abendessen Freitag" => "Ja",
+            "Frühstück Samstag" => "Ja"
+        )
+        cost3 = EventRegistrations.CostCalculator.calculate_cost(rules, fields3)
+        @test cost3 == 65.0  # 50€ overnight + 15€ dinner (breakfast bundled)
+        println("  ✓ Case 3: Partial bundling (65€)")
+
+        # Test Case 4: Both nights (all meals included)
+        fields4 = Dict(
+            "Übernachtung Freitag" => "Ja",
+            "Übernachtung Samstag" => "Ja",
+            "Abendessen Freitag" => "Ja",
+            "Frühstück Samstag" => "Ja"
+        )
+        cost4 = EventRegistrations.CostCalculator.calculate_cost(rules, fields4)
+        @test cost4 == 100.0  # 50€ + 50€, no meal charges
+        println("  ✓ Case 4: Both nights, all meals bundled (100€)")
+
+        # Test Case 5: Early bird discount (only_if condition met)
+        fields5 = Dict(
+            "Übernachtung Freitag" => "Ja",
+            "Rabatt Frühbucher" => "Ja",
+            "Anmeldung vor Deadline" => "Ja"
+        )
+        cost5 = EventRegistrations.CostCalculator.calculate_cost(rules, fields5)
+        @test cost5 == 30.0  # 50€ - 20€ discount
+        println("  ✓ Case 5: Early bird discount applied (30€)")
+
+        # Test Case 6: Early bird discount NOT applied (condition not met)
+        fields6 = Dict(
+            "Übernachtung Freitag" => "Ja",
+            "Rabatt Frühbucher" => "Ja",
+            "Anmeldung vor Deadline" => "Nein"
+        )
+        cost6 = EventRegistrations.CostCalculator.calculate_cost(rules, fields6)
+        @test cost6 == 50.0  # No discount (only_if failed)
+        println("  ✓ Case 6: Early bird discount not applied (50€)")
+
+        # Test Case 7: Student discount (both conditions met)
+        fields7 = Dict(
+            "Übernachtung Freitag" => "Ja",
+            "Rabatt Student" => "Ja",
+            "Student" => "Ja",
+            "Mitglied" => "Ja"
+        )
+        cost7 = EventRegistrations.CostCalculator.calculate_cost(rules, fields7)
+        @test cost7 == 40.0  # 50€ - 10€ discount
+        println("  ✓ Case 7: Student discount applied (40€)")
+
+        # Test Case 8: Student discount NOT applied (partial conditions)
+        fields8 = Dict(
+            "Übernachtung Freitag" => "Ja",
+            "Rabatt Student" => "Ja",
+            "Student" => "Ja",
+            "Mitglied" => "Nein"
+        )
+        cost8 = EventRegistrations.CostCalculator.calculate_cost(rules, fields8)
+        @test cost8 == 50.0  # No discount (not member)
+        println("  ✓ Case 8: Student discount not applied (50€)")
+
+        # Test Case 9: Pattern matching in conditions
+        rules_pattern = Dict(
+            "base" => 0.0,
+            "rules" => [
+                Dict("field" => "Zimmer", "pattern" => "Einzelzimmer", "cost" => 30.0),
+                # Surcharge only if NOT student
+                Dict("field" => "Zuschlag Luxus", "value" => "Ja", "cost" => 20.0,
+                     "unless" => Dict("field" => "Status", "pattern" => "Student"))
+            ]
+        )
+
+        fields9a = Dict(
+            "Zimmer" => "Einzelzimmer Standard",
+            "Zuschlag Luxus" => "Ja",
+            "Status" => "Student"
+        )
+        cost9a = EventRegistrations.CostCalculator.calculate_cost(rules_pattern, fields9a)
+        @test cost9a == 30.0  # Surcharge waived for student
+        println("  ✓ Case 9a: Pattern in unless condition (30€)")
+
+        fields9b = Dict(
+            "Zimmer" => "Einzelzimmer Standard",
+            "Zuschlag Luxus" => "Ja",
+            "Status" => "Regular"
+        )
+        cost9b = EventRegistrations.CostCalculator.calculate_cost(rules_pattern, fields9b)
+        @test cost9b == 50.0  # Full surcharge
+        println("  ✓ Case 9b: Pattern condition not matched (50€)")
+
+        println("  ✓ All bundled options tests passed")
+    end
+
     @testset "6. Reference Number Generation" begin
         println("\n=== Test 6: Reference Number Generation ===")
 

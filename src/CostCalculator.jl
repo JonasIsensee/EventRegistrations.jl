@@ -89,6 +89,84 @@ function format_cost_result(result::CostCalculationResult)
 end
 
 # =============================================================================
+# CONDITIONAL RULE EVALUATION
+# =============================================================================
+
+"""
+Check if a single condition matches the registration data.
+Conditions use the same field/value/pattern syntax as rules.
+
+Returns true if the condition matches, false otherwise.
+"""
+function check_condition(condition::AbstractDict, fields::AbstractDict{String, String})
+    field_name = get(condition, "field", "")
+
+    # If field doesn't exist, condition cannot match
+    if !haskey(fields, field_name)
+        return false
+    end
+
+    actual_value = fields[field_name]
+
+    # Check for exact value match
+    if haskey(condition, "value")
+        return actual_value == condition["value"]
+    end
+
+    # Check for pattern match
+    if haskey(condition, "pattern")
+        try
+            return occursin(Regex(condition["pattern"]), actual_value)
+        catch e
+            @warn "Invalid regex pattern in condition: $(condition["pattern"])" exception=e
+            return false
+        end
+    end
+
+    # No value or pattern specified
+    return false
+end
+
+"""
+Determine if a rule should be skipped based on unless/only_if conditions.
+
+- `unless`: Skip rule if ANY condition matches (OR logic)
+  - "Charge for X unless staying overnight OR full board booked"
+- `only_if`: Skip rule unless ALL conditions match (AND logic)
+  - "Apply discount only if early registration AND member"
+
+Returns true if the rule should be skipped, false if it should be applied.
+"""
+function should_skip_rule(rule::AbstractDict, fields::AbstractDict{String, String})
+    # Check 'unless' conditions (OR logic - skip if ANY matches)
+    if haskey(rule, "unless")
+        unless_conditions = rule["unless"]
+        # Handle both single dict and array of dicts
+        conditions = unless_conditions isa AbstractVector ? unless_conditions : [unless_conditions]
+
+        for condition in conditions
+            if check_condition(condition, fields)
+                return true  # Skip this rule
+            end
+        end
+    end
+
+    # Check 'only_if' conditions (AND logic - skip if ANY doesn't match)
+    if haskey(rule, "only_if")
+        only_if_conditions = rule["only_if"]
+        conditions = only_if_conditions isa AbstractVector ? only_if_conditions : [only_if_conditions]
+
+        for condition in conditions
+            if !check_condition(condition, fields)
+                return true  # Skip this rule
+            end
+        end
+    end
+
+    return false  # Don't skip
+end
+
+# =============================================================================
 # COST CALCULATION FUNCTIONS
 # =============================================================================
 
@@ -190,6 +268,11 @@ function calculate_cost_with_details(rules::AbstractDict, fields::AbstractDict{S
                     push!(warnings, "Rule #$i: Field '$field_name' not found in registration data")
                 end
                 continue  # Skip this rule - can't match what doesn't exist
+            end
+
+            # Check unless/only_if conditions (bundled options)
+            if should_skip_rule(rule, fields)
+                continue  # Skip this rule due to conditional logic
             end
 
             actual_value = fields[field_name]
