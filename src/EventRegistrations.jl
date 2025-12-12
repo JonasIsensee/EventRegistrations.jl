@@ -236,7 +236,7 @@ Get a complete overview for an event.
 function event_overview(db::DuckDB.DB, event_id::AbstractString)
     # Basic info
     event_result = DBInterface.execute(db,
-        "SELECT event_id, event_name, base_cost FROM events WHERE event_id = ?",
+        "SELECT event_id, event_name FROM events WHERE event_id = ?",
         [event_id])
     event_rows = collect(event_result)
 
@@ -252,11 +252,6 @@ function event_overview(db::DuckDB.DB, event_id::AbstractString)
 
     # Payment summary
     summary = get_payment_summary(db, event_id)
-
-    # Field summary (what options were chosen)
-    field_result = DBInterface.execute(db, """
-        SELECT json_keys(fields) FROM registrations WHERE event_id = ? LIMIT 1
-    """, [event_id])
 
     return (
         event_id = event_rows[1][1],

@@ -862,8 +862,8 @@ function queue_pending_emails!(cfg::EmailConfig, db::DuckDB.DB, event_id::Abstra
         WHERE r.event_id = ?
     """, [event_id, event_id, event_id])
 
-    registration_count = 0
-    payment_count = 0
+    registration_emails = 0
+    payment_emails = 0
 
     for row in collect(result)
         registration_id = row[1]
@@ -875,15 +875,16 @@ function queue_pending_emails!(cfg::EmailConfig, db::DuckDB.DB, event_id::Abstra
         # Convert database booleans to Julia booleans (handle missing)
         has_reg_email = something(has_registration_email, false)
         has_pay_email = something(has_payment_email, false)
+        @info registration_id computed_cost has_registration_email has_payment_email last_sent_cost
 
         # If computed_cost is NULL, send registration_confirmation if not already sent
-        if computed_cost === nothing || ismissing(computed_cost)
+        if computed_cost === nothing || ismissing(computed_cost) || (computed_cost == 0 && !has_registration_email)
             if !has_reg_email
                 queue_id = queue_email!(cfg, db, registration_id;
                                        template_name="registration_confirmation",
                                        reason="initial")
                 if queue_id !== nothing
-                    registration_count += 1
+                    registration_emails += 1
                 end
             end
         else
@@ -912,13 +913,13 @@ function queue_pending_emails!(cfg::EmailConfig, db::DuckDB.DB, event_id::Abstra
                                        template_name="confirmation_email",
                                        reason=reason)
                 if queue_id !== nothing
-                    payment_count += 1
+                    payment_emails += 1
                 end
             end
         end
     end
 
-    return (registration_emails=registration_count, payment_emails=payment_count)
+    return (; registration_emails, payment_emails)
 end
 
 export queue_pending_emails!

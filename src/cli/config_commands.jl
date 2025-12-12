@@ -80,7 +80,7 @@ Recalculate costs for all registrations in an event.
 """
 function cmd_recalculate_costs(event_id::String;
                                db_path::String="events.duckdb",
-                               config_dir::String="config",
+                               events_dir::String="events",
                                strict::Bool=false,
                                dry_run::Bool=false,
                                verbose::Bool=false,
@@ -88,7 +88,7 @@ function cmd_recalculate_costs(event_id::String;
     return require_database(db_path) do db
         # Check for unsynced configs if requested
         if check_sync
-            unsynced = Config.get_unsynced_configs(db, config_dir)
+            unsynced = Config.get_unsynced_configs(db, events_dir)
             if !isempty(unsynced)
                 files = [replace(status.path, pwd() * "/" => "") for status in unsynced]
                 @warn "Config files have been modified but not synced" files=files
@@ -103,7 +103,7 @@ function cmd_recalculate_costs(event_id::String;
             @info "(DRY RUN - no changes will be applied)"
         end
 
-        result = recalculate_costs!(db, event_id; config_dir=config_dir,
+        result = recalculate_costs!(db, event_id; events_dir,
                             strict=strict, dry_run=dry_run, verbose=verbose)
 
         if result.success

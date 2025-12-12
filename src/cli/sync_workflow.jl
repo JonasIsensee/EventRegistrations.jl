@@ -103,7 +103,7 @@ function cmd_sync(;
             files = [file.path for file in unsynced]
             @warn "Config files need syncing" files=files
             @info "Running sync..."
-            sync_event_configs_to_db!(db, config_dir)
+            sync_event_configs_to_db!(db, events_dir)
             @info "✓ Configuration synced"
         else
             @info "✓ All configurations in sync"
@@ -116,10 +116,8 @@ function cmd_sync(;
         events = list_events(db)
         for event_row in events
             evt_id = event_row[1]
-            cfg = Config.load_event_config(evt_id, config_dir)
-            if cfg === nothing
-                continue
-            end
+            cfg = Config.load_event_config(evt_id, events_dir)
+            isnothing(cfg) && continue
 
             check = DBInterface.execute(db, """
                 SELECT COUNT(*)
@@ -128,7 +126,7 @@ function cmd_sync(;
                     AND (r.computed_cost IS NULL OR r.cost_rules_hash IS NULL OR r.cost_rules_hash <> ?)
             """, [evt_id, cfg.config_hash])
             if collect(check)[1][1] > 0
-                recalculate_costs!(db, evt_id; config_dir=config_dir)
+                recalculate_costs!(db, evt_id; events_dir)
                 push!(recalculated, evt_id)
             end
         end

@@ -23,6 +23,7 @@ using TOML
 const TEST_DIR = mktempdir()
 const TEST_DB_PATH = joinpath(TEST_DIR, "test_events.duckdb")
 const TEST_CONFIG_DIR = joinpath(TEST_DIR, "config")
+const TEST_EVENTS_DIR = joinpath(TEST_DIR, "events")
 const TEST_EMAILS_DIR = joinpath(TEST_DIR, "emails")
 const TEST_BANK_DIR = joinpath(TEST_DIR, "bank_transfers")
 
@@ -190,10 +191,10 @@ value = "Ja"
 cost = 10.0
 """
 
-    config_path = joinpath(TEST_CONFIG_DIR, "events", "PWE_2026_01.toml")
+    config_path = joinpath(TEST_EVENTS_DIR, "PWE_2026_01.toml")
     write(config_path, config_toml)
 
-    sync_event_configs_to_db!(db, TEST_CONFIG_DIR)
+    sync_event_configs_to_db!(db, TEST_EVENTS_DIR)
     println("  Configured event: PWE_2026_01")
 end
 
@@ -295,7 +296,7 @@ try
         setup_test_event_config(db)
 
         # Recalculate costs
-        recalculate_costs!(db, "PWE_2026_01"; config_dir=TEST_CONFIG_DIR)
+        recalculate_costs!(db, "PWE_2026_01"; events_dir=TEST_EVENTS_DIR)
 
         # Check Jonas's cost (2 nights initially, then resubmitted to 1 night + no bus)
         result = DBInterface.execute(db,
@@ -572,7 +573,7 @@ try
         test_event_id = "Sommerkonzert_2024"
 
         # Step 1: Generate event config template automatically
-        config_path = joinpath(TEST_CONFIG_DIR, "events", "$(test_event_id).toml")
+        config_path = joinpath(TEST_EVENTS_DIR, "$(test_event_id).toml")
         mkpath(dirname(config_path))
 
         EventRegistrations.Config.generate_event_config_template(
@@ -628,7 +629,7 @@ try
         println("  ✓ Config sync recorded in database")
 
         # Step 4: Sync the config to events table
-        EventRegistrations.Config.sync_event_configs_to_db!(db, TEST_CONFIG_DIR)
+        EventRegistrations.Config.sync_event_configs_to_db!(db, TEST_EVENTS_DIR)
 
         # Verify event was created in events table with cost rules
         event_result = DBInterface.execute(db,
@@ -682,7 +683,7 @@ try
     @testset "12. Registration Detail Export" begin
         println("\n=== Test 12: Registration Detail Export ===")
 
-        detail_config_path = joinpath(TEST_CONFIG_DIR, "events", "PWE_2026_01.toml")
+        detail_config_path = joinpath(TEST_EVENTS_DIR, "PWE_2026_01.toml")
         mkpath(dirname(detail_config_path))
 
         config_content = """
@@ -702,7 +703,7 @@ try
             write(io, config_content)
         end
 
-        detail_table = get_registration_detail_table(db, "PWE_2026_01"; config_dir=TEST_CONFIG_DIR)
+        detail_table = get_registration_detail_table(db, "PWE_2026_01"; events_dir=TEST_EVENTS_DIR)
 
         @test detail_table.event_id == "PWE_2026_01"
         @test length(detail_table.columns) == 5

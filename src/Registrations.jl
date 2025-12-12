@@ -197,15 +197,15 @@ function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString;
     end
 
     # Report detected events
-    if !isempty(detected_event_ids)
-        println("\n" * "="^80)
-        println("DETECTED EVENT IDs:")
-        for event_id in sort(collect(detected_event_ids))
-            has_config = event_id ∉ events_without_config
-            status = has_config ? "✓ (has cost config)" : "⚠ (NO cost config)"
-            println("  - $event_id $status")
-        end
-    end
+    # if !isempty(detected_event_ids)
+    #     println("\n" * "="^80)
+    #     println("DETECTED EVENT IDs:")
+    #     for event_id in sort(collect(detected_event_ids))
+    #         has_config = event_id ∉ events_without_config
+    #         status = has_config ? "✓ (has cost config)" : "⚠ (NO cost config)"
+    #         println("  - $event_id $status")
+    #     end
+    # end
 
     # Load newly created configs into the database so costs can be applied immediately
     if !isempty(auto_created_configs)
