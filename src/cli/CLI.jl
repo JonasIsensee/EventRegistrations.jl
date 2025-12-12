@@ -147,7 +147,8 @@ function cmd_create_event_config(event_id::String;
 
     # Try to use database for smart template generation
     if isfile(db_path)
-        with_database(db_path) do db
+        db = init_database(db_path)
+        try
             fields = generate_event_config_template(event_id, output_path;
                                                     event_name=name,
                                                     db=db,
@@ -156,6 +157,8 @@ function cmd_create_event_config(event_id::String;
                 println("  Found $(length(fields)) fields from existing registrations")
                 println("  Generated aliases and example cost rules for each field")
             end
+        finally
+            DBInterface.close!(db)
         end
     else
         # Fallback to generic template

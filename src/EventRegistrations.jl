@@ -429,7 +429,7 @@ export init_project
 
 # Include CLI functions directly into EventRegistrations module
 # This must be after all other modules are loaded so their exports are available
-include("CLI.jl")
+include("cli/CLI.jl")
 export run_cli
 
 """
