@@ -54,61 +54,6 @@ function load_template(cfg, name::AbstractString)
     return read(path, String)
 end
 
-# =============================================================================
-# DEFAULT TEMPLATES
-# =============================================================================
-
-"""
-Format registration fields as a nice list for email display.
-Takes a Dict of field names and values, returns formatted string.
-
-Optionally filter out fields that should be excluded (like internal IDs).
-"""
-function format_registration_fields(fields::AbstractDict;
-                                     exclude::Vector{String}=String[],
-                                     max_width::Int=40)
-    if isempty(fields)
-        return ""
-    end
-
-    # Common fields to exclude from display
-    default_exclude = ["Vorname", "Nachname", "E-Mail", "Email", "First Name", "Last Name"]
-    all_exclude = vcat(default_exclude, exclude)
-
-    entries = String[]
-
-    for key in sort(collect(keys(fields)))
-        if key ∈ all_exclude
-            continue
-        end
-
-        raw_value = string(fields[key])
-        if isempty(strip(raw_value))
-            continue
-        end
-
-        clean_value = replace(raw_value, r"\s*\n\s*" => ", ")
-        escaped_key = escape_html(key)
-        escaped_value = escape_html(clean_value)
-        push!(entries, "<li style=\"margin: 4px 0;\"><strong>$(escaped_key):</strong> $(escaped_value)</li>")
-    end
-
-    if isempty(entries)
-        return ""
-    end
-
-    return """
-<div style="margin: 24px 0;">
-  <h3 style="margin-bottom: 8px; font-size: 18px;">Deine Angaben</h3>
-  <ul style="margin: 0 0 0 20px; padding: 0;">
-    $(join(entries, "\n    "))
-  </ul>
-</div>
-"""
-end
-
-export format_registration_fields
-
 const PACKAGE_TEMPLATES_DIR = normpath(joinpath(@__DIR__, "..", "config", "templates"))
 
 render_template(template::AbstractString, vars::AbstractDict) = Mustache.render(template, vars)

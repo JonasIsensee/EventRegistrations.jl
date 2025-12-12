@@ -1,6 +1,10 @@
 using TOML
 
 Base.@kwdef struct EmailConfig
+    pop3_server::String = ""
+    pop3_username::String = ""
+    pop3_password::String = ""
+    pop3_port::Int = 995
     smtp_server::String = ""
     smtp_port::Int = 587
     username::String = ""
@@ -47,10 +51,15 @@ function parse_email_config(config::Dict; templates_dir::String, dry_run::Bool)
     smtp_section = get(config, "smtp", Dict())
     bank_section = get(config, "bank", Dict())
 
-    smtp_server = get(smtp_section, "server", get(email_section, "server", ""))
+    pop3_server = get(email_section, "server", "")
+    pop3_username = get(email_section, "username", "")
+    pop3_password = get(email_section, "password", "")
+    pop3_port = get(email_section, "port", 995)
+
+    smtp_server = get(smtp_section, "server", pop3_server)
     smtp_port = get(smtp_section, "port", 587)
-    username = get(smtp_section, "username", get(email_section, "username", ""))
-    password = get(smtp_section, "password", get(email_section, "password", ""))
+    username = get(smtp_section, "username", pop3_username)
+    password = get(smtp_section, "password", pop3_password)
     from_address = get(smtp_section, "from_address", username)
     from_name = get(smtp_section, "from_name", "Event Registration")
     bank_details = get(smtp_section, "bank_details", "")
@@ -63,11 +72,9 @@ function parse_email_config(config::Dict; templates_dir::String, dry_run::Bool)
     qr_message = get(bank_section, "remittance", "")
     qr_enabled = get(bank_section, "enable_qr", true)
 
-    return EmailConfig(
-        smtp_server,
-        smtp_port,
-        username,
-        password,
+    return EmailConfig(;
+        pop3_server, pop3_username, pop3_password, pop3_port,
+        smtp_server, smtp_port, username, password,
         from_address,
         from_name,
         bank_details,

@@ -204,13 +204,10 @@ export queue_email!, queue_pending_emails!, get_pending_emails
 export queue_payment_confirmation!
 export count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
 
-# Re-export from EmailDownload
-using .EmailDownload: download_emails!, load_email_credentials
-export download_emails!, load_email_credentials
+using .EmailDownload: download_emails!
 
 # Re-export from ReferenceNumbers (for manual use)
 using .ReferenceNumbers: find_reference_in_text, parse_reference_number
-export find_reference_in_text, parse_reference_number
 
 # ============================================================================
 # HIGH-LEVEL CONVENIENCE FUNCTIONS
