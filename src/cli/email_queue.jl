@@ -189,7 +189,7 @@ function cmd_send_emails(;
             error_count = 0
             for email in pending
                 @info "  Sending to $(email.email_to) ($(email.first_name) $(email.last_name))..."
-                success = send_queued_email!(cfg, db, email.id)
+                success = send_queued_email!(ctx.email, db, email.id)
                 sent_count += success
                 error_count += !success
             end

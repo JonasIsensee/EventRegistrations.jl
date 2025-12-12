@@ -113,7 +113,6 @@ function cmd_status(; db_path::String="events.duckdb", config_dir::String="confi
     # Validation summary (lightweight)
     if db_exists && isdir(config_dir)
         require_database(db_path) do db
-            load_field_aliases(config_dir)
             event_rows = collect(DBInterface.execute(db, "SELECT event_id FROM events"))
             if isempty(event_rows)
                 @info "Config validation: No events to validate"

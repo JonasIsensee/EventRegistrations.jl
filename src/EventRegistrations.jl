@@ -11,27 +11,8 @@ Features:
 7. Export registration and payment status tables
 
 Configuration Files:
-- config/fields.toml       - Field name aliases (short names → actual names)
-- config/events/*.toml     - Per-event cost rules
-- config/templates/*.mustache   - Email templates
-
-Usage:
-    using EventRegistrations
-
-    # Initialize project (creates config dirs and default templates)
-    setup_project!("config")
-
-    # Initialize database
-    db = init_database("events.duckdb")
-
-    # Generate field config from existing data
-    generate_field_config(db, "config/fields.toml")
-
-    # Load config and sync to database
-    load_field_aliases("config")
-    sync_event_configs_to_db!(db, "config")
-
-    # Process emails and manage payments...
+- events/*.toml     - Per-event cost rules
+- templates/*.mustache   - Email templates
 """
 module EventRegistrations
 
@@ -161,10 +142,10 @@ export ConfigSyncStatus, check_config_sync, get_unsynced_configs
 export get_all_config_sync_status
 
 # Re-export from Config
-using .Config: DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs, load_field_aliases
+using .Config: DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs
 using .Config: materialize_cost_rules, generate_field_config, generate_event_config_template, sync_event_configs_to_db!
 using .Config: ensure_config_dirs, get_registration_detail_columns
-export DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs, load_field_aliases
+export DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs
 export materialize_cost_rules, generate_field_config, sync_event_configs_to_db!
 export ensure_config_dirs, get_registration_detail_columns
 
@@ -407,9 +388,6 @@ function init_project(db_path::AbstractString, config_dir::AbstractString="confi
 
     # Initialize database
     db = init_database(db_path)
-
-    # Load field aliases
-    load_field_aliases(config_dir)
 
     return db
 end
