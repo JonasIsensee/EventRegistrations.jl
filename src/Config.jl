@@ -592,9 +592,9 @@ function generate_event_config_template(event_id::AbstractString,
     push!(lines, "# Use the alias names defined above (not the full field names).")
     push!(lines, "# ═══════════════════════════════════════════════════════════════════════════════")
     push!(lines, "")
-    push!(lines, "[costs]")
+    push!(lines, "# [costs]")
     push!(lines, "# Base cost that everyone pays")
-    push!(lines, "base = 0.0")
+    push!(lines, "# base = 0.0")
     push!(lines, "")
 
     if !isempty(actual_fields)
@@ -616,7 +616,7 @@ function generate_event_config_template(event_id::AbstractString,
                 push!(lines, "# [[costs.rules]]")
                 push!(lines, "# field = \"$alias\"  # → $(escape_toml_string(field))")
                 push!(lines, "# value = \"Ja\"")
-                push!(lines, "# cost = 0.0  # TODO: set cost")
+                push!(lines, "# cost = 0.0")
                 example_count += 1
                 if example_count >= 5
                     break

@@ -1281,4 +1281,134 @@ end
 
 export send_all_pending_emails!
 
+# =============================================================================
+# BULK EMAIL MANAGEMENT
+# =============================================================================
+
+"""
+Discard all pending emails for a specific event (or all events if event_id is nothing).
+Returns count of emails discarded.
+
+This is useful when you need to clear the queue and regenerate fresh emails,
+such as after experimenting with cost configurations.
+"""
+function discard_all_pending_emails!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing)
+    query = if event_id !== nothing
+        """
+        UPDATE email_queue
+        SET status = 'discarded', processed_at = CURRENT_TIMESTAMP, processed_by = 'bulk_discard'
+        WHERE status = 'pending'
+          AND registration_id IN (SELECT id FROM registrations WHERE event_id = ?)
+        """
+    else
+        """
+        UPDATE email_queue
+        SET status = 'discarded', processed_at = CURRENT_TIMESTAMP, processed_by = 'bulk_discard'
+        WHERE status = 'pending'
+        """
+    end
+
+    if event_id !== nothing
+        DBInterface.execute(db, query, [event_id])
+    else
+        DBInterface.execute(db, query)
+    end
+
+    # Count how many were discarded
+    count_query = if event_id !== nothing
+        """
+        SELECT COUNT(*) FROM email_queue
+        WHERE status = 'discarded' AND processed_by = 'bulk_discard'
+          AND registration_id IN (SELECT id FROM registrations WHERE event_id = ?)
+        """
+    else
+        """
+        SELECT COUNT(*) FROM email_queue
+        WHERE status = 'discarded' AND processed_by = 'bulk_discard'
+        """
+    end
+
+    result = if event_id !== nothing
+        DBInterface.execute(db, count_query, [event_id])
+    else
+        DBInterface.execute(db, count_query)
+    end
+
+    count = first(collect(result))[1]
+
+    @info "Discarded pending emails" count=count event_id=event_id
+    return count
+end
+
+export discard_all_pending_emails!
+
+"""
+Bulk mark all registrations for an event as having received confirmation emails.
+This creates records in the confirmation_emails table WITHOUT actually sending emails.
+
+This is useful when:
+1. You've recreated the database but emails were previously sent
+2. You want to prevent the system from resending emails to everyone
+
+Parameters:
+- db: Database connection
+- event_id: Event ID to mark emails for
+- template_name: Email type to mark as sent ('confirmation_email', 'registration_confirmation', or 'payment_confirmation')
+- processed_by: Who marked these (default: 'bulk_manual_mark')
+
+Returns count of emails marked.
+"""
+function mark_all_as_sent!(db::DuckDB.DB, event_id::AbstractString;
+                           template_name::String="confirmation_email",
+                           processed_by::String="bulk_manual_mark")
+    # Validate template_name
+    valid_templates = ["confirmation_email", "registration_confirmation", "payment_confirmation"]
+    if !(template_name in valid_templates)
+        error("Invalid template name: $template_name. Must be one of: $(join(valid_templates, ", "))")
+    end
+
+    # Get all registrations for this event that haven't received this type of email
+    result = DBInterface.execute(db, """
+        SELECT r.id, r.email, r.reference_number, r.computed_cost,
+               COALESCE(r.computed_cost, 0) -
+               COALESCE((SELECT SUM(amount) FROM subsidies WHERE registration_id = r.id), 0) -
+               COALESCE((SELECT SUM(bt.amount) FROM bank_transfers bt
+                         JOIN payment_matches pm ON pm.transfer_id = bt.id
+                         WHERE pm.registration_id = r.id), 0) as remaining
+        FROM registrations r
+        LEFT JOIN confirmation_emails ce ON ce.registration_id = r.id
+                                          AND ce.email_type = ?
+                                          AND ce.status = 'sent'
+        WHERE r.event_id = ?
+          AND ce.id IS NULL
+    """, [template_name, event_id])
+
+    marked_count = 0
+    for row in collect(result)
+        registration_id, email_to, reference_number, computed_cost, remaining = row
+
+        # Convert to Float64, handling NULL/missing
+        cost_f = (computed_cost === nothing || ismissing(computed_cost)) ? 0.0 : Float64(computed_cost)
+        remaining_f = (remaining === nothing || ismissing(remaining)) ? 0.0 : Float64(remaining)
+
+        # Insert into confirmation_emails
+        DBInterface.execute(db, """
+            INSERT INTO confirmation_emails (
+                id, registration_id, email_type, sent_at, email_to,
+                cost_at_send, remaining_at_send, reference_sent, status, resend_reason
+            ) VALUES (
+                nextval('email_id_seq'), ?, ?, CURRENT_TIMESTAMP, ?,
+                ?, ?, ?, 'sent', 'bulk_marked'
+            )
+        """, [registration_id, template_name, email_to, cost_f, remaining_f, reference_number])
+
+        marked_count += 1
+    end
+
+    @info "Bulk marked emails as sent" count=marked_count event_id=event_id template_name=template_name
+    return marked_count
+end
+
+export mark_all_as_sent!
+
 end # module

@@ -1375,50 +1375,99 @@ function cmd_list_pending_emails(;
         println("\nCommands:")
         println("  eventreg send-emails                 # Send all pending")
         println("  eventreg send-emails --id=<id>       # Send specific email")
-        println("  eventreg mark-email <id> sent        # Mark as sent (without sending)")
-        println("  eventreg mark-email <id> discarded   # Discard email")
+        println("  eventreg mark-email sent <id>        # Mark as sent (without sending)")
+        println("  eventreg mark-email discarded <id>   # Discard single email")
+        println("  eventreg mark-email discarded --all  # Discard all pending emails")
 
         return 0
     end
 end
 
 """
-Mark a pending email as sent or discarded.
+Mark pending email(s) as sent or discarded.
+
+Usage:
+  eventreg mark-email sent <id>        # Mark single email as sent
+  eventreg mark-email discarded <id>   # Discard single email
+  eventreg mark-email sent --all       # Mark all pending as sent
+  eventreg mark-email discarded --all  # Discard all pending
+  eventreg mark-email discarded --all --event-id=<id>  # Discard for specific event
 """
-function cmd_mark_email(queue_id::Int, status::String;
-    db_path::String="events.duckdb")
+function cmd_mark_email(status::String;
+    db_path::String="events.duckdb",
+    id::Union{Int,Nothing}=nothing,
+    all::Bool=false,
+    event_id::Union{String,Nothing}=nothing)
 
     if !(status in ["sent", "discarded"])
         println("❌ Error: Status must be 'sent' or 'discarded'")
         return 1
     end
 
+    # Must specify either --all or an ID
+    if !all && id === nothing
+        println("❌ Error: Must specify either <id> or --all flag")
+        println("\nUsage:")
+        println("  eventreg mark-email $status <id>        # Mark single email")
+        println("  eventreg mark-email $status --all       # Mark all pending emails")
+        println("  eventreg mark-email $status --all --event-id=<id>  # For specific event")
+        return 1
+    end
+
+    if all && id !== nothing
+        println("❌ Error: Cannot specify both <id> and --all flag")
+        return 1
+    end
+
     return require_database(db_path) do db
-        # Verify email exists and is pending
-        result = DBInterface.execute(db, """
-            SELECT eq.email_to, eq.status, r.first_name, r.last_name
-            FROM email_queue eq
-            JOIN registrations r ON r.id = eq.registration_id
-            WHERE eq.id = ?
-        """, [queue_id])
+        if all
+            # Bulk operation
+            pending = get_pending_emails(db; event_id=event_id)
+            if isempty(pending)
+                println("✓ No pending emails to mark as $status.")
+                return 0
+            end
 
-        rows = collect(result)
-        if isempty(rows)
-            println("❌ Error: Email queue entry not found: $queue_id")
-            return 1
+            event_msg = event_id !== nothing ? " for event $event_id" : ""
+            action = status == "sent" ? "mark as sent" : "discard"
+            println("⚠ About to $action $(length(pending)) pending email(s)$event_msg")
+
+            marked_count = 0
+            for email in pending
+                mark_email!(db, email.id, status; processed_by="cli")
+                marked_count += 1
+            end
+
+            action_past = status == "sent" ? "marked as sent" : "discarded"
+            println("✓ $marked_count email(s) $action_past")
+            return 0
+        else
+            # Single email operation
+            result = DBInterface.execute(db, """
+                SELECT eq.email_to, eq.status, r.first_name, r.last_name
+                FROM email_queue eq
+                JOIN registrations r ON r.id = eq.registration_id
+                WHERE eq.id = ?
+            """, [id])
+
+            rows = collect(result)
+            if isempty(rows)
+                println("❌ Error: Email queue entry not found: $id")
+                return 1
+            end
+
+            email_to, current_status, first_name, last_name = rows[1]
+            if current_status != "pending"
+                println("❌ Error: Email is not pending (current status: $current_status)")
+                return 1
+            end
+
+            mark_email!(db, id, status; processed_by="cli")
+
+            action = status == "sent" ? "marked as sent" : "discarded"
+            println("✓ Email to $first_name $last_name <$email_to> $action")
+            return 0
         end
-
-        email_to, current_status, first_name, last_name = rows[1]
-        if current_status != "pending"
-            println("❌ Error: Email is not pending (current status: $current_status)")
-            return 1
-        end
-
-        mark_email!(db, queue_id, status; processed_by="cli")
-
-        action = status == "sent" ? "marked as sent" : "discarded"
-        println("✓ Email to $first_name $last_name <$email_to> $action")
-        return 0
     end
 end
 
@@ -1525,6 +1574,65 @@ function cmd_queue_payment_requests(event_id::String;
     end
 end
 
+"""
+Mark all registrations for an event as having received confirmation emails.
+This creates records in the confirmation_emails table WITHOUT actually sending emails.
+
+This is useful when:
+1. You've recreated the database but emails were previously sent
+2. You want to prevent the system from resending emails to everyone
+"""
+function cmd_mark_all_as_sent(event_id::String;
+    db_path::String="events.duckdb",
+    type::String="confirmation_email",
+    all::Bool=false)
+
+    if !all
+        println("❌ Error: Use --all flag to confirm bulk marking")
+        println("This will mark all registrations for '$event_id' as having received '$type' emails.")
+        println("\nUsage:")
+        println("  eventreg mark-all-as-sent <event-id> --all")
+        println("  eventreg mark-all-as-sent <event-id> --all --type=payment_confirmation")
+        return 1
+    end
+
+    # Validate type
+    valid_types = ["confirmation_email", "registration_confirmation", "payment_confirmation"]
+    if !(type in valid_types)
+        println("❌ Error: Invalid email type: $type")
+        println("Valid types: $(join(valid_types, ", "))")
+        return 1
+    end
+
+    return require_database(db_path) do db
+        # Verify event exists
+        event_result = DBInterface.execute(db, "SELECT event_id FROM events WHERE event_id = ?", [event_id])
+        if isempty(collect(event_result))
+            # Event might not be in events table yet, check registrations
+            reg_result = DBInterface.execute(db, "SELECT COUNT(*) FROM registrations WHERE event_id = ?", [event_id])
+            reg_count = first(collect(reg_result))[1]
+            if reg_count == 0
+                println("❌ Error: Event not found: $event_id")
+                return 1
+            end
+        end
+
+        println("⚠ Marking all registrations for '$event_id' as having received '$type' emails...")
+
+        count = mark_all_as_sent!(db, event_id; template_name=type, processed_by="cli")
+
+        if count > 0
+            println("✓ Marked $count registration(s) as sent")
+            println("  These registrations will NOT receive automatic emails of type '$type'")
+        else
+            println("✓ No registrations needed marking")
+            println("  (All registrations have already received '$type' emails)")
+        end
+
+        return 0
+    end
+end
+
 # =============================================================================
 # MAIN CLI ENTRY POINT
 # =============================================================================
@@ -1566,10 +1674,14 @@ EMAIL MANAGEMENT:
     --verbose, -v                Show full email content
     --event-id=<id>              Filter by event
   queue-payment-requests <event-id>  Queue payment request emails after costs calculated
-  mark-email <id> <status>       Mark email as 'sent' or 'discarded'
+  mark-email <status> <id>       Mark email as 'sent' or 'discarded'
+  mark-email <status> --all      Mark all pending emails (useful after cost config changes)
+    --event-id=<id>              Filter by event for bulk operations
   send-emails                    Send all pending emails via SMTP
     --id=<id>                    Send specific email by ID
     --event-id=<id>              Send only emails for specific event
+  mark-all-as-sent <event-id> --all  Mark all registrations as having received emails (after DB reset)
+    --type=<type>                Email type (confirmation_email, registration_confirmation, payment_confirmation)
 
 EXPORTS:
   export-payment-status [event-id] [output]  Payment status with color highlighting
@@ -1614,7 +1726,12 @@ EXAMPLES:
   eventreg list-pending-emails                             # list pending emails
   eventreg list-pending-emails -v                          # with full content
   eventreg send-emails                                     # send all pending
-  eventreg mark-email 42 discarded                         # discard email
+  eventreg mark-email sent 42                              # mark single email as sent (without sending)
+  eventreg mark-email discarded 42                         # discard single email
+  eventreg mark-email sent --all                           # mark all as sent without sending
+  eventreg mark-email discarded --all                      # discard all pending
+  eventreg mark-email discarded --all --event-id=PWE_2026_01  # discard for specific event
+  eventreg mark-all-as-sent PWE_2026_01 --all              # mark all as sent (after DB reset)
   eventreg export-payment-status                           # colored terminal output
   eventreg export-payment-status --filter=unpaid           # show only unpaid
   eventreg export-payment-status --summary-only            # show only totals
@@ -1746,13 +1863,20 @@ function run_cli(args::Vector{String})
         elseif command == "list-pending-emails"
             return cmd_list_pending_emails(; options...)
         elseif command == "mark-email"
-            if length(positional) < 2
-                println("❌ Error: queue-id and status required")
-                println("Usage: eventreg mark-email <id> <sent|discarded>")
+            if isempty(positional)
+                println("❌ Error: status required")
+                println("Usage:")
+                println("  eventreg mark-email <sent|discarded> <id>")
+                println("  eventreg mark-email <sent|discarded> --all")
                 return 1
             end
-            queue_id = parse(Int, positional[1])
-            return cmd_mark_email(queue_id, positional[2]; options...)
+            status = positional[1]
+            # Check if ID was provided as positional or via --id option
+            id_val = length(positional) >= 2 ? parse(Int, positional[2]) : get(options, :id, nothing)
+            if id_val !== nothing
+                options[:id] = id_val
+            end
+            return cmd_mark_email(status; options...)
         elseif command == "send-emails"
             # Check if --id was provided
             id_val = get(options, :id, nothing)
@@ -1768,6 +1892,14 @@ function run_cli(args::Vector{String})
             end
             event_id = positional[1]
             return cmd_queue_payment_requests(event_id; options...)
+        elseif command == "mark-all-as-sent"
+            if isempty(positional)
+                println("❌ Error: event-id required")
+                println("Usage: eventreg mark-all-as-sent <event-id> --all")
+                return 1
+            end
+            event_id = positional[1]
+            return cmd_mark_all_as_sent(event_id; options...)
         # Validation and maintenance commands
         elseif command == "validate-config"
             event_id = length(positional) >= 1 ? positional[1] : nothing

@@ -329,6 +329,7 @@ using .ConfirmationEmails: get_registrations_needing_resend
 using .ConfirmationEmails: queue_email!, queue_pending_emails!, get_pending_emails
 using .ConfirmationEmails: queue_payment_confirmation!
 using .ConfirmationEmails: count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
+using .ConfirmationEmails: discard_all_pending_emails!, mark_all_as_sent!
 
 export get_unsent_confirmations, preview_email
 export configure_email!, load_email_config_from_file!
@@ -336,6 +337,7 @@ export queue_email!, queue_pending_emails!, get_pending_emails
 export queue_payment_confirmation!
 export count_pending_emails, mark_email!, send_queued_email!, send_all_pending_emails!
 export get_registrations_needing_resend
+export discard_all_pending_emails!, mark_all_as_sent!
 
 # Re-export from EmailDownload
 using .EmailDownload: download_emails!, load_email_credentials
