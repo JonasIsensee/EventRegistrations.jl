@@ -681,7 +681,7 @@ function sync_event_configs_to_db!(db::DuckDB.DB, config_dir::AbstractString=DEF
             DBInterface.execute(db,
             """
                 INSERT INTO events (event_id, event_name)
-                VALUES (?, ?, ?, NULL)
+                VALUES (?, ?)
                 ON CONFLICT (event_id) DO UPDATE SET
                     event_name = COALESCE(EXCLUDED.event_name, events.event_name),
             """
