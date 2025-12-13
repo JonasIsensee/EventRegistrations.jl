@@ -734,7 +734,6 @@ function recalculate_costs!(db::DuckDB.DB, event_id::AbstractString;
 
         # Use the detailed calculation
         result = CostCalculator.calculate_cost_with_details(rules, fields)
-
         push!(updates, (id=reg_id, reference=reference, old_cost=reg[7], new_cost=result.total, result=result))
 
         if !isempty(result.warnings)

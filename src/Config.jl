@@ -195,6 +195,11 @@ function parse_rules(costs::Dict, aliases::Dict{String,String})
             for (k, v) in rule
                 if k == "field"
                     new_rule[k] = resolve_alias(string(v), aliases)
+                elseif k == "unless" || k =="only_if"
+                    if v isa Dict && haskey(v, "field")
+                        v["field"] = resolve_alias(string(v["field"]), aliases)
+                    end
+                    new_rule[k] = v
                 else
                     new_rule[k] = v
                 end

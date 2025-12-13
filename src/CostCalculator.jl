@@ -108,7 +108,6 @@ function check_condition(condition::AbstractDict, fields::AbstractDict{String, S
     end
 
     actual_value = fields[field_name]
-
     # Check for exact value match
     if haskey(condition, "value")
         return actual_value == condition["value"]
@@ -144,7 +143,6 @@ function should_skip_rule(rule::AbstractDict, fields::AbstractDict{String, Strin
         unless_conditions = rule["unless"]
         # Handle both single dict and array of dicts
         conditions = unless_conditions isa AbstractVector ? unless_conditions : [unless_conditions]
-
         for condition in conditions
             if check_condition(condition, fields)
                 return true  # Skip this rule
@@ -314,7 +312,7 @@ function create_default_rules_template()
             Dict("field" => "Übernachtung Samstag", "value" => "Ja", "cost" => 25.0),
             Dict("field" => "Busfahrt Hinweg (10€)", "value" => "Ja", "cost" => 10.0),
             Dict("field" => "Busfahrt Rückweg (10€)", "value" => "Ja", "cost" => 10.0),
-            Dict("field" => "Wie möchte ich übernachten?", "pattern" => "Einzelzimmer", "cost" => 10.0, "multiply_by" => "nights"),
+            Dict("field" => "Unterbringung", "pattern" => "Einzelzimmer", "cost" => 10.0, "multiply_by" => "nights"),
         ],
         "computed_fields" => Dict(
             "nights" => Dict(
