@@ -21,7 +21,6 @@ using DBInterface
 using JSON
 using Dates
 using TOML
-using Base: ScopedValues
 
 # =============================================================================
 # DATABASE HELPER FUNCTIONS

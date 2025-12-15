@@ -15,6 +15,59 @@ with_cli_logger(f::Function; io::IO=stdout) = with_logger(ConsoleLogger(io)) do
     f()
 end
 
+"""
+Parse sub-command option strings like "--format=csv --filter=unpaid" into a Dict.
+Returns empty dict for empty/whitespace-only strings.
+"""
+function parse_subcommand_options(args_str::String)
+    options = Dict{Symbol, Any}()
+    isempty(strip(args_str)) && return options
+
+    # Split on whitespace, preserving quoted strings
+    parts = String[]
+    current = ""
+    in_quotes = false
+
+    for char in args_str
+        if char == '"'
+            in_quotes = !in_quotes
+        elseif char == ' ' && !in_quotes
+            if !isempty(current)
+                push!(parts, current)
+                current = ""
+            end
+        else
+            current *= char
+        end
+    end
+    !isempty(current) && push!(parts, current)
+
+    # Parse each part as an option
+    for part in parts
+        if startswith(part, "--")
+            if contains(part, "=")
+                key, val = split(part[3:end], "=", limit=2)
+                options[Symbol(replace(key, "-" => "_"))] = string(val)
+            else
+                # Boolean flag
+                options[Symbol(replace(part[3:end], "-" => "_"))] = true
+            end
+        elseif startswith(part, "-") && length(part) == 2
+            # Short flag
+            flag = part[2]
+            if flag == 'v'
+                options[:verbose] = true
+            else
+                @warn "Unknown short flag in subcommand options" flag=part
+            end
+        else
+            @warn "Ignoring positional argument in subcommand options" arg=part
+        end
+    end
+
+    return options
+end
+
 include("project.jl")
 include("emails.jl")
 include("config_commands.jl")
@@ -33,6 +86,9 @@ USAGE:
 COMMANDS:
   init                           Initialize new project
   sync                           Full sync workflow (download, process, match, queue emails)
+    --send-emails[="opts"]       Send queued emails after sync (optional: pass sub-options)
+    --export-details[="opts"]    Export registration details after sync (optional: pass sub-options)
+    --export-payments[="opts"]   Export payment status after sync (optional: pass sub-options)
   process-emails [folder]        Process registration emails
   generate-field-config          Generate field configuration
   create-event-config <id>       Create event config template
@@ -86,6 +142,9 @@ COMMON OPTIONS:
 EXAMPLES:
   eventreg init
   eventreg sync                                            # full workflow
+  eventreg sync --send-emails --export-details --export-payments  # complete workflow
+  eventreg sync --send-emails="--event-id=PWE_2026_01"    # send only for specific event
+  eventreg sync --export-payments="--format=csv --filter=unpaid"  # custom export options
   eventreg process-emails emails/
   eventreg status
   eventreg validate-config PWE_2026_01 --verbose

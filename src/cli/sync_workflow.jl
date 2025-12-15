@@ -2,6 +2,16 @@
 
 """
 Comprehensive sync command that does the full workflow.
+
+New in this version: supports post-sync operations via flags:
+- --send-emails[="opts"]: Send queued emails after sync
+- --export-details[="opts"]: Export registration details after sync
+- --export-payments[="opts"]: Export payment status after sync
+
+Each flag can be:
+- Absent: operation skipped
+- Present without value: operation runs with defaults
+- Present with value: operation runs with parsed options (e.g., "--format=csv --filter=unpaid")
 """
 function cmd_sync(;
     db_path::String="events.duckdb",
@@ -11,7 +21,10 @@ function cmd_sync(;
     bank_dir::String="bank_transfers",
     credentials_path::Union{String,Nothing}=nothing,
     event_id::Union{String,Nothing}=nothing,
-    nonstop::Bool=false)
+    nonstop::Bool=false,
+    send_emails::Union{Bool,String}=false,
+    export_details::Union{Bool,String}=false,
+    export_payments::Union{Bool,String}=false)
     @info "=== EventRegistrations Sync ==="
 
     # Step 1: Initialize database if necessary
@@ -235,6 +248,150 @@ function cmd_sync(;
                 @info join(summary, "\n")
             end
         end
+        # Step 10: Send emails (if requested)
+        if send_emails !== false
+            @info "[10/12] Sending queued emails..."
+            send_opts = send_emails isa String ? parse_subcommand_options(send_emails) : Dict{Symbol,Any}()
+
+            # Determine which emails to send
+            target_event = get(send_opts, :event_id, nothing)
+            email_id = get(send_opts, :id, nothing)
+
+            if email_id !== nothing
+                email_id = parse(Int, string(email_id))
+            end
+
+            ctx = load_app_config(; config_dir, db_path, credentials_path,
+                                    templates_dir=joinpath(config_dir, "templates"),
+                                    dry_run=false)
+
+            if email_id !== nothing
+                # Send specific email
+                @info "Sending email" id=email_id
+                success = send_queued_email!(ctx.email, db, email_id)
+                if success
+                    @info "✓ Email sent successfully" id=email_id
+                else
+                    @warn "Failed to send email" id=email_id
+                end
+            else
+                # Send all pending (optionally filtered by event)
+                pending = get_pending_emails(db; event_id=target_event)
+                if isempty(pending)
+                    @info "✓ No pending emails to send."
+                else
+                    @info "Sending pending emails" count=length(pending) event_id=target_event
+                    sent_count = 0
+                    error_count = 0
+                    for email in pending
+                        @info "  Sending to $(email.email_to) ($(email.first_name) $(email.last_name))..."
+                        success = send_queued_email!(ctx.email, db, email.id)
+                        sent_count += success
+                        error_count += !success
+                    end
+
+                    if error_count > 0
+                        @warn "Email sending complete with errors" sent=sent_count errors=error_count
+                    else
+                        @info "✓ All emails sent successfully" sent=sent_count
+                    end
+                end
+            end
+        end
+
+        # Step 11: Export registration details (if requested)
+        if export_details !== false
+            @info "[11/12] Exporting registration details..."
+            export_opts = export_details isa String ? parse_subcommand_options(export_details) : Dict{Symbol,Any}()
+
+            # Determine target event
+            target_event = get(export_opts, :event_id, event_id)
+            if target_event === nothing
+                target_event = get_most_recent_event(db)
+            end
+
+            if target_event === nothing
+                @warn "No events with registrations found, skipping export"
+            else
+                # Get options with defaults
+                export_format = get(export_opts, :format, "csv")
+                output_file = get(export_opts, :output, "registration_details_$(target_event).csv")
+
+                @info "Exporting registration details" event_id=target_event format=export_format output=output_file
+
+                detail_table = get_registration_detail_table(db, target_event; events_dir)
+                if isempty(detail_table.rows)
+                    @info "No registrations found for event" event_id=target_event
+                else
+                    if export_format == "csv"
+                        export_registration_detail_csv(detail_table, output_file)
+                        @info "✓ Registration details exported" output_path=output_file rows=length(detail_table.rows)
+                    elseif export_format == "terminal"
+                        print_registration_detail_table(detail_table)
+                    else
+                        @warn "Unsupported format for details export" format=export_format supported=["csv", "terminal"]
+                    end
+                end
+            end
+        end
+
+        # Step 12: Export payment status (if requested)
+        if export_payments !== false
+            @info "[12/12] Exporting payment status..."
+            payment_opts = export_payments isa String ? parse_subcommand_options(export_payments) : Dict{Symbol,Any}()
+
+            # Determine target event
+            target_event = get(payment_opts, :event_id, event_id)
+            if target_event === nothing
+                target_event = get_most_recent_event(db)
+            end
+
+            if target_event === nothing
+                @warn "No events with registrations found, skipping export"
+            else
+                # Get options with defaults
+                export_format = get(payment_opts, :format, "csv")
+                output_file = get(payment_opts, :output, "payment_status_$(target_event).csv")
+                filter_type = get(payment_opts, :filter, "all")
+                summary_only = get(payment_opts, :summary_only, false)
+
+                @info "Exporting payment status" event_id=target_event format=export_format output=output_file filter=filter_type
+
+                # Build filter
+                payment_filter = if filter_type == "unpaid"
+                    PaymentFilter(unpaid_only=true)
+                elseif filter_type == "problems"
+                    PaymentFilter(problems_only=true)
+                elseif filter_type == "paid"
+                    PaymentFilter(paid_only=true)
+                elseif filter_type == "no-config"
+                    PaymentFilter(no_config_only=true)
+                else
+                    PaymentFilter()  # all
+                end
+
+                table_data = get_payment_table_data(db, target_event)
+
+                if table_data.total_registrations == 0
+                    @info "No registrations found for event" event_id=target_event
+                else
+                    if summary_only
+                        print_summary(table_data)
+                    elseif export_format == "csv"
+                        export_payment_csv(table_data, output_file; filter=payment_filter)
+                        @info "✓ Payment status exported" output_path=output_file
+                    elseif export_format == "terminal"
+                        print_payment_table(table_data; filter=payment_filter)
+                    elseif export_format == "pdf"
+                        export_payment_pdf(table_data, output_file; filter=payment_filter)
+                        @info "✓ Payment status PDF exported" output_path=output_file
+                    else
+                        @warn "Unsupported format for payment export" format=export_format supported=["csv", "terminal", "pdf"]
+                    end
+                end
+            end
+        end
+
         @info "=== Sync Complete ==="
     finally
         DBInterface.close!(db)
