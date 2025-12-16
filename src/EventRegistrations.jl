@@ -16,11 +16,13 @@ Configuration Files:
 """
 module EventRegistrations
 
-using DuckDB
-using DBInterface
-using JSON
-using Dates
-using TOML
+using DBInterface: DBInterface
+using Dates: Dates, @dateformat_str
+using DuckDB: DuckDB
+using JSON: JSON
+using Logging: Logging, ConsoleLogger, with_logger
+using PrecompileTools: PrecompileTools, @compile_workload, @setup_workload
+using TOML: TOML
 
 # =============================================================================
 # DATABASE HELPER FUNCTIONS
@@ -184,9 +186,6 @@ export queue_email!, queue_pending_emails!, get_pending_emails
 export queue_payment_confirmation!
 export count_pending_emails, mark_email!, send_queued_email!
 using .EmailDownload: download_emails!
-
-# Re-export from ReferenceNumbers (for manual use)
-using .ReferenceNumbers: find_reference_in_text, parse_reference_number
 
 # ============================================================================
 # HIGH-LEVEL CONVENIENCE FUNCTIONS
@@ -415,5 +414,17 @@ Use the bin/eventreg wrapper script which provides the same functionality.
 """
 main(ARGS) = run_cli(ARGS)
 export main
+
+using PrecompileTools
+@setup_workload begin
+    cd(joinpath(@__DIR__,"..", "testingfolder"))
+    @compile_workload begin
+        # inside here, put a "toy example" of everything you want to be fast
+        cmd_sync(;
+            export_details="--format=csv",
+            export_payments="--format=csv")
+    end
+end
+
 
 end # module

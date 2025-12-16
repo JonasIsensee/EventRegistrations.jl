@@ -1,8 +1,8 @@
 module CostCalculator
 
-using JSON
-using DuckDB
-using DBInterface
+using DBInterface: DBInterface
+using DuckDB: DuckDB
+using JSON: JSON
 using ..Config: EventConfig, materialize_cost_rules
 export calculate_cost, calculate_cost_with_details
 export CostCalculationResult

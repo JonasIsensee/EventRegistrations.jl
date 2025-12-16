@@ -6,13 +6,14 @@ Supports terminal output with colors and PDF export via LaTeX.
 """
 module PrettyOutput
 
-using PrettyTables
-using Crayons
-using Dates
-using Printf
-using DuckDB
-using DBInterface
-using JSON
+using Crayons: Crayons, @crayon_str
+using DBInterface: DBInterface
+using Dates: Dates, Date, DateTime
+using DuckDB: DuckDB
+using JSON: JSON
+using PrettyTables: PrettyTables, LatexCell, LatexHighlighter, TextHighlighter,
+                    pretty_table
+using Printf: Printf, @sprintf
 
 # For PDF export
 import tectonic_jll

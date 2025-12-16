@@ -1,7 +1,7 @@
 module EmailDownload
 
-using TOML
-using Dates
+using Dates: Dates
+using TOML: TOML
 
 export download_emails!
 
@@ -17,7 +17,7 @@ function list_message_uids(ctx)
     output = try
         read(cmd, String)
     catch e
-        @error "Failed to connect to POP3 server" server=server error=e
+        @error "Failed to connect to POP3 server" server=ctv.pop3_server error=e
         return Tuple{Int, String}[]
     end
 

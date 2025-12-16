@@ -1,11 +1,11 @@
 module Config
 
-using TOML
-using DuckDB
-using DBInterface
-using JSON
-using Dates
-using SHA
+using DBInterface: DBInterface
+using Dates: Dates, DateTime, unix2datetime
+using DuckDB: DuckDB
+using JSON: JSON
+using SHA: SHA, sha256
+using TOML: TOML
 
 # Import from parent module
 import ..EventRegistrations: with_transaction

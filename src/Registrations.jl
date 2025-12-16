@@ -1,9 +1,9 @@
 module Registrations
 
-using DuckDB
-using DBInterface
-using JSON
-using Dates
+using DBInterface: DBInterface
+using Dates: Dates, Date, now, today
+using DuckDB: DuckDB
+using JSON: JSON
 
 # Import from parent module
 import ..EventRegistrations: with_transaction
@@ -11,7 +11,7 @@ import ..EventRegistrations: with_transaction
 # Import from parent module's submodules
 using ..EmailParser
 using ..ReferenceNumbers
-using ..Config: EventConfig, DEFAULT_CONFIG_DIR, generate_event_config_template,
+using ..Config: generate_event_config_template,
                  load_event_config, materialize_cost_rules, get_registration_detail_columns,
                  sync_event_configs_to_db!
 using ..CostCalculator

@@ -1,0 +1,110 @@
+Return-Path: <no-reply@unimusik.clubdesk.com>
+X-Spam-Checker-Version: SpamAssassin 3.4.2 (2018-09-13) on
+	alfa3063.alfahosting-server.de
+X-Spam-Level: 
+X-Spam-Status: No, score=-5.5 required=5.0 tests=AWL,BAYES_00,DKIM_SIGNED,
+	DKIM_VALID,DKIM_VALID_EF,HTML_MESSAGE,RCVD_IN_DNSWL_MED,
+	RCVD_IN_RP_CERTIFIED,RCVD_IN_RP_RNBL,RCVD_IN_RP_SAFE,SPF_HELO_PASS,
+	SPF_PASS,URIBL_BLOCKED autolearn=ham autolearn_force=no version=3.4.2
+X-Spam-DCC: : 
+X-Original-To: pwe@unimusik-goettingen.de
+Delivered-To: confixx-du-13658@alfa3063.alfahosting-server.de
+Received-SPF: Pass (mailfrom) identity=mailfrom; client-ip=5.148.169.160; helo=gate1.clubdesk.com; envelope-from=no-reply@unimusik.clubdesk.com; receiver=<UNKNOWN> 
+Received: from gate1.clubdesk.com (gate1.clubdesk.com [5.148.169.160])
+	by alfa3063.alfahosting-server.de (Postfix) with ESMTPS id 4724D56EA5D6
+	for <pwe@unimusik-goettingen.de>; Thu,  4 Dec 2025 22:50:13 +0100 (CET)
+DKIM-Signature: a=rsa-sha256; b=gZj9K7cuJup8Wasx4o9Kr1F+sUHlSPwaz4VEb136KMEcHuUq9fPqW2vdVq/8pr9ITLegnd4ISNfBnHm56jkDFljLSnLDwrp3HPOxHT+muEqrV3uuQriqyAaopOkt0Fnp4VAJkkh1KZ/ClNiyV4msyeE4W+oVyUah2X5wqTIbA2uqVp9zYqgnOGgFi3ZABPSw8dUxS9AAnnMKysmFvLbkEOb2xETf7SqhWlfrmeHdFNWiJgbt/cx3PXHo2Tq73Zg0gxEpyuGchLBb+XI4mRCJFX9/gZEaPjr1xMd/gCwcxx3gHyuhpeWmbeEbDwYFp7SVHRveuwEZEv6sqew3lAF43w==; s=cd0; c=relaxed/relaxed; d=clubdesk.com; v=1; bh=c4zinQpHZhZUTRsWo7aYbYppF44TyxDiB4GARZZ9FJk=; h=from:to:subject:date:message-id:mime-version:content-language;
+Received: from prod-www-1.prod_default (EHLO 0.0.0.0) ([10.20.0.5])
+          by 1e43cb5efc6e (JAMES SMTP Server ) with ESMTP ID 919286316
+          for <pwe@unimusik-goettingen.de>;
+          Thu, 04 Dec 2025 22:49:44 +0100 (CET)
+Date: Thu, 4 Dec 2025 22:49:44 +0100 (CET)
+From: no-reply@unimusik.clubdesk.com
+To: pwe@unimusik-goettingen.de
+Message-ID: <1189384038.19670.1764884984400@4b2c236d719a>
+Subject: Anmeldung: PWE_2026_01
+MIME-Version: 1.0
+Content-Type: multipart/alternative; 
+	boundary="----=_Part_19668_1798005193.1764884984392"
+X-ClubDesk-Cluster-ID: 1764884984392_16132
+X-Alfa-Virus: check-delete
+X-Alfa-Spam: check
+
+------=_Part_19668_1798005193.1764884984392
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Vorname:=09Hannah:
+Nachname:=09Arendt:
+E-Mail:=09hannah@jonasisensee.de:
+Stimmgruppe:=09Alt:
+Essen:=09Vegan:
+Lebensmittelunvertr=C3=A4glichkeiten / Allergien:=09:
+=C3=9Cbernachtung Freitag:=09Ja:
+=C3=9Cbernachtung Samstag:=09Ja:
+Busfahrt Hinweg (10=E2=82=AC):=09Nein:
+Busfahrt R=C3=BCckweg (10=E2=82=AC):=09Ja:
+Wie m=C3=B6chte ich =C3=BCbernachten?:=09Mehrbettzimmer:
+Belegungswunsch f=C3=BCr das Zimmer:=09:
+Sonstiges::=09:
+
+
+------=_Part_19668_1798005193.1764884984392
+Content-Type: multipart/related; 
+	boundary="----=_Part_19669_1757102156.1764884984392"
+
+------=_Part_19669_1757102156.1764884984392
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+<html>
+<head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <style type="text/css" media="screen">
+        table {
+            font-family: Arial, sans-serif;
+            font-size: 10pt;
+        }
+
+        td, th {
+            border: 1px solid #BBBBBB;
+            padding: 5px 15px 5px 5px;
+            vertical-align: top;
+        }
+
+        .caption {
+            text-align: center;
+            border: none;
+            color: #BBBBBB;
+            font-size: 8pt;
+        }
+
+        .label {
+            font-weight: bold;
+        }
+
+        th {
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+
+<table style="border-collapse:collapse;">
+    <tr>
+        <th colspan="2">Anmeldung: PWE_2026_01</th>
+    </tr>
+    <tr><td class="label">Vorname</td><td>Hannah</td></tr><tr><td class="label">Nachname</td><td>Arendt</td></tr><tr><td class="label">E-Mail</td><td>hannah@jonasisensee.de</td></tr><tr><td class="label">Stimmgruppe</td><td>Alt</td></tr><tr><td class="label">Essen</td><td>Vegan</td></tr><tr><td class="label">Lebensmittelunvertr&auml;glichkeiten / Allergien</td><td></td></tr><tr><td class="label">&Uuml;bernachtung Freitag</td><td>Ja</td></tr><tr><td class="label">&Uuml;bernachtung Samstag</td><td>Ja</td></tr><tr><td class="label">Busfahrt Hinweg (10&euro;)</td><td>Nein</td></tr><tr><td class="label">Busfahrt R&uuml;ckweg (10&euro;)</td><td>Ja</td></tr><tr><td class="label">Wie m&ouml;chte ich &uuml;bernachten?</td><td>Mehrbettzimmer</td></tr><tr><td class="label">Belegungswunsch f&uuml;r das Zimmer</td><td></td></tr><tr><td class="label">Sonstiges:</td><td></td></tr>
+    <tr>
+        <td class="caption" colspan="2">unimusik.clubdesk.com</td>
+    </tr>
+</table>
+
+</body>
+</html>
+
+
+------=_Part_19669_1757102156.1764884984392--
+
+------=_Part_19668_1798005193.1764884984392--
+

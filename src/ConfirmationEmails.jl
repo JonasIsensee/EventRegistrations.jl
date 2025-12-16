@@ -1,17 +1,16 @@
 module ConfirmationEmails
 
-using DuckDB
-using DBInterface
-using Dates
-using JSON
-using SMTPClient
+using DBInterface: DBInterface
+using Dates: Dates
+using DuckDB: DuckDB
+using JSON: JSON
+using Mustache: Mustache
+using PNGFiles: PNGFiles
+using QRCode: QRCode, qrcode
+using SMTPClient: SMTPClient, SendOptions, send
 using Base64: base64encode
-using ColorTypes: Gray, N0f8
-using PNGFiles
-using QRCode
 using Printf: @sprintf
 using Random: randstring
-using Mustache
 
 # Bring EmailConfig from parent module
 using ..EventRegistrations: EmailConfig
@@ -243,12 +242,10 @@ end
 Render a QR code payload to PNG bytes suitable for email attachment.
 """
 function qr_payload_to_png(payload::String)
-    matrix = Matrix(qrcode(payload))
+    matrix = qrcode(payload)
     # true => black, false => white
-    inverted = 1 .- Float32.(matrix)
-    img = Gray{N0f8}.(inverted)
     io = IOBuffer()
-    PNGFiles.save(io, img)
+    PNGFiles.save(io, .!matrix)
     return take!(io)
 end
 

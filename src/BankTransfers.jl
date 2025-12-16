@@ -1,11 +1,11 @@
 module BankTransfers
 
-using DuckDB
-using DBInterface
-using JSON
-using Dates
-using SHA
-using DelimitedFiles
+using DBInterface: DBInterface
+using Dates: Dates, Date, now, today
+using DelimitedFiles: DelimitedFiles
+using DuckDB: DuckDB
+using JSON: JSON
+using SHA: SHA
 
 
 # Import from parent module

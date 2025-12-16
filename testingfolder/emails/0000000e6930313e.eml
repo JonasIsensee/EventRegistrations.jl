@@ -1,0 +1,116 @@
+Return-Path: <>
+X-Spam-Checker-Version: SpamAssassin 3.4.2 (2018-09-13) on
+	alfa3063.alfahosting-server.de
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.7 required=5.0 tests=AWL,BAYES_00,NO_RELAYS,
+	URIBL_BLOCKED autolearn=ham autolearn_force=no version=3.4.2
+X-Spam-DCC: : 
+X-Original-To: pwe@unimusik-goettingen.de
+Delivered-To: confixx-du-13658@alfa3063.alfahosting-server.de
+Received: by alfa3063.alfahosting-server.de (Postfix)
+	id 1391F56EA5D6; Thu,  4 Dec 2025 22:58:00 +0100 (CET)
+Date: Thu,  4 Dec 2025 22:58:00 +0100 (CET)
+From: MAILER-DAEMON@alfa3063.alfahosting-server.de (Mail Delivery System)
+Subject: Undelivered Mail Returned to Sender
+To: pwe@unimusik-goettingen.de
+Auto-Submitted: auto-replied
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status;
+	boundary="1B6AE56EA6F8.1764885480/alfa3063.alfahosting-server.de"
+Content-Transfer-Encoding: 8bit
+Message-Id: <20251204215800.1391F56EA5D6@alfa3063.alfahosting-server.de>
+X-Alfa-Virus: check-delete
+X-Alfa-Spam: check
+
+This is a MIME-encapsulated message.
+
+--1B6AE56EA6F8.1764885480/alfa3063.alfahosting-server.de
+Content-Description: Notification
+Content-Type: text/plain; charset=us-ascii
+
+This is the mail system at host alfa3063.alfahosting-server.de.
+
+I'm sorry to have to inform you that your message could not
+be delivered to one or more recipients. It's attached below.
+
+For further assistance, please send mail to postmaster.
+
+If you do so, please include this problem report. You can
+delete your own text from the attached returned message.
+
+                   The mail system
+
+<hannah@jonasisensee.de>: host mx01.secure-mailgate.com[46.243.95.180] said:
+    550 Subject contains invalid characters. (in reply to end of DATA command)
+
+--1B6AE56EA6F8.1764885480/alfa3063.alfahosting-server.de
+Content-Description: Delivery report
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; alfa3063.alfahosting-server.de
+X-Postfix-Queue-ID: 1B6AE56EA6F8
+X-Postfix-Sender: rfc822; pwe@unimusik-goettingen.de
+Arrival-Date: Thu,  4 Dec 2025 22:57:59 +0100 (CET)
+
+Final-Recipient: rfc822; hannah@jonasisensee.de
+Original-Recipient: rfc822;hannah@jonasisensee.de
+Action: failed
+Status: 5.0.0
+Remote-MTA: dns; mx01.secure-mailgate.com
+Diagnostic-Code: smtp; 550 Subject contains invalid characters.
+
+--1B6AE56EA6F8.1764885480/alfa3063.alfahosting-server.de
+Content-Description: Undelivered Message
+Content-Type: message/rfc822
+Content-Transfer-Encoding: 8bit
+
+Return-Path: <pwe@unimusik-goettingen.de>
+X-SecureMailgate-Identity: web261p34;alfa3063.alfahosting-server.de
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+	d=unimusik-goettingen.de; s=cloudpit; t=1764885479;
+	bh=0BkmHCgUoA0cLIadllXPQxo9wpIw1zczf5AU1eec7S0=;
+	h=From:To:Subject:From;
+	b=j1mOxEfj24sVqd/iYA+NbhqHNwHdMKJuyz7sw/WyurRiUM5xRZziPrFC6k8YYX8vM
+	 8wfAKC9p20IKKy8u9UqOQaAhl1l+RypcKiJjeE4EnW6gg+VgSqXwbOMevNs0DFArGs
+	 wFZ4w+KXez614p6TNTkTFEl5FVAxNMGG5P5vclis=
+Received: from feb07775243a (ip5f5ab860.dynamic.kabel-deutschland.de [95.90.184.96])
+	by alfa3063.alfahosting-server.de (Postfix) with ESMTPA id 1B6AE56EA6F8
+	for <hannah@jonasisensee.de>; Thu,  4 Dec 2025 22:57:59 +0100 (CET)
+From: Probenwochenende Orchester/Chor <pwe@unimusik-goettingen.de>
+To: hannah@jonasisensee.de
+Subject: Anmeldebestätigung: Probenwochenende Januar 2026 - PWE_2026_01_007
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Liebe/r Hannah,
+
+vielen Dank für deine Anmeldung zum Probenwochenende Januar 2026!
+
+Hier sind deine Anmeldedaten:
+
+Referenznummer: PWE_2026_01_007
+Zu zahlen: 110.0 €
+
+Bitte überweise den Betrag auf folgendes Konto:
+Unimusik Göttingen e.V.
+IBAN: DE12 3456 7890 1234 5678 90
+Sparkasse Göttingen
+Verwendungszweck: [Ihre Referenznummer]
+
+Verwendungszweck: PWE_2026_01_007
+
+WICHTIG: Bitte gib unbedingt die Referenznummer als Verwendungszweck an,
+damit wir deine Zahlung zuordnen können.
+
+Bei Fragen erreichen Sie uns unter pwe@unimusik-goettingen.de
+
+Bei Fragen kannst du dich gerne an uns wenden.
+
+Viele Grüße,
+Probenwochenende Orchester/Chor
+
+
+
+--1B6AE56EA6F8.1764885480/alfa3063.alfahosting-server.de--
+

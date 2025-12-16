@@ -1,8 +1,8 @@
 module Validation
 
-using DuckDB
-using DBInterface
-using JSON
+using DBInterface: DBInterface
+using DuckDB: DuckDB
+using JSON: JSON
 
 export ValidationResult, ValidationError, ValidationWarning
 export validate_cost_config, validate_field_aliases

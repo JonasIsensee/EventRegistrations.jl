@@ -1,6 +1,7 @@
 module EmailParser
 
-using SHA
+using Dates: Dates, DateTime
+using SHA: SHA, sha256
 
 export parse_eml, extract_form_submission, compute_file_hash
 
