@@ -10,7 +10,7 @@ using TOML: TOML
 # Import from parent module
 import ..EventRegistrations: with_transaction
 
-export DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs
+export DEFAULT_CONFIG_DIR, EventConfig, load_event_config
 export materialize_cost_rules, get_registration_detail_columns
 export generate_field_config, generate_event_config_template
 export ensure_config_dirs
@@ -294,23 +294,6 @@ function load_event_config(event_id::AbstractString, events_dir::AbstractString=
 
     return EventConfig(event_id, event_name, path, cfg_hash,
         aliases, reverse_aliases, base_cost, rules, computed_fields, export_columns)
-end
-
-function load_all_event_configs(events_dir::AbstractString="events")
-    configs = Dict{String, EventConfig}()
-    !isdir(events_dir) && return configs
-
-    for file in readdir(events_dir)
-        if endswith(file, ".toml")
-            event_id = file[1:end-5]
-            cfg = load_event_config(event_id, events_dir)
-            if cfg !== nothing
-                configs[event_id] = cfg
-            end
-        end
-    end
-
-    return configs
 end
 
 function materialize_cost_rules(cfg::EventConfig)
@@ -674,9 +657,17 @@ end
 Sync event configs from TOML files to database (metadata only).
 Stores event id, name, base cost, and records config hash for change detection.
 """
-function sync_event_configs_to_db!(db::DuckDB.DB, config_dir::AbstractString=DEFAULT_CONFIG_DIR)
-    configs = load_all_event_configs(config_dir)
-    for (event_id, cfg) in configs
+function sync_event_configs_to_db!(db::DuckDB.DB, events_dir::AbstractString="events")
+    # Check all event configs
+    synced = String[]
+    isdir(events_dir) || return synced
+
+    for file in readdir(events_dir)
+        !endswith(file, ".toml") && continue
+        event_id = splitext(file)[1]
+        status = check_config_sync(db, joinpath(events_dir, file))
+        status.needs_sync || continue
+        cfg = load_event_config(event_id, events_dir)
         with_transaction(db) do
             DBInterface.execute(db,
             """
@@ -685,15 +676,13 @@ function sync_event_configs_to_db!(db::DuckDB.DB, config_dir::AbstractString=DEF
                 ON CONFLICT (event_id) DO UPDATE SET
                     event_name = COALESCE(EXCLUDED.event_name, events.event_name),
             """
-            , [event_id, cfg.name])
+            , [cfg.event_id, cfg.name])
         end
-
-        if isfile(cfg.config_path)
-            record_config_sync(db, cfg.config_path)
-        end
+        record_config_sync(db, cfg.config_path)
+        push!(synced, cfg.event_id)
     end
-
-    println("Synced $(length(configs)) event configs to database (metadata only)")
+    @info "Synced $(length(synced)) event configs to database"
+    return synced
 end
 
 # =============================================================================

@@ -37,8 +37,7 @@ function cmd_sync(;
     end
     try
         @info "Syncing event configurations to database..." events_dir
-        sync_event_configs_to_db!(db, events_dir)
-        @info "✓ Configuration synced successfully!"
+        updated_events = sync_event_configs_to_db!(db, events_dir)
 
         ctx = load_app_config(; config_dir, db_path, credentials_path,
                         templates_dir="templates",
@@ -110,17 +109,8 @@ function cmd_sync(;
 
         # Step 5: Check config sync and track which events changed
         @info "[5/9] Checking configuration sync..."
-        unsynced = get_unsynced_configs(db, events_dir)
-        if !isempty(unsynced)
-            files = [file.path for file in unsynced]
-            @warn "Config files need syncing" files=files
-            @info "Running sync..."
-            sync_event_configs_to_db!(db, events_dir)
-            @info "✓ Configuration synced"
-        else
-            @info "✓ All configurations in sync"
-        end
-
+        updated_events2 = sync_event_configs_to_db!(db, events_dir)
+        updated_events = unique(vcat(updated_events, updated_events2))
         # Step 6: Recalculate costs for changed events and NULL costs
         @info "[6/9] Recalculating costs..."
         recalculated = String[]
@@ -128,6 +118,7 @@ function cmd_sync(;
         events = list_events(db)
         for event_row in events
             evt_id = event_row[1]
+            evt_id in updated_events || continue
             cfg = Config.load_event_config(evt_id, events_dir)
             isnothing(cfg) && continue
 

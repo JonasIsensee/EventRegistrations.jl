@@ -872,7 +872,6 @@ function queue_pending_emails!(cfg::EmailConfig, db::DuckDB.DB, event_id::Abstra
         # Convert database booleans to Julia booleans (handle missing)
         has_reg_email = something(has_registration_email, false)
         has_pay_email = something(has_payment_email, false)
-        @info registration_id computed_cost has_registration_email has_payment_email last_sent_cost
 
         # If computed_cost is NULL, send registration_confirmation if not already sent
         if computed_cost === nothing || ismissing(computed_cost) || (computed_cost == 0 && !has_registration_email)

@@ -143,10 +143,10 @@ export ConfigSyncStatus, check_config_sync, get_unsynced_configs
 export get_all_config_sync_status
 
 # Re-export from Config
-using .Config: DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs
+using .Config: DEFAULT_CONFIG_DIR, EventConfig, load_event_config
 using .Config: materialize_cost_rules, generate_field_config, generate_event_config_template, sync_event_configs_to_db!
 using .Config: ensure_config_dirs, get_registration_detail_columns
-export DEFAULT_CONFIG_DIR, EventConfig, load_event_config, load_all_event_configs
+export DEFAULT_CONFIG_DIR, EventConfig, load_event_config
 export materialize_cost_rules, generate_field_config, sync_event_configs_to_db!
 export ensure_config_dirs, get_registration_detail_columns
 
