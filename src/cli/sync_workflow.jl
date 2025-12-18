@@ -83,7 +83,6 @@ function cmd_sync(;
             SELECT DISTINCT event_id FROM registrations
             ORDER BY event_id
         """)
-        events_dir = "events"
         mkpath(events_dir)
 
         generated_count = 0
@@ -111,7 +110,7 @@ function cmd_sync(;
 
         # Step 5: Check config sync and track which events changed
         @info "[5/9] Checking configuration sync..."
-        unsynced = get_unsynced_configs(db, config_dir)
+        unsynced = get_unsynced_configs(db, events_dir)
         if !isempty(unsynced)
             files = [file.path for file in unsynced]
             @warn "Config files need syncing" files=files

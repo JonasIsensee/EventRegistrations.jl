@@ -787,11 +787,9 @@ end
 Get list of all config files that need syncing.
 Checks all event configs (fields.toml is deprecated).
 """
-function get_unsynced_configs(db::DuckDB.DB, config_dir::AbstractString=DEFAULT_CONFIG_DIR)::Vector{ConfigSyncStatus}
+function get_unsynced_configs(db::DuckDB.DB, events_dir::AbstractString="events")::Vector{ConfigSyncStatus}
     unsynced = ConfigSyncStatus[]
-
     # Check all event configs
-    events_dir = joinpath(config_dir, "events")
     if isdir(events_dir)
         for file in readdir(events_dir)
             if endswith(file, ".toml")

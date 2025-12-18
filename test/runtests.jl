@@ -161,7 +161,7 @@ end
 
 """Setup event configuration for testing"""
 function setup_test_event_config(db)
-    mkpath(joinpath(TEST_CONFIG_DIR, "events"))
+    mkpath(TEST_EVENTS_DIR)
 
     config_toml = """
 [event]
