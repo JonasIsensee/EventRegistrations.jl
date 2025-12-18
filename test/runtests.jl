@@ -613,8 +613,8 @@ try
         @test occursin("base = 50.0", read(config_path, String))
         println("  ✓ Modified config with cost rules")
 
-        # Step 3: Sync the config file to database
-        EventRegistrations.Config.record_config_sync(db, config_path)
+        # Step 3: Sync the config files to database
+        EventRegistrations.Config.sync_event_configs_to_db!(db, TEST_EVENTS_DIR)
 
         # Verify the sync was recorded
         result = DBInterface.execute(db,
@@ -627,9 +627,6 @@ try
         @test rows[1][2] !== nothing  # config_snapshot
         @test occursin("base = 50.0", rows[1][2])  # Verify content is stored
         println("  ✓ Config sync recorded in database")
-
-        # Step 4: Sync the config to events table
-        EventRegistrations.Config.sync_event_configs_to_db!(db, TEST_EVENTS_DIR)
 
         # Verify event was created in events table with cost rules
         event_result = DBInterface.execute(db,

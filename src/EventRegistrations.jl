@@ -145,10 +145,10 @@ export get_all_config_sync_status
 # Re-export from Config
 using .Config: DEFAULT_CONFIG_DIR, EventConfig, load_event_config
 using .Config: materialize_cost_rules, generate_field_config, generate_event_config_template, sync_event_configs_to_db!
-using .Config: ensure_config_dirs, get_registration_detail_columns
+using .Config: get_registration_detail_columns
 export DEFAULT_CONFIG_DIR, EventConfig, load_event_config
 export materialize_cost_rules, generate_field_config, sync_event_configs_to_db!
-export ensure_config_dirs, get_registration_detail_columns
+export get_registration_detail_columns
 
 # Re-export AppConfig types/functions (now included directly)
 export AppConfig, EmailConfig, load_app_config
@@ -358,14 +358,16 @@ export grant_subsidies_from_csv!
 """
 Set up the project directory structure with config files.
 Creates:
-- config/events/ directory (for event-specific configs)
-- config/templates/ directory with default templates
+- events/ directory (for event-specific configs)
+- templates/ directory with default templates
 """
-function setup_project!(config_dir::AbstractString="config")
-    ensure_config_dirs(config_dir)
+function setup_project!(base_dir::AbstractString=".")
+    mkpath(basedir)
+    mkpath(joinpath(base_dir, "events"))
+    mkpath(joinpath(base_dir, "templates"))
 
     # Create default templates in the configured directory
-    templates_dir = joinpath(config_dir, "templates")
+    templates_dir = joinpath(base_dir, "templates")
     ConfirmationEmails.ensure_default_templates(templates_dir)
     return config_dir
 end

@@ -32,9 +32,6 @@ end
 
 function select_credentials_path(credentials_path::Union{String,Nothing}, config_dir::String)
     candidates = credentials_path === nothing ? [
-        joinpath(config_dir, "email_credentials.toml"),
-        joinpath(config_dir, "credentials.toml"),
-        "email_credentials.toml",
         "credentials.toml",
     ] : [credentials_path]
 
@@ -91,18 +88,17 @@ function parse_email_config(config::Dict; templates_dir::String, dry_run::Bool)
 end
 
 function load_app_config(; config_dir::String="config", db_path::String="events.duckdb",
-                         credentials_path::Union{String,Nothing}=nothing,
+                         credentials_path::String="credentials.toml",
                          templates_dir::Union{String,Nothing}=nothing,
                          dry_run::Bool=true)
     resolved_templates_dir = templates_dir === nothing ? joinpath(config_dir, "templates") : templates_dir
 
-    cred_path = select_credentials_path(credentials_path, config_dir)
-    email_cfg = if cred_path === nothing
-        EmailConfig(; dry_run=dry_run, templates_dir=resolved_templates_dir)
-    else
-        parse_email_config(TOML.parsefile(cred_path);
+    email_cfg = if isfile(credentials_path)
+        parse_email_config(TOML.parsefile(credentials_path);
                            templates_dir=resolved_templates_dir,
-                           dry_run=dry_run)
+                           dry_run)
+    else
+        EmailConfig(; dry_run, templates_dir=resolved_templates_dir)
     end
 
     return AppConfig(

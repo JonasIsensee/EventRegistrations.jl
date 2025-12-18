@@ -13,7 +13,6 @@ import ..EventRegistrations: with_transaction
 export DEFAULT_CONFIG_DIR, EventConfig, load_event_config
 export materialize_cost_rules, get_registration_detail_columns
 export generate_field_config, generate_event_config_template
-export ensure_config_dirs
 export check_config_sync, get_unsynced_configs, record_config_sync
 export ConfigSyncStatus
 
@@ -30,16 +29,6 @@ struct EventConfig
     rules::Vector{Dict{String,Any}}
     computed_fields::Dict{String,Any}
     export_registration_columns::Union{Nothing,Vector{String}}
-end
-
-"""
-Ensure config directories exist.
-"""
-function ensure_config_dirs(base_dir::AbstractString=DEFAULT_CONFIG_DIR)
-    mkpath(base_dir)
-    mkpath(joinpath(base_dir, "events"))
-    mkpath(joinpath(base_dir, "templates"))
-    return base_dir
 end
 
 # =============================================================================

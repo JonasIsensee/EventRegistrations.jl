@@ -19,7 +19,7 @@ function cmd_sync(;
     events_dir::String="events",
     emails_dir::String="emails",
     bank_dir::String="bank_transfers",
-    credentials_path::Union{String,Nothing}=nothing,
+    credentials_path::String="credentials.toml",
     event_id::Union{String,Nothing}=nothing,
     nonstop::Bool=false,
     send_emails::Union{Bool,String}=false,
