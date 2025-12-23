@@ -163,14 +163,14 @@ function cmd_sync(;
         # Step 8: Match transfers
         @info "[8/9] Matching bank transfers..." event_id=event_id
         if event_id !== nothing
-            result = match_transfers!(db; event_id=event_id)
+            result = match_transfers!(db; event_id, email_cfg=ctx.email)
             @info "Matching results" matched=result.matched unmatched=length(result.unmatched)
         else
             events = list_events(db)
             total_matched = 0
             for event_row in events
                 evt_id = event_row[1]
-                result = match_transfers!(db; event_id=evt_id)
+                result = match_transfers!(db; event_id=evt_id, email_cfg=ctx.email)
                 total_matched += result.matched
             end
             @info "Total matched across events" matched=total_matched

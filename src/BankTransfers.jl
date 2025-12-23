@@ -85,7 +85,7 @@ function import_bank_csv!(db::DuckDB.DB, csv_path::AbstractString;
         error("Could not detect required columns (date, amount) in CSV")
     end
 
-    # Process data rows - wrap in transaction for atomicity (safe for nesting)
+    # Process data rows
     new_count = 0
     skip_count = 0
 
@@ -98,17 +98,15 @@ function import_bank_csv!(db::DuckDB.DB, csv_path::AbstractString;
         # Parse CSV line (handling quoted fields)
         fields = parse_csv_line(line, delimiter)
 
-        if length(fields) < maximum(values(col_map))
-            continue
-        end
-
         # Extract values
         date_str = col_map[:date] > 0 ? strip(fields[col_map[:date]], '"') : ""
         amount_str = col_map[:amount] > 0 ? strip(fields[col_map[:amount]], '"') : ""
         reference = col_map[:reference] > 0 ? strip(fields[col_map[:reference]], '"') : ""
         sender_name = col_map[:sender_name] > 0 ? strip(fields[col_map[:sender_name]], '"') : ""
         sender_iban = col_map[:sender_iban] > 0 ? strip(fields[col_map[:sender_iban]], '"') : ""
+        kundenreferenz = col_map[:kundenreferenz] > 0 ? strip(fields[col_map[:kundenreferenz]], '"') : ""
 
+        reference = reference * " " * kundenreferenz
         # Parse date
         transfer_date = parse_date(date_str)
         if transfer_date === nothing
@@ -121,22 +119,11 @@ function import_bank_csv!(db::DuckDB.DB, csv_path::AbstractString;
             amount_str = replace(amount_str, "," => ".")
         end
         amount_str = replace(amount_str, r"[^\d.-]" => "")
-
-        amount = try
-            parse(Float64, amount_str)
-        catch
-            continue
-        end
-
-        # Only process incoming transfers (positive amounts)
-        if amount <= 0
-            continue
-        end
+        amount = parse(Float64, amount_str)
 
         # Create hash for duplicate detection
         hash_input = "$date_str|$amount_str|$reference|$sender_name"
         transfer_hash = hash_input# bytes2hex(sha256(hash_input))
-
         # Check if already exists
         existing = DBInterface.execute(db,
             "SELECT COUNT(*) FROM bank_transfers WHERE transfer_hash = ?",
@@ -177,7 +164,8 @@ function detect_columns(header::Vector)
         :amount => 0,
         :reference => 0,
         :sender_name => 0,
-        :sender_iban => 0
+        :sender_iban => 0,
+        :kundenreferenz => 0,
     )
 
     for (i, col) in enumerate(header)
@@ -187,9 +175,9 @@ function detect_columns(header::Vector)
            (occursin("buchungstag", col_lower) || occursin("datum", col_lower) ||
             occursin("date", col_lower) || occursin("valuta", col_lower))
             col_map[:date] = i
-        elseif col_map[:amount] == 0 &&
+        elseif (col_map[:amount] == 0 &&
                (occursin("betrag", col_lower) || occursin("amount", col_lower) ||
-                occursin("umsatz", col_lower))
+                occursin("umsatz", col_lower))) || "betrag"==col_lower
             col_map[:amount] = i
         elseif col_map[:reference] == 0 &&
                (occursin("verwendungszweck", col_lower) || occursin("reference", col_lower) ||
@@ -202,6 +190,9 @@ function detect_columns(header::Vector)
         elseif col_map[:sender_iban] == 0 &&
                (occursin("iban", col_lower) || occursin("kontonummer", col_lower))
             col_map[:sender_iban] = i
+        elseif col_map[:kundenreferenz] == 0 &&
+                (occursin("kundenreferenz", col_lower))
+            col_map[:kundenreferenz] = i
         end
     end
 
