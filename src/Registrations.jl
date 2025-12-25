@@ -84,38 +84,6 @@ function prompt_user_bool(question::AbstractString; default::Union{Bool,Nothing}
 end
 
 """
-Interactively offer to create configuration files for newly detected events.
-
-Returns a NamedTuple indicating whether processing should continue and which
-configuration files were created.
-"""
-function handle_new_event_prompts!(db::DuckDB.DB, events::Vector{String}, events_dir::AbstractString)
-    mkpath(events_dir)
-    created_configs = Dict{String,String}()
-
-    for event_id in events
-        println("\n⚠ New event detected without cost configuration: $event_id")
-        if prompt_user_bool("Create configuration for $event_id now?"; default=true)
-            config_path = joinpath(events_dir, "$(event_id).toml")
-            try
-                generate_event_config_template(event_id, config_path; db)
-                println("  ✓ Created event configuration at $config_path")
-                created_configs[event_id] = config_path
-            catch err
-                println("  ✗ Failed to create configuration for $event_id: $(sprint(showerror, err))")
-            end
-        end
-    end
-
-    if !isempty(created_configs)
-        println("\nPlease review and edit the generated configuration file(s) before continuing.")
-    end
-
-    continue_sync = prompt_user_bool("Continue processing after updating configuration?"; default=false)
-    return (continue_sync=continue_sync, created_configs=created_configs)
-end
-
-"""
 Process all .eml files in a folder.
 Handles resubmissions by updating existing registrations while preserving reference numbers.
 Reports newly detected event IDs and auto-creates missing event configs by default, loading
@@ -130,151 +98,23 @@ function process_email_folder!(db::DuckDB.DB, folder_path::AbstractString;
     eml_files = filter(f -> endswith(lowercase(f), ".eml"), readdir(folder_path, join=true))
 
     mkpath(events_dir)
-    auto_created_configs = Dict{String,String}()
     # Track event IDs found in this batch
-    detected_event_ids = Set{String}()
-    events_without_config = Set{String}()
-    resubmissions = Vector{Tuple{String,String,String}}()  # (email, event_id, reference)
 
     stats = (processed=0, submissions=0, new_registrations=0, updates=0, skipped=0, no_cost_config=0)
-    terminated = false
 
     for filepath in eml_files
-        #try
-            # Parse email to detect event_id before processing
-            parsed = EmailParser.parse_eml(filepath)
-            submission = EmailParser.extract_form_submission(parsed.body_html)
+        result = process_single_email!(db, filepath; events_dir)
 
-            if !isnothing(submission)
-                push!(detected_event_ids, submission.event_id)
-
-                cfg = load_event_config(submission.event_id, events_dir)
-                has_config = !isnothing(cfg)
-
-                if !has_config && !haskey(auto_created_configs, submission.event_id)
-                    config_path = joinpath(events_dir, "$(submission.event_id).toml")
-                    generate_event_config_template(submission.event_id, config_path; db)
-                    cfg = load_event_config(submission.event_id, events_dir)
-                    if isnothing(cfg)
-                        @warn "Auto-created config could not be loaded" event_id=submission.event_id path=config_path
-                    else
-                        auto_created_configs[submission.event_id] = config_path
-                        has_config = true
-                        @info "Auto-created event configuration" event_id=submission.event_id path=config_path
-                    end
-                end
-
-                if !has_config
-                    push!(events_without_config, submission.event_id)
-                end
-            end
-
-            result = process_single_email!(db, filepath; events_dir)
-
-            # Track resubmissions
-            if result.is_update && submission !== nothing
-                # Get the reference number for this registration
-                ref_result = DBInterface.execute(db,
-                    "SELECT reference_number FROM registrations WHERE event_id = ? AND email = ?",
-                    [submission.event_id, submission.email])
-                ref_rows = collect(ref_result)
-                if !isempty(ref_rows)
-                    push!(resubmissions, (submission.email, submission.event_id, ref_rows[1][1]))
-                end
-            end
-
-            stats = (
-                processed = stats.processed + 1,
-                submissions = stats.submissions + (result.has_submission ? 1 : 0),
-                new_registrations = stats.new_registrations + (result.is_new ? 1 : 0),
-                updates = stats.updates + (result.is_update ? 1 : 0),
-                skipped = stats.skipped + (result.skipped ? 1 : 0),
-                no_cost_config = stats.no_cost_config + (result.no_cost_config ? 1 : 0)
-            )
-        # catch e
-        #     @warn "Error processing email" filepath exception=e
-        # end
+        stats = (
+            processed = stats.processed + 1,
+            submissions = stats.submissions + (result.has_submission ? 1 : 0),
+            new_registrations = stats.new_registrations + (result.is_new ? 1 : 0),
+            updates = stats.updates + (result.is_update ? 1 : 0),
+            skipped = stats.skipped + (result.skipped ? 1 : 0),
+            no_cost_config = stats.no_cost_config + (result.no_cost_config ? 1 : 0)
+        )
     end
-
-    # Report detected events
-    # if !isempty(detected_event_ids)
-    #     println("\n" * "="^80)
-    #     println("DETECTED EVENT IDs:")
-    #     for event_id in sort(collect(detected_event_ids))
-    #         has_config = event_id ∉ events_without_config
-    #         status = has_config ? "✓ (has cost config)" : "⚠ (NO cost config)"
-    #         println("  - $event_id $status")
-    #     end
-    # end
-
-    # Load newly created configs into the database so costs can be applied immediately
-    if !isempty(auto_created_configs)
-        println("\n" * "="^80)
-        println("Auto-created event configurations:")
-        for (event_id, path) in sort(collect(auto_created_configs); by=first)
-            println("  - $event_id -> $path")
-        end
-        sync_event_configs_to_db!(db, events_dir)
-        println("  ✓ Loaded new configurations into the database")
-        println("="^80)
-    end
-
-    # Suggest config generation for events without config
-    if !isempty(events_without_config)
-        println("\n" * "="^80)
-        println("⚠ WARNING: $(length(events_without_config)) event(s) have NO cost configuration!")
-        println("Costs are set to NULL until configuration is created.")
-        if prompt_for_new_events
-            println("\nInteractive setup assistance is available now.")
-        else
-            println("\nTo configure costs for these events:")
-            for event_id in sort(collect(events_without_config))
-                println("\n  Event: $event_id")
-                println("    1. Generate field config (if not done): eventreg generate-field-config")
-                println("    2. Create event config: eventreg create-event-config $event_id")
-                println("    3. Edit config/events/$event_id.toml to set cost rules")
-                println("    4. Sync to database: eventreg sync-config")
-                println("    5. Recalculate costs: eventreg recalculate-costs $event_id")
-            end
-        end
-        println("="^80)
-    end
-
-    if prompt_for_new_events && !isempty(events_without_config)
-        sorted_events = sort(collect(events_without_config))
-        prompt_result = handle_new_event_prompts!(db, sorted_events, events_dir)
-        if !prompt_result.continue_sync
-            terminated = true
-        end
-        for event_id in keys(prompt_result.created_configs)
-            if event_id in events_without_config
-                delete!(events_without_config, event_id)
-            end
-        end
-    end
-
-    # Report resubmissions (updated registrations)
-    if !isempty(resubmissions)
-        println("\n" * "="^80)
-        println("ℹ RESUBMISSIONS DETECTED ($(length(resubmissions)) registration(s) updated):")
-        println()
-        println("The following people submitted new forms, updating their previous registration.")
-        println("Reference numbers were preserved to maintain payment matching.")
-        println()
-        for (email, event_id, reference) in resubmissions
-            println("  • $email (Event: $event_id, Ref: $reference)")
-        end
-        println("\nNote: If you need to manually override automatic matching (e.g., for")
-        println("different email addresses from the same person), you can:")
-        println("  1. Check registration details: eventreg event-overview $([r[2] for r in resubmissions][1])")
-        println("  2. Manually match payments: eventreg manual-match <transfer_id> <reference>")
-        println("="^80)
-    end
-
-    return merge(stats, (
-        events_without_config = sort(collect(events_without_config)),
-        terminated = terminated,
-    ))
+    return stats
 end
 
 """
@@ -296,6 +136,7 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString; events_d
     parsed = parse_eml(filepath)
     submission = extract_form_submission(parsed.body_html)
 
+    event_id = isnothing(submission) ? nothing : get(submission, :event_id, nothing)
     has_submission = submission !== nothing
     is_new = false
     is_update = false
@@ -307,8 +148,7 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString; events_d
         DBInterface.execute(db, """
             INSERT INTO processed_emails (file_hash, filename, processed_at, has_submission, event_id)
             VALUES (?, ?, ?, ?, ?)
-        """, [file_hash, filename, now(), has_submission,
-                has_submission ? submission.event_id : nothing])
+        """, [file_hash, filename, now(), has_submission, event_id])
     end
 
     if !has_submission
@@ -356,13 +196,19 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString; events_d
     existing_rows = collect(existing)
 
     cfg = load_event_config(submission.event_id, events_dir)
-
+    if isnothing(cfg)
+        config_path = joinpath(events_dir, "$(submission.event_id).toml")
+        generate_event_config_template(submission.event_id, config_path; db)
+        cfg = load_event_config(submission.event_id, events_dir)
+        @info "Auto-created event configuration" event_id=submission.event_id path=config_path
+        @assert !isnothing(cfg) "Automatic config creation failed"
+    end
     # Calculate cost (returns nothing if no cost config exists)
-    computed_cost = cfg === nothing ? nothing : calculate_cost(cfg, submission.fields)
+    computed_cost = calculate_cost(cfg, submission.fields)
 
     # Use config file hash for versioning
-    cost_rules_hash = cfg === nothing ? nothing : cfg.config_hash
-    cost_computed_at = computed_cost === nothing ? nothing : now()
+    cost_rules_hash = cfg.config_hash
+    cost_computed_at = now()
 
     if isempty(existing_rows)
         # New registration
@@ -436,7 +282,7 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString; events_d
         end
     end
 
-    return (has_submission=has_submission, is_new=is_new, is_update=is_update, skipped=false, no_cost_config=no_cost_config)
+    return (has_submission=has_submission, is_new=is_new, is_update=is_update, skipped=false, no_cost_config=no_cost_config, event_id)
 end
 """
 Get all registrations for an event.
@@ -665,34 +511,6 @@ Revoke (delete) a specific subsidy by its ID.
 function revoke_subsidy!(db::DuckDB.DB, subsidy_id::Integer)
     DBInterface.execute(db, "DELETE FROM subsidies WHERE id = ?", [subsidy_id])
     @info "Revoked subsidy" subsidy_id=subsidy_id
-end
-
-"""
-Batch grant subsidies from a list.
-Format: [(reference_or_email, amount, reason), ...]
-"""
-function grant_subsidies_batch!(db::DuckDB.DB, subsidies::Vector; granted_by::String="")
-    for subsidy in subsidies
-        ref_or_email, amount = subsidy[1], subsidy[2]
-        reason = length(subsidy) >= 3 ? subsidy[3] : ""
-
-        # Try by reference first, then by email
-        reg = get_registration_by_reference(db, ref_or_email)
-        if reg === nothing
-            # Try by email
-            result = DBInterface.execute(db, """
-                SELECT id FROM registrations WHERE email = ?
-            """, [ref_or_email])
-            rows = collect(result)
-            if !isempty(rows)
-                grant_subsidy!(db, rows[1][1], amount; reason=reason, granted_by=granted_by)
-            else
-                @warn "Could not find registration" identifier=ref_or_email
-            end
-        else
-            grant_subsidy!(db, reg[1], amount; reason=reason, granted_by=granted_by)
-        end
-    end
 end
 
 """

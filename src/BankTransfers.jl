@@ -2,11 +2,10 @@ module BankTransfers
 
 using DBInterface: DBInterface
 using Dates: Dates, Date, now, today
-using DelimitedFiles: DelimitedFiles
 using DuckDB: DuckDB
 using JSON: JSON
 using SHA: SHA
-
+using StringEncodings
 
 # Import from parent module
 import ..EventRegistrations: with_transaction, EmailConfig
@@ -59,7 +58,7 @@ function import_bank_csv!(db::DuckDB.DB, csv_path::AbstractString;
     filename = basename(csv_path)
 
     # Read CSV with flexible handling
-    lines = readlines(csv_path)
+    lines = readlines(csv_path, enc"iso8859-1")
 
     # Find header row (might not be first line)
     header_idx = 1

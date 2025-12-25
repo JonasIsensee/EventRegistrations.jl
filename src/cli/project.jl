@@ -3,10 +3,10 @@
 """
 Initialize a new project in the current directory.
 """
-function cmd_init(; db_path::String="events.duckdb", config_dir::String="config")
-    @info "Initializing EventRegistrations project..." db_path=db_path config_dir=config_dir
+function cmd_init(; db_path::String="events.duckdb")
+    @info "Initializing EventRegistrations project..." db_path=db_path
 
-    db = init_project(db_path, config_dir)
+    db = init_project(db_path)
     DBInterface.close!(db)
     return 0
 end
@@ -14,7 +14,7 @@ end
 """
 Show system status and configuration summary.
 """
-function cmd_status(; db_path::String="events.duckdb", config_dir::String="config")
+function cmd_status(; db_path::String="events.duckdb")
     header = [
         "EventRegistrations System Status",
         "=" ^ 80,
@@ -54,64 +54,31 @@ function cmd_status(; db_path::String="events.duckdb", config_dir::String="confi
 
     # Configuration
     push!(header, "", "Configuration:")
-    push!(header, "  Config directory: $config_dir")
-    if isdir(config_dir)
-        push!(header, "  Status: ✓ Exists")
-
-        # Check fields.toml
-        fields_path = joinpath(config_dir, "fields.toml")
-        if isfile(fields_path)
-            push!(header, "  Fields config: ✓ $fields_path")
-        else
-            push!(header, "  Fields config: ❌ Not found (run 'eventreg generate-field-config')")
-        end
-
-        # Check events directory
-        events_dir = joinpath(config_dir, "events")
-        if isdir(events_dir)
-            event_configs = filter(f -> endswith(f, ".toml"), readdir(events_dir))
-            push!(header, "  Event configs: $(length(event_configs)) files in $events_dir")
-            for config_file in event_configs
-                push!(header, "    - $(config_file)")
-            end
-        else
-            push!(header, "  Events directory: ❌ Not found")
-        end
-
-        # Check templates directory
-        templates_dir = joinpath(config_dir, "templates")
-        if isdir(templates_dir)
-            template_files = filter(f -> endswith(f, ".mustache"), readdir(templates_dir))
-            push!(header, "  Templates: $(length(template_files)) files in $templates_dir")
-        else
-            push!(header, "  Templates directory: ❌ Not found")
+    # Check events directory
+    events_dir = "events"
+    if isdir(events_dir)
+        event_configs = filter(f -> endswith(f, ".toml"), readdir(events_dir))
+        push!(header, "  Event configs: $(length(event_configs)) files in $events_dir")
+        for config_file in event_configs
+            push!(header, "    - $(config_file)")
         end
     else
-        push!(header, "  Status: ❌ Not found (run 'eventreg init' to create)")
+        push!(header, "  Events directory: ❌ Not found")
+    end
+
+    # Check templates directory
+    templates_dir = "templates"
+    if isdir(templates_dir)
+        template_files = filter(f -> endswith(f, ".mustache"), readdir(templates_dir))
+        push!(header, "  Templates: $(length(template_files)) files in $templates_dir")
+    else
+        push!(header, "  Templates directory: ❌ Not found")
     end
 
     @info join(header, "\n")
 
-    # Config sync summary (requires DB)
-    if db_exists
-        require_database(db_path) do db
-            statuses = Config.get_all_config_sync_status(db, config_dir)
-            if isempty(statuses)
-                @info "Config sync: No config files found" config_dir=config_dir
-            else
-                unsynced = filter(s -> s.needs_sync, statuses)
-                if isempty(unsynced)
-                    @info "Config sync: ✓ All configs in sync"
-                else
-                    rel_paths = [replace(s.path, pwd() * "/" => "") for s in unsynced]
-                    @warn "Config sync: files need syncing" files=rel_paths
-                end
-            end
-        end
-    end
-
     # Validation summary (lightweight)
-    if db_exists && isdir(config_dir)
+    if db_exists
         require_database(db_path) do db
             event_rows = collect(DBInterface.execute(db, "SELECT event_id FROM events"))
             if isempty(event_rows)
@@ -122,7 +89,7 @@ function cmd_status(; db_path::String="events.duckdb", config_dir::String="confi
                 warnings = 0
                 for row in event_rows
                     eid = row[1]
-                    cfg = Config.load_event_config(eid, config_dir)
+                    cfg = Config.load_event_config(eid, events_dir)
                     if cfg === nothing
                         missing += 1
                         continue

@@ -22,7 +22,6 @@ using TOML
 # Create temporary test directory
 const TEST_DIR = mktempdir()
 const TEST_DB_PATH = joinpath(TEST_DIR, "test_events.duckdb")
-const TEST_CONFIG_DIR = joinpath(TEST_DIR, "config")
 const TEST_EVENTS_DIR = joinpath(TEST_DIR, "events")
 const TEST_EMAILS_DIR = joinpath(TEST_DIR, "emails")
 const TEST_BANK_DIR = joinpath(TEST_DIR, "bank_transfers")

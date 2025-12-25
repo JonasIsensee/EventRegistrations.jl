@@ -137,16 +137,14 @@ export export_registration_pdf, export_registration_csv
 export filter_registrations, generate_registration_latex_document
 
 # Re-export from Config for sync tracking
-using .Config: ConfigSyncStatus, check_config_sync, get_unsynced_configs
-using .Config: get_all_config_sync_status
-export ConfigSyncStatus, check_config_sync, get_unsynced_configs
-export get_all_config_sync_status
+using .Config: ConfigSyncStatus, check_config_sync
+export ConfigSyncStatus, check_config_sync
 
 # Re-export from Config
-using .Config: DEFAULT_CONFIG_DIR, EventConfig, load_event_config
+using .Config: EventConfig, load_event_config
 using .Config: materialize_cost_rules, generate_field_config, generate_event_config_template, sync_event_configs_to_db!
 using .Config: get_registration_detail_columns
-export DEFAULT_CONFIG_DIR, EventConfig, load_event_config
+export EventConfig, load_event_config
 export materialize_cost_rules, generate_field_config, sync_event_configs_to_db!
 export get_registration_detail_columns
 
@@ -160,11 +158,11 @@ export calculate_cost
 # Re-export from Registrations
 using .Registrations: process_email_folder!, get_registrations
 using .Registrations: RegistrationDetailTable, get_registration_detail_table
-using .Registrations: grant_subsidy!, get_subsidies, revoke_subsidy!, grant_subsidies_batch!
+using .Registrations: grant_subsidy!, get_subsidies, revoke_subsidy!
 using .Registrations: get_registration_by_reference, recalculate_costs!
 export process_email_folder!, get_registrations
 export RegistrationDetailTable, get_registration_detail_table
-export grant_subsidy!, get_subsidies, revoke_subsidy!, grant_subsidies_batch!
+export grant_subsidy!, get_subsidies, revoke_subsidy!
 export get_registration_by_reference, recalculate_costs!
 
 # Re-export from BankTransfers
@@ -314,72 +312,23 @@ function resolve_unmatched_interactive(db::DuckDB.DB)
 end
 export resolve_unmatched_interactive
 
-"""
-Grant subsidies from a CSV file.
-Format: CSV with columns: identifier (email or reference), amount, reason
-"""
-function grant_subsidies_from_csv!(db::DuckDB.DB, csv_path::AbstractString;
-                                    granted_by::String="csv_import")
-    lines = readlines(csv_path)
-
-    # Skip header
-    start_idx = 1
-    if occursin("identifier", lowercase(lines[1])) || occursin("email", lowercase(lines[1])) ||
-       occursin("referenz", lowercase(lines[1]))
-        start_idx = 2
-    end
-
-    count = 0
-    for line in lines[start_idx:end]
-        parts = split(line, [',', ';'])
-        if length(parts) >= 2
-            identifier = strip(parts[1], '"')
-            amount = parse(Float64, replace(strip(parts[2], '"'), "," => "."))
-            reason = length(parts) >= 3 ? strip(parts[3], '"') : ""
-
-            try
-                grant_subsidy!(db, identifier, amount; reason=reason, granted_by=granted_by)
-                count += 1
-            catch e
-                @warn "Failed to grant subsidy" identifier=identifier exception=e
-            end
-        end
-    end
-
-    @info "Granted subsidies from CSV" count=count file=csv_path
-    return count
-end
-export grant_subsidies_from_csv!
 
 # =============================================================================
 # PROJECT SETUP
 # =============================================================================
 
 """
-Set up the project directory structure with config files.
-Creates:
-- events/ directory (for event-specific configs)
-- templates/ directory with default templates
-"""
-function setup_project!(base_dir::AbstractString=".")
-    mkpath(basedir)
-    mkpath(joinpath(base_dir, "events"))
-    mkpath(joinpath(base_dir, "templates"))
-
-    # Create default templates in the configured directory
-    templates_dir = joinpath(base_dir, "templates")
-    ConfirmationEmails.ensure_default_templates(templates_dir)
-    return config_dir
-end
-export setup_project!
-
-"""
 Initialize everything: database, config, and sync.
 Convenience function for quick setup.
 """
-function init_project(db_path::AbstractString, config_dir::AbstractString="config")
+function init_project(db_path::AbstractString, base_dir::AbstractString="")
     # Set up directories
-    setup_project!(config_dir)
+    mkpath(base_dir)
+    mkpath(joinpath(base_dir, "events"))
+    templates_dir = joinpath(base_dir, "templates")
+
+    # Create default templates in the configured directory
+    ConfirmationEmails.ensure_default_templates(templates_dir)
 
     # Initialize database
     db = init_database(db_path)

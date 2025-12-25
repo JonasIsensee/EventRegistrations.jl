@@ -15,6 +15,7 @@ with_cli_logger(f::Function; io::IO=stdout) = with_logger(ConsoleLogger(io)) do
     f()
 end
 
+parse_subcommand_options(::Bool) = Dict{Symbol, Any}()
 """
 Parse sub-command option strings like "--format=csv --filter=unpaid" into a Dict.
 Returns empty dict for empty/whitespace-only strings.

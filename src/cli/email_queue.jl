@@ -160,10 +160,7 @@ function cmd_send_emails(;
     id::Union{Int,Nothing}=nothing,
     credentials_path::Union{Nothing,String}=nothing)
 
-    ctx = load_app_config(; config_dir="config", db_path,
-                            credentials_path,
-                            templates_dir=joinpath("config", "templates"),
-                            dry_run=false)
+    ctx = load_app_config(; db_path, credentials_path, dry_run=false)
     require_database(db_path) do db
 
         if id !== nothing

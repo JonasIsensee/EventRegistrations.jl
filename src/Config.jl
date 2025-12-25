@@ -10,13 +10,11 @@ using TOML: TOML
 # Import from parent module
 import ..EventRegistrations: with_transaction
 
-export DEFAULT_CONFIG_DIR, EventConfig, load_event_config
+export EventConfig, load_event_config
 export materialize_cost_rules, get_registration_detail_columns
 export generate_field_config, generate_event_config_template
-export check_config_sync, get_unsynced_configs, record_config_sync
+export check_config_sync, record_config_sync
 export ConfigSyncStatus
-
-const DEFAULT_CONFIG_DIR = "config"
 
 struct EventConfig
     event_id::String
@@ -759,49 +757,6 @@ function check_config_sync(db::DuckDB.DB, config_path::AbstractString)::ConfigSy
     needs_sync = !is_synced
 
     return ConfigSyncStatus(config_path, file_mtime, synced_at, is_synced, needs_sync)
-end
-
-"""
-Get list of all config files that need syncing.
-Checks all event configs (fields.toml is deprecated).
-"""
-function get_unsynced_configs(db::DuckDB.DB, events_dir::AbstractString="events")::Vector{ConfigSyncStatus}
-    unsynced = ConfigSyncStatus[]
-    # Check all event configs
-    if isdir(events_dir)
-        for file in readdir(events_dir)
-            if endswith(file, ".toml")
-                event_path = joinpath(events_dir, file)
-                status = check_config_sync(db, event_path)
-                if status.needs_sync
-                    push!(unsynced, status)
-                end
-            end
-        end
-    end
-
-    return unsynced
-end
-
-"""
-Get sync status for all config files.
-Returns a vector of (path, synced, needs_sync) tuples.
-"""
-function get_all_config_sync_status(db::DuckDB.DB, config_dir::AbstractString=DEFAULT_CONFIG_DIR)
-    statuses = ConfigSyncStatus[]
-
-    # Check all event configs (fields.toml is deprecated)
-    events_dir = joinpath(config_dir, "events")
-    if isdir(events_dir)
-        for file in readdir(events_dir)
-            if endswith(file, ".toml")
-                event_path = joinpath(events_dir, file)
-                push!(statuses, check_config_sync(db, event_path))
-            end
-        end
-    end
-
-    return statuses
 end
 
 end # module

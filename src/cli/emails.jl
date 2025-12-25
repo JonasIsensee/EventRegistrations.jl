@@ -43,10 +43,9 @@ Download emails from POP3 server.
 """
 function cmd_download_emails(;
     credentials_path::Union{Nothing,String}="credentials.toml",
-    emails_dir::String="emails",
-    config_dir::String="config")
+    emails_dir::String="emails")
 
-    ctx = load_app_config(; config_dir, credentials_path)
+    ctx = load_app_config(; credentials_path)
 
 
     if isempty(ctx.email.pop3_server)
