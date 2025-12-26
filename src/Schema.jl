@@ -20,7 +20,7 @@ Tables:
 - confirmation_emails: Track sent emails with resending support
 - config_sync: Track configuration file sync state
 """
-function init_database(db_path::AbstractString)
+function init_database(db_path::AbstractString="events.duckdb")
     #db = DBInterface.connect(SQLite.DB, db_path)
     db = DBInterface.connect(DuckDB.DB, db_path)
 

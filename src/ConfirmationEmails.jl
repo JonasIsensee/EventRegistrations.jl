@@ -8,7 +8,7 @@ using Mustache: Mustache
 using PNGFiles: PNGFiles
 using QRCode: QRCode, qrcode
 using SMTPClient: SMTPClient, SendOptions, send
-using Base64: base64encode
+using Base64: base64encode, base64decode
 using Printf: @sprintf
 using Random: randstring
 
@@ -53,7 +53,7 @@ function load_template(cfg, name::AbstractString)
     return read(path, String)
 end
 
-const PACKAGE_TEMPLATES_DIR = normpath(joinpath(@__DIR__, "..", "config", "templates"))
+const PACKAGE_TEMPLATES_DIR = normpath(joinpath(@__DIR__, "..", "templates"))
 
 render_template(template::AbstractString, vars::AbstractDict) = Mustache.render(template, vars)
 
@@ -125,15 +125,6 @@ function format_registration_fields(fields::AbstractDict;
 """
 end
 
-struct EmailAttachment
-    filename::String
-    content_type::String
-    content::Vector{UInt8}
-    disposition::String
-end
-
-"""Email configuration is provided via `EmailConfig`; no globals are mutated here."""
-
 """
 Format a number as currency string.
 """
@@ -181,27 +172,6 @@ function prepare_bank_details(cfg::EmailConfig, reference_number::String)
     end
 
     return replace(details, "[Ihre Referenznummer]" => reference_number, "{reference}" => reference_number)
-end
-
-"""
-Collapse sequences of more than two blank lines to two blank lines.
-"""
-collapse_blank_lines(text::AbstractString) = replace(text, r"\n{3,}" => "\n\n")
-
-"""
-Sanitize a string for safe filename usage.
-"""
-function sanitize_filename(name::AbstractString)
-    sanitized = replace(name, r"[^A-Za-z0-9._-]" => "-")
-    return isempty(sanitized) ? "attachment" : sanitized
-end
-
-"""
-Wrap base64 output to RFC-compliant line lengths.
-"""
-function wrap_base64(bytes::Vector{UInt8}; line_length::Int=76)
-    encoded = base64encode(bytes)
-    return join([encoded[i:min(i + line_length - 1, end)] for i in 1:line_length:length(encoded)], "\r\n")
 end
 
 """
@@ -286,17 +256,15 @@ function maybe_generate_payment_qr(cfg::EmailConfig, amount::Float64, reference:
         png_bytes = qr_payload_to_png(payload)
         encoded = base64encode(png_bytes)
         hint_amount = replace(@sprintf("%.2f", amount), "." => ",")
-
         # QR code sizing: min-width ensures scannability (~4cm at 96dpi),
         # width provides comfortable default (~5cm), max-width prevents excessive size
         html = """
-<div style="margin: 24px 0; text-align: center;">
-  <h3 style="margin-bottom: 12px; font-size: 18px;">Bezahlen per QR-Code</h3>
-  <img src="data:image/png;base64,$encoded" alt="SEPA QR-Code" style="min-width: 160px; width: 200px; max-width: 280px; height: auto; image-rendering: pixelated;" />
-  <p style="margin-top: 12px; font-size: 14px; color: #4a5568;">Scanne den QR-Code mit deiner Banking-App.<br>Betrag (€$hint_amount) und Verwendungszweck werden automatisch übernommen.</p>
-</div>
-"""
-
+        <div style="margin: 24px 0; text-align: center;">
+        <h3 style="margin-bottom: 12px; font-size: 18px;">Bezahlen per QR-Code</h3>
+        <img src="data:image/png;base64,$encoded" alt="SEPA QR-Code" style="min-width: 160px; width: 200px; max-width: 280px; height: auto; image-rendering: pixelated;" />
+        <p style="margin-top: 12px; font-size: 14px; color: #4a5568;">Scanne den QR-Code mit deiner Banking-App.<br>Betrag (€$hint_amount) und Verwendungszweck werden automatisch übernommen.</p>
+        </div>
+        """
         return strip(html)
     catch e
         @warn "Failed to create payment QR" exception=e reference=reference
@@ -356,8 +324,7 @@ function generate_email_content(cfg::EmailConfig;
     )
 
     qr_html = maybe_generate_payment_qr(cfg, to_float(remaining), reference_number)
-    vars["qr_block"] = qr_html === nothing ? "" : qr_html
-
+    vars["qr_block"] = something(qr_html, "")
     merge!(vars, extra_vars)
 
     return render_template(template, vars)
@@ -433,7 +400,7 @@ function preview_email(cfg::EmailConfig, db::DuckDB.DB, registration_id::Integer
     return (
         to = row[3],
         subject = "Anmeldebestätigung: $(row[6]) - $(row[4])",
-        body = content
+        body = content,
     )
 end
 
@@ -453,21 +420,8 @@ function encode_mime_header(text::String)
     return "=?UTF-8?B?$(encoded)?="
 end
 
-"""
-Normalize line endings to CRLF as required by SMTP (RFC 5322).
-"""
-function ensure_crlf(text::AbstractString)
-    normalized = replace(text, "\r\n" => "\n")
-    normalized = replace(normalized, '\r' => '\n')
-    normalized = replace(normalized, "\n" => "\r\n")
-    return occursin(r"\r\n$", normalized) ? normalized : string(normalized, "\r\n")
-end
 
-"""
-Send email via SMTP.
-Requires SMTPClient.jl or similar package.
-"""
-function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::String; attachments::Vector{EmailAttachment}=EmailAttachment[])
+function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::String)
     if isempty(cfg.smtp_server)
         @error "SMTP server not configured"
         return false
@@ -482,59 +436,30 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
         println("  Body length: $(length(body)) characters")
 
         # Prepare email message
-        from_email = cfg.from_address
-        from_name = cfg.from_name
+        from = cfg.from_name * " <" * cfg.from_address * ">"
 
-        # Encode subject line for non-ASCII characters (RFC 2047)
-        encoded_subject = encode_mime_header(subject)
-        encoded_from_name = encode_mime_header(from_name)
-
-        header_lines = [
-            "From: $(encoded_from_name) <$(from_email)>",
-            "To: $(to)",
-            "Subject: $(encoded_subject)",
-            "MIME-Version: 1.0"
-        ]
-
-        message_body = ""
-
-        if isempty(attachments)
-            push!(header_lines, "Content-Type: text/html; charset=UTF-8")
-            push!(header_lines, "Content-Transfer-Encoding: 8bit")
-            message_body = join(header_lines, "\n") * "\n\n" * body
-        else
-            boundary = "----=EventRegBoundary$(randstring(12))"
-            push!(header_lines, "Content-Type: multipart/mixed; boundary=\"$(boundary)\"")
-
-            parts = String[]
-            push!(parts, "--$boundary")
-            push!(parts, "Content-Type: text/html; charset=UTF-8")
-            push!(parts, "Content-Transfer-Encoding: 8bit")
-            push!(parts, "")
-            push!(parts, body)
-
-            for att in attachments
-                push!(parts, "--$boundary")
-                push!(parts, "Content-Type: $(att.content_type); name=\"$(att.filename)\"")
-                push!(parts, "Content-Disposition: $(att.disposition); filename=\"$(att.filename)\"")
-                push!(parts, "Content-Transfer-Encoding: base64")
-                push!(parts, "")
-                push!(parts, wrap_base64(att.content))
-            end
-
-            push!(parts, "--$boundary--")
-
-            message_body = join(header_lines, "\n") * "\n\n" * join(parts, "\n")
+        attachments = String[]
+        for m in eachmatch(r"(data:image/png;base64,([^\"]*))", body)
+            payload = base64decode(m[2])
+            tmpfolder = mktempdir()
+            file = joinpath(tmpfolder, randstring()*".png")
+            write(file, payload)
+            body = replace(body, m[1] => "cid:$(basename(file))")
+            push!(attachments, file)
         end
 
-        email_body = ensure_crlf(message_body)
+        message = HTML{String}(body)
+        mime_msg = SMTPClient.get_mime_msg(message)
+        email_body = SMTPClient.get_body([to], from, encode_mime_header(subject), mime_msg;
+            attachments = attachments,
+            multipart_subtype=SMTPClient.RELATED)
+
 
         println("  [SMTP DEBUG] Connecting to SMTP server...")
 
         # Send using SMTPClient
         use_ssl = cfg.smtp_port == 465 || cfg.smtp_port == 587
-        opt = SendOptions(
-            isSSL = use_ssl,
+        opt = SendOptions(; isSSL = use_ssl,
             username = cfg.username,
             passwd = cfg.password
         )
@@ -549,8 +474,8 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
         resp = send(
             url,
             [to],
-            from_email,
-            IOBuffer(email_body),
+            cfg.from_address,
+            email_body,
             opt
         )
 
@@ -1018,7 +943,6 @@ function send_queued_email!(cfg::EmailConfig, db::DuckDB.DB, queue_id::Integer)
     if cfg.dry_run
         println("  [DRY RUN] Would send email to: $email_to")
         println("  [DRY RUN] Subject: $subject")
-        mark_email!(db, queue_id, "sent"; processed_by="dry_run")
         return true
     end
 
