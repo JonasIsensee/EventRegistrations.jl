@@ -455,7 +455,7 @@ function get_body_fixed(
             "$msg\r\n\r\n"
     else
         contents *=
-            "Content-Type: multipart/$(multipart_subtype_map[multipart_subtype]); boundary=\"$boundary\"\r\n" *
+            "Content-Type: multipart/$(SMTPClient.multipart_subtype_map[multipart_subtype]); boundary=\"$boundary\"\r\n" *
             "MIME-Version: 1.0\r\n" *
             "\r\n" *
             (multipart_subtype == MIXED ? "This is a message with multiple parts in MIME format.\r\n" : "") *
