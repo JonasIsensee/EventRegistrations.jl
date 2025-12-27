@@ -420,6 +420,54 @@ function encode_mime_header(text::String)
     return "=?UTF-8?B?$(encoded)?="
 end
 
+using Dates
+function get_body_fixed(
+        to::Vector{String},
+        from::String,
+        subject::String,
+        msg::String;
+        cc::Vector{String} = String[],
+        replyto::String = "",
+        attachments::Vector{String} = String[],
+        multipart_subtype::SMTPClient.MultipartSubType = MIXED
+    )
+
+    boundary = "Julia_SMTPClient-" * join(rand(collect(vcat('0':'9','A':'Z','a':'z')), 40))
+
+    tz = mapreduce(
+        x -> string(x, pad=2), *,
+        divrem( div( ( now() - now(Dates.UTC) ).value, 60000 ), 60 )
+    )
+    startswith(tz, "-") || (tz="+"*tz)
+    date = join([Dates.format(now(), "e, d u yyyy HH:MM:SS", locale="english"), tz], " ")
+
+    contents =
+        "From: $from\r\n" *
+        "Date: $date\r\n" *
+        "Subject: $subject\r\n" *
+        ifelse(length(cc) > 0, "Cc: $(join(cc, ", "))\r\n", "") *
+        ifelse(length(replyto) > 0, "Reply-To: $replyto\r\n", "") *
+        "To: $(join(to, ", "))\r\n"
+
+    if length(attachments) == 0
+        contents *=
+            "MIME-Version: 1.0\r\n" *
+            "$msg\r\n\r\n"
+    else
+        contents *=
+            "Content-Type: multipart/$(multipart_subtype_map[multipart_subtype]); boundary=\"$boundary\"\r\n" *
+            "MIME-Version: 1.0\r\n" *
+            "\r\n" *
+            (multipart_subtype == MIXED ? "This is a message with multiple parts in MIME format.\r\n" : "") *
+            "--$boundary\r\n" *
+            msg *
+            "\r\n--$boundary\r\n" *
+            join(SMTPClient.encode_attachment.(attachments), "\r\n--$boundary\r\n") *
+            "\r\n--$boundary--\r\n"
+    end
+    body = IOBuffer(contents)
+    return body
+end
 
 function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::String)
     if isempty(cfg.smtp_server)
@@ -450,7 +498,7 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
 
         message = HTML{String}(body)
         mime_msg = SMTPClient.get_mime_msg(message)
-        email_body = SMTPClient.get_body([to], from, encode_mime_header(subject), mime_msg;
+        email_body = get_body_fixed([to], from, encode_mime_header(subject), mime_msg;
             attachments = attachments,
             multipart_subtype=SMTPClient.RELATED)
 
