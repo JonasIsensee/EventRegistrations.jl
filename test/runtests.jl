@@ -508,8 +508,285 @@ try
         println("  ✓ Imported $(result.new) bank transfers ($(result.skipped) skipped)")
     end
 
-    @testset "8. Payment Matching" begin
-        println("\n=== Test 8: Payment Matching ===")
+    @testset "8. Reference Number Extraction" begin
+        println("\n=== Test 8: Reference Number Extraction ===")
+
+        using EventRegistrations.ReferenceNumbers
+
+        # Test standard format with underscores
+        candidates = extract_reference_candidates("PWE_2026_01_007")
+        @test !isempty(candidates)
+        @test "PWE_2026_01_007" in candidates
+
+        # Test concatenated format (no separators)
+        candidates = extract_reference_candidates("PWE202601007")
+        @test !isempty(candidates)
+        @test "PWE_2026_01_007" in candidates
+
+        # Test dot-separated format
+        candidates = extract_reference_candidates("PWE.2026.01.007")
+        @test !isempty(candidates)
+        @test "PWE_2026_01_007" in candidates
+
+        # Test space-separated format
+        candidates = extract_reference_candidates("PWE 2026 01 007")
+        @test !isempty(candidates)
+        @test "PWE_2026_01_007" in candidates
+
+        # Test dash-separated format
+        candidates = extract_reference_candidates("PWE-2026-01-007")
+        @test !isempty(candidates)
+        @test "PWE_2026_01_007" in candidates
+
+        # Test partial concatenation
+        candidates = extract_reference_candidates("PWE_202601007")
+        @test !isempty(candidates)
+        @test "PWE_2026_01_007" in candidates
+
+        # Test in realistic transfer text
+        candidates = extract_reference_candidates("Überweisung für PWE202601007 Event")
+        @test !isempty(candidates)
+        @test "PWE_2026_01_007" in candidates
+
+        println("  ✓ Reference number extraction handles all formats")
+    end
+
+    @testset "9. Name Extraction from Transfer Text" begin
+        println("\n=== Test 9: Name Extraction ===")
+
+        using EventRegistrations.ReferenceNumbers
+
+        # Test simple name extraction
+        names = extract_name_candidates("Zahlung für Maria")
+        @test "maria" in names
+
+        # Test multiple names
+        names = extract_name_candidates("Jonas Testmann Event")
+        @test "jonas" in names || "testmann" in names
+
+        # Test with German umlauts
+        names = extract_name_candidates("Überweisung für Müller")
+        @test "müller" in names
+
+        # Test filtering common words
+        names = extract_name_candidates("Zahlung von Peter für das Event")
+        @test "peter" in names
+        @test "das" ∉ names  # Should filter common words
+
+        # Test empty/no names
+        names = extract_name_candidates("payment 123.45 EUR")
+        @test length(names) == 0 || all(length.(names) .>= 2)
+
+        println("  ✓ Name extraction working correctly")
+    end
+
+    @testset "10. Payment Matching - Reference Based" begin
+        println("\n=== Test 10: Payment Matching (Reference Based) ===")
+
+        # Create registrations with proper costs
+        # First ensure we have event config with costs
+        setup_test_event_config(db)
+
+        # Get actual registration references to create matching transfers
+        regs = DBInterface.execute(db, """
+            SELECT reference_number, computed_cost, first_name, last_name
+            FROM registrations
+            WHERE event_id = 'PWE_2026_01' AND computed_cost IS NOT NULL
+            LIMIT 2
+        """) |> collect
+
+        if !isempty(regs)
+            # Clear existing matches then transfers for clean test
+            DBInterface.execute(db, "DELETE FROM payment_matches")
+            DBInterface.execute(db, "DELETE FROM bank_transfers")
+
+            ref1, cost1, fn1, ln1 = regs[1]
+            cost1_float = cost1 === nothing ? 0.0 : Float64(cost1)  # Convert FixedDecimal to Float64
+
+            # Test 1: Standard reference format with underscore
+            DBInterface.execute(db, """
+                INSERT INTO bank_transfers (id, transfer_hash, transfer_date, amount,
+                    sender_name, reference_text, source_file, imported_at)
+                VALUES (nextval('transfer_id_seq'), 'test_std', '2024-01-15', ?,
+                    ?, ?, 'test.csv', NOW())
+            """, [cost1_float, "$(fn1) $(ln1)", ref1])
+
+            # Match transfers
+            match_result = match_transfers!(db; event_id="PWE_2026_01")
+            @test match_result.matched >= 1
+            println("  ✓ Matched standard format reference")
+
+            # Clear for next test
+            DBInterface.execute(db, "DELETE FROM payment_matches")
+            DBInterface.execute(db, "DELETE FROM bank_transfers")
+
+            # Test 2: Concatenated reference (no separators)
+            concat_ref = replace(ref1, "_" => "")
+            DBInterface.execute(db, """
+                INSERT INTO bank_transfers (id, transfer_hash, transfer_date, amount,
+                    sender_name, reference_text, source_file, imported_at)
+                VALUES (nextval('transfer_id_seq'), 'test_concat', '2024-01-15', ?,
+                    ?, ?, 'test.csv', NOW())
+            """, [cost1_float, "$(fn1) $(ln1)", concat_ref])
+
+            match_result = match_transfers!(db; event_id="PWE_2026_01")
+            @test match_result.matched >= 1
+            println("  ✓ Matched concatenated format (PWE202601XXX)")
+
+            # Clear for next test
+            DBInterface.execute(db, "DELETE FROM payment_matches")
+            DBInterface.execute(db, "DELETE FROM bank_transfers")
+
+            # Test 3: Dot-separated reference
+            dot_ref = replace(ref1, "_" => ".")
+            DBInterface.execute(db, """
+                INSERT INTO bank_transfers (id, transfer_hash, transfer_date, amount,
+                    sender_name, reference_text, source_file, imported_at)
+                VALUES (nextval('transfer_id_seq'), 'test_dot', '2024-01-15', ?,
+                    ?, ?, 'test.csv', NOW())
+            """, [cost1_float, "$(fn1) $(ln1)", dot_ref])
+
+            match_result = match_transfers!(db; event_id="PWE_2026_01")
+            @test match_result.matched >= 1
+            println("  ✓ Matched dot-separated format (PWE.2026.01.XXX)")
+
+        else
+            @warn "Skipping reference matching tests - no registrations with costs found"
+        end
+    end
+
+    @testset "11. Payment Matching - Name Based (Strict)" begin
+        println("\n=== Test 11: Payment Matching (Name Based - Strict) ===")
+
+        # This tests the strict name matching that requires BOTH first AND last name
+        # to prevent false positives like matching two "Amelie"s with different last names
+
+        regs = DBInterface.execute(db, """
+            SELECT reference_number, computed_cost, first_name, last_name, email
+            FROM registrations
+            WHERE event_id = 'PWE_2026_01' AND computed_cost IS NOT NULL
+            LIMIT 2
+        """) |> collect
+
+        if length(regs) >= 2
+            # Clear existing matches then transfers
+            DBInterface.execute(db, "DELETE FROM payment_matches")
+            DBInterface.execute(db, "DELETE FROM bank_transfers")
+
+            ref1, cost1, fn1, ln1, email1 = regs[1]
+            ref2, cost2, fn2, ln2, email2 = regs[2]
+            cost1_float = cost1 === nothing ? 0.0 : Float64(cost1)  # Convert FixedDecimal to Float64
+            cost2_float = cost2 === nothing ? 0.0 : Float64(cost2)
+
+            # Test 1: Full name match (both first AND last name) - should match
+            DBInterface.execute(db, """
+                INSERT INTO bank_transfers (id, transfer_hash, transfer_date, amount,
+                    sender_name, reference_text, source_file, imported_at)
+                VALUES (nextval('transfer_id_seq'), 'test_fullname', '2024-01-15', ?,
+                    ?, 'Zahlung', 'test.csv', NOW())
+            """, [cost1_float, "$(fn1) $(ln1)"])
+
+            match_result = match_transfers!(db; event_id="PWE_2026_01")
+            @test match_result.matched >= 1
+            println("  ✓ Matched with full name (first + last)")
+
+            # Clear
+            DBInterface.execute(db, "DELETE FROM payment_matches")
+            DBInterface.execute(db, "DELETE FROM bank_transfers")
+
+            # Test 2: Only first name match with SAME cost - should NOT match
+            # This prevents "Amelie Schmidt" matching "Amelie Mueller"
+            DBInterface.execute(db, """
+                INSERT INTO bank_transfers (id, transfer_hash, transfer_date, amount,
+                    sender_name, reference_text, source_file, imported_at)
+                VALUES (nextval('transfer_id_seq'), 'test_firstname_only', '2024-01-15', ?,
+                    ?, 'Zahlung', 'test.csv', NOW())
+            """, [cost1_float, fn1])  # Only first name, no last name
+
+            match_result = match_transfers!(db; event_id="PWE_2026_01")
+            @test match_result.matched == 0  # Should NOT match with only first name
+            @test length(match_result.unmatched) >= 1
+            println("  ✓ Correctly rejected first-name-only match (prevents false positives)")
+
+            # Clear
+            DBInterface.execute(db, "DELETE FROM payment_matches")
+            DBInterface.execute(db, "DELETE FROM bank_transfers")
+
+            # Test 3: Name in reference text (someone pays for someone else)
+            DBInterface.execute(db, """
+                INSERT INTO bank_transfers (id, transfer_hash, transfer_date, amount,
+                    sender_name, reference_text, source_file, imported_at)
+                VALUES (nextval('transfer_id_seq'), 'test_name_in_ref', '2024-01-15', ?,
+                    'Unknown Person', ?, 'test.csv', NOW())
+            """, [cost1_float, "Zahlung für $(fn1) $(ln1)"])
+
+            match_result = match_transfers!(db; event_id="PWE_2026_01")
+            @test match_result.matched >= 1
+            println("  ✓ Matched name in reference text (payment for someone else)")
+
+        else
+            @warn "Skipping strict name matching tests - need at least 2 registrations"
+        end
+    end
+
+    @testset "12. Payment Matching - Combined Strategies" begin
+        println("\n=== Test 12: Payment Matching (Combined Strategies) ===")
+
+        regs = DBInterface.execute(db, """
+            SELECT reference_number, computed_cost, first_name, last_name
+            FROM registrations
+            WHERE event_id = 'PWE_2026_01' AND computed_cost IS NOT NULL
+            LIMIT 1
+        """) |> collect
+
+        if !isempty(regs)
+            ref1, cost1, fn1, ln1 = regs[1]
+            cost1_float = cost1 === nothing ? 0.0 : Float64(cost1)  # Convert FixedDecimal to Float64
+
+            # Clear
+            DBInterface.execute(db, "DELETE FROM payment_matches")
+            DBInterface.execute(db, "DELETE FROM bank_transfers")
+
+            # Test: Reference + amount + name = highest confidence
+            concat_ref = replace(ref1, "_" => "")
+            DBInterface.execute(db, """
+                INSERT INTO bank_transfers (id, transfer_hash, transfer_date, amount,
+                    sender_name, reference_text, source_file, imported_at)
+                VALUES (nextval('transfer_id_seq'), 'test_combined', '2024-01-15', ?,
+                    ?, ?, 'test.csv', NOW())
+            """, [cost1_float, "$(fn1) $(ln1)", "Event: $concat_ref"])
+
+            match_result = match_transfers!(db; event_id="PWE_2026_01")
+            @test match_result.matched >= 1
+
+            # Check confidence is high
+            matches = DBInterface.execute(db, """
+                SELECT match_confidence, match_type, notes
+                FROM payment_matches
+                ORDER BY created_at DESC LIMIT 1
+            """) |> collect
+
+            if !isempty(matches)
+                confidence, match_type, notes = matches[1]
+                @test confidence >= 0.85  # Should be high confidence
+                println("  ✓ Combined reference + amount + name gives high confidence ($(round(confidence, digits=2)))")
+            end
+
+            # Ledger should link back to payment_matches
+            ledger = DBInterface.execute(db, """
+                SELECT reference_table, reference_id
+                FROM financial_transactions
+                WHERE reference_table = 'payment_matches'
+                ORDER BY recorded_at DESC LIMIT 1
+            """) |> collect
+            @test !isempty(ledger)
+            @test ledger[1][1] == "payment_matches"
+            @test ledger[1][2] !== nothing
+        end
+    end
+
+    @testset "13. Original Payment Matching Test" begin
+        println("\n=== Test 13: Original Payment Matching ===")
 
         # Match transfers
         match_result = match_transfers!(db; event_id="PWE_2026_01")
@@ -526,8 +803,8 @@ try
         println("  ✓ Payment matching completed (matched: $(match_result.matched), unmatched: $(length(match_result.unmatched)))")
     end
 
-    @testset "9. Subsidy Management" begin
-        println("\n=== Test 9: Subsidy Management ===")
+    @testset "14. Subsidy Management" begin
+        println("\n=== Test 14: Subsidy Management ===")
 
         # Get Jonas's reference
         result = DBInterface.execute(db,
@@ -565,8 +842,8 @@ try
 
     end
 
-    @testset "10. Config File Generation and Sync" begin
-        println("\n=== Test 10: Config File Generation and Sync ===")
+    @testset "15. Config File Generation and Sync" begin
+        println("\n=== Test 15: Config File Generation and Sync ===")
 
         # Create a test event for config generation
         test_event_id = "Sommerkonzert_2024"
@@ -656,8 +933,8 @@ try
         println("  ✓ Full config workflow tested (generation → edit → sync → change detection)")
     end
 
-    @testset "11. Event Overview" begin
-        println("\n=== Test 11: Event Overview ===")
+    @testset "16. Event Overview" begin
+        println("\n=== Test 16: Event Overview ===")
 
         # The list_events function requires events to be in the events table
         # Just test that it doesn't crash
@@ -675,8 +952,8 @@ try
         println("  ✓ Event overview functions working")
     end
 
-    @testset "12. Registration Detail Export" begin
-        println("\n=== Test 12: Registration Detail Export ===")
+    @testset "17. Registration Detail Export" begin
+        println("\n=== Test 17: Registration Detail Export ===")
 
         detail_config_path = joinpath(TEST_EVENTS_DIR, "PWE_2026_01.toml")
         mkpath(dirname(detail_config_path))

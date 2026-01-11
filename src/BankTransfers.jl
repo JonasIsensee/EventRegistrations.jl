@@ -261,7 +261,94 @@ function parse_date(date_str::AbstractString)
 end
 
 """
+Calculate name similarity score between two names.
+Returns a score from 0.0 to 1.0.
+"""
+function name_similarity(name1::AbstractString, name2::AbstractString)
+    n1 = lowercase(strip(name1))
+    n2 = lowercase(strip(name2))
+
+    # Exact match
+    if n1 == n2
+        return 1.0
+    end
+
+    # Empty strings
+    if isempty(n1) || isempty(n2)
+        return 0.0
+    end
+
+    # One is a prefix of the other (nicknames, abbreviations)
+    if startswith(n1, n2) || startswith(n2, n1)
+        return 0.8
+    end
+
+    # Check if one contains the other (partial match)
+    if occursin(n2, n1) || occursin(n1, n2)
+        return 0.6
+    end
+
+    return 0.0
+end
+
+"""
+Check if name matches between transfer and registration.
+Returns (matches, confidence) tuple.
+
+This is strict to avoid false positives like matching two people named "Amelie"
+with different last names.
+"""
+function check_name_match(sender_name::AbstractString, reference_text::AbstractString,
+                          first_name::AbstractString, last_name::AbstractString)
+    # Extract name candidates from both sender name and reference text
+    cleaned_sender = replace(lowercase(something(sender_name, "")), r"[^a-zäöüß\s]" => " ")
+    sender_parts = split(cleaned_sender)
+    reference_names = extract_name_candidates(something(reference_text, ""))
+
+    fn_lower = lowercase(something(first_name, ""))
+    ln_lower = lowercase(something(last_name, ""))
+
+    # Scores for first and last name
+    first_name_score = 0.0
+    last_name_score = 0.0
+
+    # Check sender name parts against registration names
+    for part in sender_parts
+        if length(part) < 2  # Skip single letters and empty
+            continue
+        end
+        first_name_score = max(first_name_score, name_similarity(part, fn_lower))
+        last_name_score = max(last_name_score, name_similarity(part, ln_lower))
+    end
+
+    # Check names extracted from reference text
+    for name_candidate in reference_names
+        first_name_score = max(first_name_score, name_similarity(name_candidate, fn_lower))
+        last_name_score = max(last_name_score, name_similarity(name_candidate, ln_lower))
+    end
+
+    # STRICT MATCHING: Require BOTH first AND last name to match reasonably well
+    # This prevents matching "Amelie Schmidt" with "Amelie Mueller" just based on first name
+    if first_name_score >= 0.8 && last_name_score >= 0.8
+        return (true, (first_name_score + last_name_score) / 2)
+    end
+
+    return (false, 0.0)
+end
+
+"""
 Attempt to automatically match unmatched transfers to registrations.
+
+Matching strategy (in order of precedence):
+1. Exact reference + amount + name → auto (0.99 confidence)
+2. Exact reference + amount → auto (0.95 confidence)
+3. Off-by-one reference + amount + name → auto_uncertain (0.75 confidence)
+4. Exact reference + amount mismatch → warn and skip (possible typo)
+5. Name match (both first AND last) + amount → auto_name (0.7 confidence)
+6. Everything else → unmatched (requires manual review)
+
+This conservative approach reduces false positives, especially when people have
+the same first name but different last names or make off-by-one typos.
 """
 function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing,
                           email_cfg::Union{EmailConfig,Nothing}=nothing)
@@ -283,47 +370,245 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
         amount = Float64(amount)
 
         # Try to find reference number in reference text
-        candidates = extract_reference_candidates(something(reference_text, ""))
+        ref_text = something(reference_text, "")
+        candidates = extract_reference_candidates(ref_text)
 
         match_found = false
+        best_match = nothing
+        best_confidence = 0.0
 
-        for (ref_candidate, confidence) in candidates
+        # Strategy 1 & 2: Exact reference number matching
+        for ref_candidate in candidates
             # Look up registration
             reg_query = event_id === nothing ?
-                "SELECT id, event_id, computed_cost, email FROM registrations WHERE reference_number = ?" :
-                "SELECT id, event_id, computed_cost, email FROM registrations WHERE reference_number = ? AND event_id = ?"
+                "SELECT id, event_id, computed_cost, first_name, last_name, email FROM registrations WHERE reference_number = ?" :
+                "SELECT id, event_id, computed_cost, first_name, last_name, email FROM registrations WHERE reference_number = ? AND event_id = ?"
 
             params = event_id === nothing ? [ref_candidate] : [ref_candidate, event_id]
             result = DBInterface.execute(db, reg_query, params)
             rows = collect(result)
 
             if !isempty(rows)
-                reg_id = rows[1][1]
-                expected_cost = rows[1][3]
+                reg_id, _evt_id, expected_cost, first_name, last_name, _email = rows[1]
+                expected_cost_val = expected_cost === nothing ? nothing : Float64(expected_cost)
 
-                # Check amount matches (within tolerance)
-                # Handle NULL cost (no cost config exists)
-                amount_match = if expected_cost !== nothing
-                    abs(amount - expected_cost) < 0.01
+                # Check amount matches (within tolerance) if cost is available
+                amount_match = expected_cost_val === nothing ? false : abs(amount - expected_cost_val) < 0.01
+
+                # Check if names also match (additional validation)
+                name_matches, _name_score = check_name_match(
+                    something(sender_name, ""), ref_text,
+                    something(first_name, ""), something(last_name, "")
+                )
+
+                if amount_match
+                    if name_matches
+                        # Strategy 1: Reference + Amount + Name = HIGHEST confidence
+                        final_confidence = 0.99
+                        match_type = "auto"
+                        notes = "Matched by reference + amount + name"
+                    else
+                        # Strategy 2: Reference + Amount (no name confirmation)
+                        final_confidence = 0.95
+                        match_type = "auto"
+                        notes = "Matched by reference + amount (name not confirmed)"
+                    end
+
+                    if final_confidence > best_confidence
+                        best_confidence = final_confidence
+                        best_match = (
+                            reg_id=reg_id,
+                            match_type=match_type,
+                            confidence=final_confidence,
+                            reference=ref_candidate,
+                            notes=notes
+                        )
+                    end
+                elseif expected_cost_val === nothing && name_matches
+                    # No cost configured, but strong name + reference match: allow low confidence auto
+                    final_confidence = 0.70
+                    match_type = "auto_uncertain"
+                    notes = "Matched by reference + name (cost missing)"
+                    if final_confidence > best_confidence
+                        best_confidence = final_confidence
+                        best_match = (
+                            reg_id=reg_id,
+                            match_type=match_type,
+                            confidence=final_confidence,
+                            reference=ref_candidate,
+                            notes=notes
+                        )
+                    end
                 else
-                    false  # Can't verify amount if cost is not configured
+                    # Reference found but amount doesn't match - suspicious, warn user
+                    @warn "Reference found but amount mismatch - possible typo" reference=ref_candidate expected=expected_cost actual=amount
+                end
+            end
+        end
+
+        # Strategy 3: Off-by-one reference number detection (typos)
+        # Only attempt if we didn't find an exact match
+        if best_match === nothing && !isempty(candidates)
+            for ref_candidate in candidates
+                # Parse the reference to get event_id and number
+                parsed = parse_reference_number(ref_candidate)
+                if parsed !== nothing
+                    event_part, num = parsed.event_id, parsed.id
+                    if event_id !== nothing && event_part != event_id
+                        continue  # do not cross events when caller scoped the event
+                    end
+
+                    # Check ±1 from the reference number
+                    for offset in [-1, 1]
+                        nearby_num = num + offset
+                        if nearby_num >= 1 && nearby_num <= 999  # Valid range
+                            nearby_ref = generate_reference_number(event_part, nearby_num)
+
+                            # Look up the nearby registration
+                            reg_query = event_id === nothing ?
+                                "SELECT id, event_id, computed_cost, first_name, last_name, email FROM registrations WHERE reference_number = ?" :
+                                "SELECT id, event_id, computed_cost, first_name, last_name, email FROM registrations WHERE reference_number = ? AND event_id = ?"
+
+                            params = event_id === nothing ? [nearby_ref] : [nearby_ref, event_id]
+                            result = DBInterface.execute(db, reg_query, params)
+                            rows = collect(result)
+
+                            if !isempty(rows)
+                                reg_id, _evt_id, expected_cost, first_name, last_name, _email = rows[1]
+                                expected_cost_val = expected_cost === nothing ? nothing : Float64(expected_cost)
+
+                                # Check amount AND name match (both required for off-by-one)
+                                amount_match = expected_cost_val === nothing ? false : abs(amount - expected_cost_val) < 0.01
+                                name_matches, _name_score = check_name_match(
+                                    something(sender_name, ""), ref_text,
+                                    something(first_name, ""), something(last_name, "")
+                                )
+
+                                if amount_match && name_matches
+                                    # Off-by-one with amount + name confirmation
+                                    final_confidence = 0.75
+                                    match_type = "auto_uncertain"
+                                    notes = "Off-by-one typo detected: typed $(ref_candidate), matched $(nearby_ref) via amount+name"
+
+                                    if final_confidence > best_confidence
+                                        best_confidence = final_confidence
+                                        best_match = (
+                                            reg_id=reg_id,
+                                            match_type=match_type,
+                                            confidence=final_confidence,
+                                            reference=nearby_ref,
+                                            notes=notes
+                                        )
+                                    end
+
+                                    @info "Detected off-by-one typo" typed=ref_candidate actual=nearby_ref name="$(first_name) $(last_name)"
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        # If we found a reference-based match (exact or off-by-one), use it
+        if best_match !== nothing && best_confidence >= 0.60
+            match_id = with_transaction(db) do
+                DBInterface.execute(db, """
+                    INSERT INTO payment_matches (id, transfer_id, registration_id, match_type,
+                                                match_confidence, matched_reference, notes, created_at)
+                    VALUES (nextval('match_id_seq'), ?, ?, ?, ?, ?, ?, ?)
+                """, [transfer_id, best_match.reg_id, best_match.match_type,
+                      best_match.confidence, best_match.reference, best_match.notes, now()])
+
+                result_id = DBInterface.execute(db, "SELECT currval('match_id_seq')")
+                first(collect(result_id))[1]
+            end
+
+            # Get transfer date for financial transaction
+            transfer_date_result = DBInterface.execute(db,
+                "SELECT transfer_date FROM bank_transfers WHERE id = ?", [transfer_id])
+            transfer_date = first(collect(transfer_date_result))[1]
+
+            # Log financial transaction and link back to payment_matches
+            log_financial_transaction!(db, best_match.reg_id, "payment", amount;
+                reference_id=match_id,
+                reference_table="payment_matches",
+                effective_date=transfer_date,
+                notes="Auto-matched: $(best_match.notes) (confidence: $(best_match.confidence))")
+
+            if email_cfg !== nothing
+                try
+                    queue_payment_confirmation!(email_cfg, db, best_match.reg_id, amount)
+                catch e
+                    @debug "Payment confirmation not queued" exception=e
+                end
+            end
+
+            matched += 1
+            match_found = true
+            @info "Matched transfer" reference=best_match.reference amount=amount confidence=best_match.confidence type=best_match.match_type
+        end
+
+        # Strategy 4: Name + amount matching (only if no reference match found)
+        if !match_found
+            # Look for registrations in-scope, then apply amount tolerance in Julia
+            query = if event_id !== nothing
+                """
+                SELECT id, reference_number, first_name, last_name, email, computed_cost
+                FROM registrations
+                WHERE event_id = ?
+                """
+            else
+                """
+                SELECT id, reference_number, first_name, last_name, email, computed_cost
+                FROM registrations
+                """
+            end
+            params = event_id !== nothing ? [event_id] : []
+            result = DBInterface.execute(db, query, params)
+
+            best_name_match = nothing
+            best_name_score = 0.0
+
+            for row in result
+                reg_id, ref, first_name, last_name, _email, cost = row
+                cost_val = cost === nothing ? nothing : Float64(cost)
+
+                # Skip if cost exists but outside tolerance
+                if cost_val !== nothing && abs(cost_val - amount) >= 0.01
+                    continue
                 end
 
-                final_confidence = amount_match ? confidence : confidence * 0.8
-                match_type = final_confidence >= 0.8 ? "auto" : "auto_uncertain"
+                # Check if BOTH first and last name match
+                name_matches, name_score = check_name_match(
+                    something(sender_name, ""), ref_text,
+                    something(first_name, ""), something(last_name, "")
+                )
 
-                # Create match
-                match_id = nothing
-                with_transaction(db) do
+                if name_matches && name_score > best_name_score
+                    best_name_score = name_score
+                    best_name_match = (
+                        reg_id=reg_id,
+                        reference=ref,
+                        first_name=first_name,
+                        last_name=last_name,
+                        confidence=name_score * 0.7  # Max 0.7 for name-only matching
+                    )
+                end
+            end
+
+            # Only match if we have a strong name match (both first AND last name)
+            if best_name_match !== nothing && best_name_score >= 0.8
+                match_id = with_transaction(db) do
                     DBInterface.execute(db, """
                         INSERT INTO payment_matches (id, transfer_id, registration_id, match_type,
                                                     match_confidence, matched_reference, notes, created_at)
-                        VALUES (nextval('match_id_seq'), ?, ?, ?, ?, ?, ?, ?)
-                    """, [transfer_id, reg_id, match_type, final_confidence, ref_candidate, "", now()])
+                        VALUES (nextval('match_id_seq'), ?, ?, 'auto_name', ?, ?, ?, ?)
+                    """, [transfer_id, best_name_match.reg_id, best_name_match.confidence,
+                          best_name_match.reference, "Matched by full name (first + last) + amount", now()])
 
-                    # Get the match ID we just inserted
                     result_id = DBInterface.execute(db, "SELECT currval('match_id_seq')")
-                    match_id = first(collect(result_id))[1]
+                    first(collect(result_id))[1]
                 end
 
                 # Get transfer date for financial transaction
@@ -331,15 +616,16 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                     "SELECT transfer_date FROM bank_transfers WHERE id = ?", [transfer_id])
                 transfer_date = first(collect(transfer_date_result))[1]
 
-                # Log financial transaction (payment is a credit, so positive amount)
-                log_financial_transaction!(db, reg_id, "payment", amount;
-                    reference_id=match_id, reference_table="payment_matches",
+                # Log financial transaction
+                log_financial_transaction!(db, best_name_match.reg_id, "payment", amount;
+                    reference_id=match_id,
+                    reference_table="payment_matches",
                     effective_date=transfer_date,
-                    notes="Auto-matched payment (confidence: $(final_confidence))")
+                    notes="Auto-matched by full name+amount (confidence: $(best_name_match.confidence))")
 
                 if email_cfg !== nothing
                     try
-                        queue_payment_confirmation!(email_cfg, db, reg_id, amount)
+                        queue_payment_confirmation!(email_cfg, db, best_name_match.reg_id, amount)
                     catch e
                         @debug "Payment confirmation not queued" exception=e
                     end
@@ -347,87 +633,11 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
 
                 matched += 1
                 match_found = true
-
-                @info "Matched transfer" reference=ref_candidate amount=amount confidence=final_confidence
-                break
+                @info "Matched transfer by full name" sender=sender_name registration="$(best_name_match.first_name) $(best_name_match.last_name)" confidence=best_name_match.confidence
             end
         end
 
-        if !match_found
-            # Try to match by sender name and amount
-            name_parts = split(lowercase(something(sender_name, "")))
-
-            if length(name_parts) >= 1
-                # Look for registrations with matching name and amount
-                # Use parameterized query to prevent SQL injection
-                query = if event_id !== nothing
-                    """
-                    SELECT id, reference_number, first_name, last_name, email, computed_cost
-                    FROM registrations
-                    WHERE computed_cost = ? AND event_id = ?
-                    """
-                else
-                    """
-                    SELECT id, reference_number, first_name, last_name, email, computed_cost
-                    FROM registrations
-                    WHERE computed_cost = ?
-                    """
-                end
-                params = event_id !== nothing ? [amount, event_id] : [amount]
-                result = DBInterface.execute(db, query, params)
-
-                for row in result
-                    reg_id, ref, first_name, last_name, email, cost = row
-
-                    # Check if name matches
-                    fn_lower = lowercase(something(first_name, ""))
-                    ln_lower = lowercase(something(last_name, ""))
-
-                    name_match = any(p -> (occursin(p, fn_lower) || occursin(p, ln_lower)), name_parts)
-
-                    if name_match
-                        # Create match with lower confidence
-                        match_id = nothing
-                        with_transaction(db) do
-                            DBInterface.execute(db, """
-                                INSERT INTO payment_matches (id, transfer_id, registration_id, match_type,
-                                                            match_confidence, matched_reference, notes, created_at)
-                                VALUES (nextval('match_id_seq'), ?, ?, 'auto_name', 0.6, ?, 'Matched by name + amount', ?)
-                            """, [transfer_id, reg_id, ref, now()])
-
-                            # Get the match ID we just inserted
-                            result_id = DBInterface.execute(db, "SELECT currval('match_id_seq')")
-                            match_id = first(collect(result_id))[1]
-                        end
-
-                        # Get transfer date for financial transaction
-                        transfer_date_result = DBInterface.execute(db,
-                            "SELECT transfer_date FROM bank_transfers WHERE id = ?", [transfer_id])
-                        transfer_date = first(collect(transfer_date_result))[1]
-
-                        # Log financial transaction (payment is a credit, so positive amount)
-                        log_financial_transaction!(db, reg_id, "payment", amount;
-                            reference_id=match_id, reference_table="payment_matches",
-                            effective_date=transfer_date,
-                            notes="Auto-matched by name+amount (confidence: 0.6)")
-
-                        if email_cfg !== nothing
-                            try
-                                queue_payment_confirmation!(email_cfg, db, reg_id, amount)
-                            catch e
-                                @debug "Payment confirmation not queued" exception=e
-                            end
-                        end
-
-                        matched += 1
-                        match_found = true
-                        @info "Matched transfer by name" sender=sender_name registration="$first_name $last_name"
-                        break
-                    end
-                end
-            end
-        end
-
+        # If still no match, add to unmatched list
         if !match_found
             push!(unmatched_list, (
                 transfer_id=transfer_id,
