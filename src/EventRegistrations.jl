@@ -101,6 +101,7 @@ include("Registrations.jl")
 include("ConfirmationEmails.jl")
 include("BankTransfers.jl")
 include("PrettyOutput.jl")
+include("WebDAV.jl")
 
 # Re-export from Schema
 using .Schema: init_database
@@ -118,22 +119,26 @@ export CostCalculationResult, calculate_cost_with_details
 
 # Re-export from PrettyOutput - payment types and functions
 using .PrettyOutput: PaymentStatus, PaymentTableData, PaymentFilter, PaymentRow
+using .PrettyOutput: STATUS_PAID, STATUS_OVERPAID, STATUS_PARTIAL, STATUS_UNPAID, STATUS_NO_CONFIG
+using .PrettyOutput: status_display
 using .PrettyOutput: get_payment_table_data, print_payment_table
-using .PrettyOutput: export_payment_pdf, export_payment_csv, filter_payments
+using .PrettyOutput: export_payment_pdf, export_payment_csv, export_payment_xlsx, filter_payments
 using .PrettyOutput: generate_latex_document, print_summary
 export PaymentStatus, PaymentTableData, PaymentFilter, PaymentRow
+export STATUS_PAID, STATUS_OVERPAID, STATUS_PARTIAL, STATUS_UNPAID, STATUS_NO_CONFIG
+export status_display
 export get_payment_table_data, print_payment_table
-export export_payment_pdf, export_payment_csv, filter_payments
+export export_payment_pdf, export_payment_csv, export_payment_xlsx, filter_payments
 export generate_latex_document, print_summary
 
 # Re-export from PrettyOutput - registration types and functions
 using .PrettyOutput: RegistrationRow, RegistrationTableData, RegistrationFilter
 using .PrettyOutput: get_registration_table_data, print_registration_table
-using .PrettyOutput: export_registration_pdf, export_registration_csv
+using .PrettyOutput: export_registration_pdf, export_registration_csv, export_registration_xlsx
 using .PrettyOutput: filter_registrations, generate_registration_latex_document
 export RegistrationRow, RegistrationTableData, RegistrationFilter
 export get_registration_table_data, print_registration_table
-export export_registration_pdf, export_registration_csv
+export export_registration_pdf, export_registration_csv, export_registration_xlsx
 export filter_registrations, generate_registration_latex_document
 
 # Re-export from Config for sync tracking
@@ -184,6 +189,10 @@ export queue_email!, queue_pending_emails!, get_pending_emails
 export queue_payment_confirmation!
 export count_pending_emails, mark_email!, send_queued_email!
 using .EmailDownload: download_emails!
+
+# Re-export from WebDAV
+using .WebDAV: upload_via_webdav
+export upload_via_webdav
 
 # ============================================================================
 # HIGH-LEVEL CONVENIENCE FUNCTIONS

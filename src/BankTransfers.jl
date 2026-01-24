@@ -122,7 +122,7 @@ function import_bank_csv!(db::DuckDB.DB, csv_path::AbstractString;
 
         # Create hash for duplicate detection
         hash_input = "$date_str|$amount_str|$reference|$sender_name"
-        transfer_hash = hash_input# bytes2hex(sha256(hash_input))
+        transfer_hash = bytes2hex(SHA.sha256(hash_input))
         # Check if already exists
         existing = DBInterface.execute(db,
             "SELECT COUNT(*) FROM bank_transfers WHERE transfer_hash = ?",
@@ -337,18 +337,62 @@ function check_name_match(sender_name::AbstractString, reference_text::AbstractS
 end
 
 """
+Detect if there's a potential name mismatch in the reference text.
+Returns true if names are found in reference text but DON'T match the registration.
+
+This is used to identify cases where someone transfers for another person but
+includes the wrong name or their own name instead of the beneficiary's name.
+
+Example: Reference text contains "Alice Anderson" but registration is for "Bob Brown"
+with reference PWE-2026-01-003. This indicates a potential problem that needs review.
+"""
+function has_conflicting_name(reference_text::AbstractString,
+                             first_name::AbstractString, last_name::AbstractString)
+    reference_names = extract_name_candidates(something(reference_text, ""))
+
+    # If no names found in reference text, there's no conflict
+    if isempty(reference_names)
+        return false
+    end
+
+    fn_lower = lowercase(something(first_name, ""))
+    ln_lower = lowercase(something(last_name, ""))
+
+    # Check if ANY extracted name matches the registration
+    # We need at least partial matches for both first and last name
+    best_first_score = 0.0
+    best_last_score = 0.0
+
+    for name_candidate in reference_names
+        best_first_score = max(best_first_score, name_similarity(name_candidate, fn_lower))
+        best_last_score = max(best_last_score, name_similarity(name_candidate, ln_lower))
+    end
+
+    # If we found names but they don't match well (< 0.6 threshold), it's a conflict
+    # We use 0.6 instead of 0.8 to be more lenient (substring matches count)
+    has_some_first_match = best_first_score >= 0.6
+    has_some_last_match = best_last_score >= 0.6
+
+    # Conflict if names exist but neither first nor last name match reasonably
+    return !has_some_first_match || !has_some_last_match
+end
+
+"""
 Attempt to automatically match unmatched transfers to registrations.
 
 Matching strategy (in order of precedence):
 1. Exact reference + amount + name → auto (0.99 confidence)
-2. Exact reference + amount → auto (0.95 confidence)
+2a. Exact reference + amount (no name in text) → auto (0.95 confidence)
+2b. Exact reference + amount but CONFLICTING name → auto_uncertain (0.65 confidence)
 3. Off-by-one reference + amount + name → auto_uncertain (0.75 confidence)
 4. Exact reference + amount mismatch → warn and skip (possible typo)
 5. Name match (both first AND last) + amount → auto_name (0.7 confidence)
 6. Everything else → unmatched (requires manual review)
 
-This conservative approach reduces false positives, especially when people have
-the same first name but different last names or make off-by-one typos.
+This conservative approach reduces false positives, especially when:
+- People have the same first name but different last names
+- Someone transfers for another person but includes wrong name in reference text
+- Off-by-one typos in reference numbers
 """
 function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing,
                           email_cfg::Union{EmailConfig,Nothing}=nothing)
@@ -408,10 +452,27 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                         match_type = "auto"
                         notes = "Matched by reference + amount + name"
                     else
-                        # Strategy 2: Reference + Amount (no name confirmation)
-                        final_confidence = 0.95
-                        match_type = "auto"
-                        notes = "Matched by reference + amount (name not confirmed)"
+                        # Check if there's a conflicting name in the reference text
+                        # (names found but don't match the registration)
+                        has_conflict = has_conflicting_name(
+                            ref_text,
+                            something(first_name, ""), something(last_name, "")
+                        )
+
+                        if has_conflict
+                            # Strategy 2b: Reference + Amount but CONFLICTING name
+                            # This is suspicious - likely wrong reference or proxy payment error
+                            # Lower confidence to require manual review
+                            final_confidence = 0.65
+                            match_type = "auto_uncertain"
+                            notes = "Reference + amount match, but name in text doesn't match registration - needs review"
+                            @warn "Potential name mismatch in transfer" reference=ref_candidate expected="$(first_name) $(last_name)" transfer_text=ref_text
+                        else
+                            # Strategy 2a: Reference + Amount (no name in text)
+                            final_confidence = 0.95
+                            match_type = "auto"
+                            notes = "Matched by reference + amount (name not confirmed)"
+                        end
                     end
 
                     if final_confidence > best_confidence
@@ -685,6 +746,9 @@ end
 
 """
 Manually match a transfer to a registration.
+
+When re-matching an already-matched transfer to a different registration,
+this function reverses the old financial transaction and creates a new one.
 """
 function manual_match!(db::DuckDB.DB, transfer_id::Integer, registration_id::Integer;
                        notes::String="", transfer_date::Union{Date,Nothing}=nothing,
@@ -698,13 +762,31 @@ function manual_match!(db::DuckDB.DB, transfer_id::Integer, registration_id::Int
 
     # Check if already matched
     existing = DBInterface.execute(db,
-        "SELECT id FROM payment_matches WHERE transfer_id = ?",
+        "SELECT id, registration_id FROM payment_matches WHERE transfer_id = ?",
         [transfer_id])
+    existing_rows = collect(existing)
 
     match_id = nothing
-    if !isempty(collect(existing))
+    old_registration_id = nothing
+
+    if !isempty(existing_rows)
+        # This transfer is already matched - handle re-matching
+        match_id = existing_rows[1][1]
+        old_registration_id = existing_rows[1][2]
+
+        # Only process if actually changing the registration
+        if old_registration_id != registration_id
+            @info "Re-matching transfer from registration $old_registration_id to $registration_id" transfer_id=transfer_id
+
+            # Reverse the old financial transaction
+            log_financial_transaction!(db, old_registration_id, "adjustment", -amount;
+                reference_id=match_id, reference_table="payment_matches",
+                effective_date=transfer_date,
+                recorded_by="manual",
+                notes="Reversal: transfer re-matched from reg $old_registration_id to $registration_id")
+        end
+
         # Update existing match
-        match_id = first(collect(existing))[1]
         with_transaction(db) do
             DBInterface.execute(db, """
                 UPDATE payment_matches

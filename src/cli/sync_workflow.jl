@@ -7,6 +7,7 @@ New in this version: supports post-sync operations via flags:
 - --send-emails[="opts"]: Send queued emails after sync
 - --export-details[="opts"]: Export registration details after sync
 - --export-payments[="opts"]: Export payment status after sync
+- --export-combined[="opts"]: Export combined multi-sheet workbook after sync
 
 Each flag can be:
 - Absent: operation skipped
@@ -22,7 +23,8 @@ function cmd_sync(;
     event_id::Union{String,Nothing}=nothing,
     send_emails::Union{Bool,String}=false,
     export_details::Union{Bool,String}=false,
-    export_payments::Union{Bool,String}=false)
+    export_payments::Union{Bool,String}=false,
+    export_combined::Union{Bool,String}=false)
     @info "=== EventRegistrations Sync ==="
 
     # Step 1: Initialize database if necessary
@@ -216,6 +218,7 @@ function cmd_sync(;
         if export_details !== false
             @info "[11/12] Exporting registration details..."
             export_opts = parse_subcommand_options(export_details)
+            upload = get(export_opts, :upload, false)
 
             # Determine target event
             target_event = get(export_opts, :event_id, event_id)
@@ -235,6 +238,11 @@ function cmd_sync(;
                     if export_format == "csv"
                         export_registration_detail_csv(detail_table, output_file)
                         @info "✓ Registration details exported" output_path=output_file rows=length(detail_table.rows)
+
+                        # Upload if requested
+                        if upload
+                            upload_export_to_webdav(ctx, output_file)
+                        end
                     elseif export_format == "terminal"
                         print_registration_detail_table(detail_table)
                     else
@@ -248,6 +256,7 @@ function cmd_sync(;
         if export_payments !== false
             @info "[12/12] Exporting payment status..."
             payment_opts = parse_subcommand_options(export_payments)
+            upload = get(payment_opts, :upload, false)
 
             # Determine target event
             target_event = get(payment_opts, :event_id, event_id)
@@ -287,14 +296,66 @@ function cmd_sync(;
                     elseif export_format == "csv"
                         export_payment_csv(table_data, output_file; filter=payment_filter)
                         @info "✓ Payment status exported" output_path=output_file
+
+                        # Upload if requested
+                        if upload
+                            upload_export_to_webdav(ctx, output_file)
+                        end
                     elseif export_format == "terminal"
                         print_payment_table(table_data; filter=payment_filter)
                     elseif export_format == "pdf"
                         export_payment_pdf(table_data, output_file; filter=payment_filter)
                         @info "✓ Payment status PDF exported" output_path=output_file
+
+                        # Upload if requested
+                        if upload
+                            upload_export_to_webdav(ctx, output_file)
+                        end
                     else
                         @warn "Unsupported format for payment export" format=export_format supported=["csv", "terminal", "pdf"]
                     end
+                end
+            end
+        end
+
+        # Step 13: Export combined workbook (if requested)
+        if export_combined !== false
+            @info "[13/13] Exporting combined workbook..."
+            combined_opts = parse_subcommand_options(export_combined)
+            upload = get(combined_opts, :upload, false)
+
+            # Determine target event
+            target_event = get(combined_opts, :event_id, event_id)
+            target_event = @something target_event get_most_recent_event(db)
+
+            if target_event === nothing
+                @warn "No events with registrations found, skipping export"
+            else
+                # Load event config to get export settings
+                cfg = Config.load_event_config(target_event, events_dir)
+
+                # Determine output path
+                output_file = if haskey(combined_opts, :output)
+                    combined_opts[:output]
+                elseif cfg !== nothing && cfg.export_combined_config !== nothing && cfg.export_combined_config.filename !== nothing
+                    cfg.export_combined_config.filename
+                else
+                    "combined_export_$(target_event).xlsx"
+                end
+
+                @info "Exporting combined workbook" event_id=target_event output_path=output_file
+
+                result = export_combined_xlsx(db, target_event, output_file; events_dir)
+
+                if result == 0
+                    @info "✓ Combined workbook exported" output_path=output_file
+
+                    # Upload if requested
+                    if upload
+                        upload_export_to_webdav(ctx, output_file)
+                    end
+                else
+                    @warn "Combined export failed" exit_code=result
                 end
             end
         end

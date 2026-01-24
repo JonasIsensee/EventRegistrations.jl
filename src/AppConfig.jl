@@ -21,6 +21,10 @@ struct EmailConfig
     qr_enabled::Bool
     dry_run::Bool
     templates_dir::String
+    webdav_url::String
+    webdav_username::String
+    webdav_password::String
+    webdav_remote_path::String
 end
 
 struct AppConfig
@@ -33,6 +37,7 @@ function parse_email_config(config::Dict; templates_dir::String, dry_run::Bool)
     email_section = get(config, "email", Dict())
     smtp_section = get(config, "smtp", Dict())
     bank_section = get(config, "bank", Dict())
+    webdav_section = get(config, "webdav", Dict())
 
     pop3_server = get(email_section, "server", "")
     pop3_username = get(email_section, "username", "")
@@ -55,6 +60,11 @@ function parse_email_config(config::Dict; templates_dir::String, dry_run::Bool)
     qr_message = get(bank_section, "remittance", "")
     qr_enabled = get(bank_section, "enable_qr", true)
 
+    webdav_url = get(webdav_section, "url", "")
+    webdav_username = get(webdav_section, "username", "")
+    webdav_password = get(webdav_section, "password", "")
+    webdav_remote_path = get(webdav_section, "remote_path", "")
+
     return EmailConfig(
         pop3_server, pop3_username, pop3_password, pop3_port,
         smtp_server, smtp_port, username, password,
@@ -70,6 +80,10 @@ function parse_email_config(config::Dict; templates_dir::String, dry_run::Bool)
         qr_enabled,
         dry_run,
         templates_dir,
+        webdav_url,
+        webdav_username,
+        webdav_password,
+        webdav_remote_path,
     )
 end
 

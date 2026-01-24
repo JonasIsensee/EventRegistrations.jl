@@ -13,18 +13,21 @@ using DuckDB: DuckDB
 using JSON: JSON
 using PrettyTables: PrettyTables, LatexCell, LatexHighlighter, TextHighlighter,
                     pretty_table
+using TableExport: ExportConfig, SheetConfig, SheetData, export_tables, ColumnConfig
 using Printf: Printf, @sprintf
 
 # For PDF export
 import tectonic_jll
 
 export PaymentStatus, PaymentTableData, PaymentRow
-export get_payment_table_data, print_payment_table, export_payment_pdf, export_payment_csv
+export STATUS_PAID, STATUS_OVERPAID, STATUS_PARTIAL, STATUS_UNPAID, STATUS_NO_CONFIG
+export status_display
+export get_payment_table_data, print_payment_table, export_payment_pdf, export_payment_csv, export_payment_xlsx
 export PaymentFilter, filter_payments
 export generate_latex_document
 export RegistrationTableData, RegistrationRow, RegistrationFilter
 export get_registration_table_data, print_registration_table
-export export_registration_pdf, export_registration_csv
+export export_registration_pdf, export_registration_csv, export_registration_xlsx
 export generate_registration_latex_document, print_summary
 
 # =============================================================================
@@ -1161,6 +1164,180 @@ function export_payment_pdf(data::PaymentTableData, output_path::String;
         end
     end
 
+    return output_path
+end
+
+# =============================================================================
+# XLSX EXPORT (via TableExport)
+# =============================================================================
+
+function payment_sheet_data(data::PaymentTableData; filter::PaymentFilter=PaymentFilter())
+    rows_to_show = filter_payments(data, filter)
+
+    headers = [
+        "Reference",
+        "Name",
+        "Email",
+        "Cost",
+        "Paid",
+        "Subsidy",
+        "Remaining",
+        "Status"
+    ]
+
+    rows = Vector{Vector{Any}}(undef, length(rows_to_show))
+    for (idx, row) in enumerate(rows_to_show)
+        cost_str = row.cost === nothing ? "" : @sprintf("%.2f", row.cost)
+        rows[idx] = [
+            row.reference,
+            row.name,
+            row.email,
+            cost_str,
+            @sprintf("%.2f", row.paid),
+            @sprintf("%.2f", row.subsidy),
+            row.status == STATUS_NO_CONFIG ? "" : @sprintf("%.2f", row.remaining),
+            status_display(row.status)
+        ]
+    end
+
+    return SheetData(headers=headers, rows=rows), length(rows_to_show)
+end
+
+function payment_summary_sheet(data::PaymentTableData)
+    headers = ["Metric", "Value"]
+    rows = Vector{Vector{Any}}()
+    push!(rows, ["Registrations", data.total_registrations])
+    push!(rows, ["Paid", data.count_paid])
+    push!(rows, ["Partial", data.count_partial])
+    push!(rows, ["Unpaid", data.count_unpaid])
+    push!(rows, ["Overpaid", data.count_overpaid])
+    push!(rows, ["No Config", data.count_no_config])
+    push!(rows, ["Total Expected", @sprintf("%.2f", data.total_cost)])
+    push!(rows, ["Total Paid", @sprintf("%.2f", data.total_paid)])
+    push!(rows, ["Total Subsidies", @sprintf("%.2f", data.total_subsidies)])
+    push!(rows, ["Outstanding", @sprintf("%.2f", data.total_remaining)])
+
+    SheetData(headers=headers, rows=rows)
+end
+
+function export_payment_xlsx(data::PaymentTableData, output_path::String;
+                             filter::PaymentFilter=PaymentFilter())
+    payment_data, row_count = payment_sheet_data(data; filter=filter)
+    subtitle = data.event_name === nothing ? data.event_id : "$(data.event_id) - $(data.event_name)"
+
+    # Configure columns with smart formatting
+    status_col = ColumnConfig(
+        header="Status",
+        width=12.0,
+        center_content=true
+    )
+    # Add color-coding for payment status
+    push!(status_col.format_rules, Dict{Symbol, Any}(
+        :contains => "Paid",
+        :bg_color => 0xC6EFCE  # Green for paid
+    ))
+    push!(status_col.format_rules, Dict{Symbol, Any}(
+        :contains => "Unpaid",
+        :bg_color => 0xFFC7CE  # Red for unpaid
+    ))
+    push!(status_col.format_rules, Dict{Symbol, Any}(
+        :contains => "Over",
+        :bg_color => 0xFFEB9C  # Yellow for overpaid
+    ))
+
+    sheets = SheetConfig[
+        SheetConfig(
+            name="Payments",
+            title="Payment Status",
+            subtitle="$subtitle | Generated: {date}",
+            source=payment_data,
+            columns=[status_col]
+        ),
+        SheetConfig(
+            name="Summary",
+            source=payment_summary_sheet(data),
+            freeze_header=false,
+            autofilter=false,
+        )
+    ]
+
+    export_tables(ExportConfig(output_path=output_path, sheets=sheets))
+    @info "XLSX exported" path=output_path rows=row_count
+    return output_path
+end
+
+function registration_sheet_data(data::RegistrationTableData; filter::RegistrationFilter=RegistrationFilter())
+    rows_to_show = filter_registrations(data, filter)
+
+    headers = [
+        "Reference",
+        "Name",
+        "Email",
+        "Registered",
+        "Cost",
+        "Paid",
+        "Subsidy",
+        "Remaining",
+        "Status"
+    ]
+
+    rows = Vector{Vector{Any}}(undef, length(rows_to_show))
+    for (idx, row) in enumerate(rows_to_show)
+        date_str = row.registration_date !== nothing ? Dates.format(row.registration_date, "yyyy-mm-dd") : ""
+        cost_str = row.cost === nothing ? "" : @sprintf("%.2f", row.cost)
+        rows[idx] = [
+            row.reference,
+            row.last_name * ", " * row.first_name,
+            row.email,
+            date_str,
+            cost_str,
+            @sprintf("%.2f", row.paid),
+            @sprintf("%.2f", row.subsidy),
+            row.status == STATUS_NO_CONFIG ? "" : @sprintf("%.2f", row.remaining),
+            status_display(row.status)
+        ]
+    end
+
+    return SheetData(headers=headers, rows=rows), length(rows_to_show)
+end
+
+function registration_summary_sheet(data::RegistrationTableData)
+    headers = ["Metric", "Value"]
+    rows = Vector{Vector{Any}}()
+    push!(rows, ["Registrations", data.total_registrations])
+    push!(rows, ["Paid", data.count_paid])
+    push!(rows, ["Partial", data.count_partial])
+    push!(rows, ["Unpaid", data.count_unpaid])
+    push!(rows, ["Total Expected", @sprintf("%.2f", data.total_cost)])
+    push!(rows, ["Total Paid", @sprintf("%.2f", data.total_paid)])
+    push!(rows, ["Total Subsidies", @sprintf("%.2f", data.total_subsidies)])
+    push!(rows, ["Outstanding", @sprintf("%.2f", data.total_remaining)])
+
+    SheetData(headers=headers, rows=rows)
+end
+
+function export_registration_xlsx(data::RegistrationTableData, output_path::String;
+                                  filter::RegistrationFilter=RegistrationFilter())
+    reg_data, row_count = registration_sheet_data(data; filter=filter)
+    subtitle = data.event_name === nothing ? data.event_id : "$(data.event_id) - $(data.event_name)"
+
+    sheets = SheetConfig[
+        SheetConfig(
+            name="Registrations",
+            title="Registrations",
+            subtitle="$subtitle | Generated: {date}",
+            source=reg_data,
+        ),
+        SheetConfig(
+            name="Summary",
+            source=registration_summary_sheet(data),
+            freeze_header=false,
+            autofilter=false,
+        )
+    ]
+
+    export_tables(ExportConfig(output_path=output_path, sheets=sheets))
+    @info "XLSX exported" path=output_path rows=row_count
     return output_path
 end
 

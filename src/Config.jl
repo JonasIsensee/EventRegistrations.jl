@@ -10,11 +10,19 @@ using TOML: TOML
 # Import from parent module
 import ..EventRegistrations: with_transaction
 
-export EventConfig, load_event_config
+export EventConfig, ExportCombinedConfig, load_event_config
 export materialize_cost_rules, get_registration_detail_columns
 export generate_field_config, generate_event_config_template
 export check_config_sync, record_config_sync
 export ConfigSyncStatus
+
+struct ExportCombinedConfig
+    filename::Union{Nothing,String}
+    sheets::Vector{String}
+    registration_config::Union{Nothing,Dict{String,Any}}
+    payment_config::Union{Nothing,Dict{String,Any}}
+    transfers_config::Union{Nothing,Dict{String,Any}}
+end
 
 struct EventConfig
     event_id::String
@@ -27,6 +35,7 @@ struct EventConfig
     rules::Vector{Dict{String,Any}}
     computed_fields::Dict{String,Any}
     export_registration_columns::Union{Nothing,Vector{String}}
+    export_combined_config::Union{Nothing,ExportCombinedConfig}
 end
 
 # =============================================================================
@@ -260,6 +269,49 @@ function parse_registration_detail_columns(config::Dict, aliases::Dict{String,St
     return isempty(ordered) ? nothing : ordered
 end
 
+function parse_export_combined_config(config::Dict, aliases::Dict{String,String})
+    export_section = get(config, "export", nothing)
+    if !(export_section isa AbstractDict)
+        return nothing
+    end
+
+    combined = get(export_section, "combined", nothing)
+    if !(combined isa AbstractDict)
+        return nothing
+    end
+
+    # Parse filename (optional)
+    filename = get(combined, "filename", nothing)
+    if filename !== nothing
+        filename = string(filename)
+    end
+
+    # Parse sheets (default to all three)
+    sheets_raw = get(combined, "sheets", ["registration", "payment", "transfers"])
+    if sheets_raw isa AbstractString
+        sheets_raw = [sheets_raw]
+    end
+    sheets = String[string(s) for s in sheets_raw]
+
+    # Parse sheet-specific configs (optional)
+    registration_config = get(combined, "registration", nothing)
+    if registration_config isa AbstractDict
+        registration_config = Dict{String,Any}(string(k) => v for (k, v) in registration_config)
+    end
+
+    payment_config = get(combined, "payment", nothing)
+    if payment_config isa AbstractDict
+        payment_config = Dict{String,Any}(string(k) => v for (k, v) in payment_config)
+    end
+
+    transfers_config = get(combined, "transfers", nothing)
+    if transfers_config isa AbstractDict
+        transfers_config = Dict{String,Any}(string(k) => v for (k, v) in transfers_config)
+    end
+
+    return ExportCombinedConfig(filename, sheets, registration_config, payment_config, transfers_config)
+end
+
 """
 Load event configuration from config/events/{event_id}.toml into a typed EventConfig.
 """
@@ -275,12 +327,13 @@ function load_event_config(event_id::AbstractString, events_dir::AbstractString=
     rules = parse_rules(costs, aliases)
     computed_fields = parse_computed_fields(costs, aliases)
     export_columns = parse_registration_detail_columns(config, aliases)
+    export_combined = parse_export_combined_config(config, aliases)
 
     event_name = get(get(config, "event", Dict()), "name", event_id) |> string
     cfg_hash = compute_file_hash(path)
 
     return EventConfig(event_id, event_name, path, cfg_hash,
-        aliases, reverse_aliases, base_cost, rules, computed_fields, export_columns)
+        aliases, reverse_aliases, base_cost, rules, computed_fields, export_columns, export_combined)
 end
 
 function materialize_cost_rules(cfg::EventConfig)

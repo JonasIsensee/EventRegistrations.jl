@@ -90,6 +90,7 @@ COMMANDS:
     --send-emails[="opts"]       Send queued emails after sync (optional: pass sub-options)
     --export-details[="opts"]    Export registration details after sync (optional: pass sub-options)
     --export-payments[="opts"]   Export payment status after sync (optional: pass sub-options)
+    --export-combined[="opts"]   Export combined workbook after sync (optional: pass sub-options)
   process-emails [folder]        Process registration emails
   generate-field-config          Generate field configuration
   create-event-config <id>       Create event config template
@@ -118,14 +119,20 @@ EMAIL MANAGEMENT:
     --event-id=<id>              Send only emails for specific event
 EXPORTS:
   export-payment-status [event-id] [output]  Payment status with color highlighting
-    --format=<fmt>               Output: terminal, pdf, latex, csv
+    --format=<fmt>               Output: terminal, pdf, latex, csv, xlsx
     --filter=<filter>            Filter: all, unpaid, problems, paid, no-config
     --summary-only               Show only totals, not individual rows
+    --upload                     Upload exported file to WebDAV (requires credentials.toml)
   export-registrations [event-id] [output]   Export/print registration data
-    --format=<fmt>               Output: terminal, pdf, latex, csv
-        --filter=<filter>            Filter: all, unpaid, problems, paid
-        --details                    Include all registration fields (terminal/csv)
-                # Column order via config/events/<event>.toml [export.registration_details]
+    --format=<fmt>               Output: terminal, pdf, latex, csv, xlsx
+    --filter=<filter>            Filter: all, unpaid, problems, paid
+    --details                    Include all registration fields (terminal/csv/xlsx)
+    --upload                     Upload exported file to WebDAV (requires credentials.toml)
+    # Column order via config/events/<event>.toml [export.registration_details]
+  export-combined [event-id] [output]        Export combined multi-sheet XLSX workbook
+    --output=<path>              Output file path (overrides config)
+    --upload                     Upload exported file to WebDAV (requires credentials.toml)
+    # Configuration via config/events/<event>.toml [export.combined]
   list-registrations [event-id]  Quick registration listing with filters
     --filter=<filter>            Filter: all, unpaid, problems, paid
     --name=<pattern>             Filter by name (regex pattern)
@@ -143,9 +150,12 @@ COMMON OPTIONS:
 EXAMPLES:
   eventreg init
   eventreg sync                                            # full workflow
-  eventreg sync --send-emails --export-details --export-payments  # complete workflow
+  eventreg sync --send-emails --export-combined            # sync + send + export workbook
+  eventreg sync --export-details --export-payments --export-combined  # all exports
   eventreg sync --send-emails="--event-id=PWE_2026_01"    # send only for specific event
+  eventreg sync --export-combined="--output=report.xlsx"  # custom output file
   eventreg sync --export-payments="--format=csv --filter=unpaid"  # custom export options
+  eventreg sync --export-combined="--upload"              # export and upload to WebDAV
   eventreg process-emails emails/
   eventreg status
   eventreg validate-config PWE_2026_01 --verbose
@@ -168,7 +178,13 @@ EXAMPLES:
   eventreg export-payment-status --summary-only            # show only totals
   eventreg export-payment-status PWE_2026_01 report.pdf    # export to PDF
   eventreg export-payment-status --format=latex            # generate LaTeX
+  eventreg export-payment-status --format=csv --upload     # export CSV and upload to WebDAV
   eventreg export-registrations report.pdf                 # export registrations to PDF
+  eventreg export-registrations --format=xlsx --upload     # export XLSX and upload
+  eventreg export-combined                                 # export most recent event
+  eventreg export-combined PWE_2026_01                     # export specific event
+  eventreg export-combined PWE_2026_01 custom_report.xlsx  # custom output file
+  eventreg export-combined --upload                        # export and upload to WebDAV
 
 Run 'eventreg <command> --help' for more information on a command.
 """
@@ -282,6 +298,10 @@ function run_cli(args::Vector{String})
                 event_id = length(positional) >= 1 ? positional[1] : nothing
                 output = length(positional) >= 2 ? positional[2] : nothing
                 return cmd_export_registrations(event_id, output; options...)
+            elseif command == "export-combined"
+                event_id = length(positional) >= 1 ? positional[1] : nothing
+                output = length(positional) >= 2 ? positional[2] : nothing
+                return cmd_export_combined(event_id, output; options...)
             # Email queue management commands
             elseif command == "list-pending-emails"
                 return cmd_list_pending_emails(; options...)
