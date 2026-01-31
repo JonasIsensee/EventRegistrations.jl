@@ -1,12 +1,12 @@
 module Registrations
 
 using DBInterface: DBInterface
-using Dates: Dates, Date, now, today
+using Dates: Dates, Date, now, today, @dateformat_str
 using DuckDB: DuckDB
 using JSON: JSON
 
 # Import from parent module
-import ..EventRegistrations: with_transaction
+import ..EventRegistrations: with_transaction, log_financial_transaction!
 
 # Import from parent module's submodules
 using ..EmailParser
@@ -20,27 +20,7 @@ export process_email_folder!, get_registrations
 export RegistrationDetailTable, get_registration_detail_table
 export grant_subsidy!, get_subsidies, revoke_subsidy!, grant_subsidies_batch!
 export get_registration_by_reference, recalculate_costs!
-
-"""
-Log a financial transaction to the immutable ledger.
-"""
-function log_financial_transaction!(db::DuckDB.DB, registration_id::Integer,
-                                     transaction_type::String, amount::Real;
-                                     reference_id::Union{Integer,Nothing}=nothing,
-                                     reference_table::Union{String,Nothing}=nothing,
-                                     effective_date::Date=today(),
-                                     recorded_by::String="system",
-                                     notes::String="")
-    with_transaction(db) do
-        DBInterface.execute(db, """
-            INSERT INTO financial_transactions (id, registration_id, transaction_type, amount,
-                                                reference_id, reference_table, effective_date,
-                                                recorded_at, recorded_by, notes)
-            VALUES (nextval('transaction_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, [registration_id, transaction_type, amount, reference_id, reference_table,
-              effective_date, now(), recorded_by, notes])
-    end
-end
+export get_registrations_for_edit, update_registration!
 
 """
 Prompt the user for a yes/no decision and return `true` for yes, `false` for no.
@@ -284,6 +264,98 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString; events_d
 
     return (has_submission=has_submission, is_new=is_new, is_update=is_update, skipped=false, no_cost_config=no_cost_config, event_id)
 end
+# Columns and row type used for table-editing (id, reference_number, email, first_name, last_name)
+const EDIT_COLUMNS = ["id", "reference_number", "email", "first_name", "last_name"]
+
+"""
+    get_registrations_for_edit(db, event_id; name=nothing, since=nothing) -> (columns, rows)
+
+Return a table suitable for TableEdit: (columns::Vector{String}, rows::Vector{NamedTuple})
+with columns id, reference_number, email, first_name, last_name. Rows are filtered by
+optional name pattern (regex on first_name/last_name) and since date (registration_date >= since).
+Used by edit-registrations CLI to dump data for the editor.
+"""
+function get_registrations_for_edit(db::DuckDB.DB, event_id::AbstractString;
+                                    name::Union{String,Nothing}=nothing,
+                                    since::Union{String,Date,Nothing}=nothing)
+    since_date = if since === nothing
+        nothing
+    elseif since isa Date
+        since
+    else
+        try
+            Date(since, dateformat"yyyy-mm-dd")
+        catch
+            nothing
+        end
+    end
+
+    result = DBInterface.execute(db, """
+        SELECT id, reference_number, email, first_name, last_name, registration_date
+        FROM registrations
+        WHERE event_id = ?
+        ORDER BY last_name, first_name
+    """, [event_id])
+
+    rows = []
+    for row in result
+        id_, ref, email, first_name, last_name, reg_date = row
+        if name !== nothing
+            pattern = Regex(name, "i")
+            full_name = string(something(first_name, ""), " ", something(last_name, ""))
+            occursin(pattern, full_name) || continue
+        end
+        if since_date !== nothing && (reg_date === nothing || reg_date === missing)
+            continue
+        end
+        if since_date !== nothing && reg_date !== nothing && !(reg_date isa Missing)
+            Date(reg_date) >= since_date || continue
+        end
+        # Use string(id) so TableEdit diff keys match parsed rows (parsed id is string)
+        push!(rows, (
+            id = string(id_),
+            reference_number = string(something(ref, "")),
+            email = string(something(email, "")),
+            first_name = string(something(first_name, "")),
+            last_name = string(something(last_name, "")),
+        ))
+    end
+
+    return (EDIT_COLUMNS, rows)
+end
+
+"""
+    update_registration!(db, registration_id; email=nothing, first_name=nothing, last_name=nothing)
+
+Update editable fields of a registration. Only non-nothing keyword arguments are applied.
+Used after table-editing to apply user changes in a single transaction with other updates.
+"""
+function update_registration!(db::DuckDB.DB, registration_id::Integer;
+                              email::Union{String,Nothing}=nothing,
+                              first_name::Union{String,Nothing}=nothing,
+                              last_name::Union{String,Nothing}=nothing)
+    updates = String[]
+    params = Any[]
+    if email !== nothing
+        push!(updates, "email = ?")
+        push!(params, email)
+    end
+    if first_name !== nothing
+        push!(updates, "first_name = ?")
+        push!(params, first_name)
+    end
+    if last_name !== nothing
+        push!(updates, "last_name = ?")
+        push!(params, last_name)
+    end
+    isempty(updates) && return
+    push!(params, now())
+    push!(updates, "updated_at = ?")
+    push!(params, registration_id)
+    DBInterface.execute(db, "UPDATE registrations SET " * join(updates, ", ") * " WHERE id = ?", params)
+    return
+end
+
 """
 Get all registrations for an event.
 """

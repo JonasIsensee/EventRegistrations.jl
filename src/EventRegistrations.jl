@@ -23,6 +23,7 @@ using JSON: JSON
 using Logging: Logging, ConsoleLogger, with_logger
 using PrecompileTools: PrecompileTools, @compile_workload, @setup_workload
 using TOML: TOML
+using TableEdit: TableEdit
 
 # =============================================================================
 # DATABASE HELPER FUNCTIONS
@@ -87,6 +88,27 @@ function with_transaction(f::Function, db::DuckDB.DB)
 end
 export with_transaction
 
+"""
+Log a financial transaction to the immutable ledger.
+"""
+function log_financial_transaction!(db::DuckDB.DB, registration_id::Integer,
+                                     transaction_type::String, amount::Real;
+                                     reference_id::Union{Integer,Nothing}=nothing,
+                                     reference_table::Union{String,Nothing}=nothing,
+                                     effective_date::Dates.Date=Dates.today(),
+                                     recorded_by::String="system",
+                                     notes::String="")
+    with_transaction(db) do
+        DBInterface.execute(db, """
+            INSERT INTO financial_transactions (id, registration_id, transaction_type, amount,
+                                                reference_id, reference_table, effective_date,
+                                                recorded_at, recorded_by, notes)
+            VALUES (nextval('transaction_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [registration_id, transaction_type, amount, reference_id, reference_table,
+              effective_date, Dates.now(), recorded_by, notes])
+    end
+end
+export log_financial_transaction!
 
 # Include all submodules
 include("Schema.jl")
@@ -165,10 +187,12 @@ using .Registrations: process_email_folder!, get_registrations
 using .Registrations: RegistrationDetailTable, get_registration_detail_table
 using .Registrations: grant_subsidy!, get_subsidies, revoke_subsidy!
 using .Registrations: get_registration_by_reference, recalculate_costs!
+using .Registrations: get_registrations_for_edit, update_registration!
 export process_email_folder!, get_registrations
 export RegistrationDetailTable, get_registration_detail_table
 export grant_subsidy!, get_subsidies, revoke_subsidy!
 export get_registration_by_reference, recalculate_costs!
+export get_registrations_for_edit, update_registration!
 
 # Re-export from BankTransfers
 using .BankTransfers: import_bank_csv!, match_transfers!, get_unmatched_transfers

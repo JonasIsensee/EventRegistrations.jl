@@ -26,22 +26,23 @@ function parse_subcommand_options(args_str::String)
 
     # Split on whitespace, preserving quoted strings
     parts = String[]
-    current = ""
+    buf = IOBuffer()
     in_quotes = false
 
     for char in args_str
         if char == '"'
             in_quotes = !in_quotes
         elseif char == ' ' && !in_quotes
-            if !isempty(current)
-                push!(parts, current)
-                current = ""
+            s = String(take!(buf))
+            if !isempty(s)
+                push!(parts, s)
             end
         else
-            current *= char
+            write(buf, char)
         end
     end
-    !isempty(current) && push!(parts, current)
+    s = String(take!(buf))
+    !isempty(s) && push!(parts, s)
 
     # Parse each part as an option
     for part in parts
@@ -71,7 +72,6 @@ end
 
 include("project.jl")
 include("emails.jl")
-include("config_commands.jl")
 include("registrations.jl")
 include("sync_workflow.jl")
 include("payments.jl")
@@ -97,6 +97,10 @@ COMMANDS:
   sync-config                    Sync config files to database
   recalculate-costs <event-id>   Recalculate costs after config changes
   list-registrations [event-id]  List registrations with filters
+  edit-registrations [event-id]  Edit registrations in external editor (TableEdit)
+    --event-id=<id>              Event to edit (required if not default)
+    --name=<pattern>             Filter by name (regex)
+    --since=<date>               Only registrations since date (yyyy-mm-dd)
   event-overview <event-id>      Show event details
   status                         Show system status and configuration
 
@@ -137,6 +141,10 @@ EXPORTS:
     --filter=<filter>            Filter: all, unpaid, problems, paid
     --name=<pattern>             Filter by name (regex pattern)
     --email=<pattern>            Filter by email (regex pattern)
+    --since=<date>               Only registrations since date (yyyy-mm-dd)
+  edit-registrations [event-id]   Edit registrations in external editor
+    --event-id=<id>              Event to edit
+    --name=<pattern>             Filter by name (regex)
     --since=<date>               Only registrations since date (yyyy-mm-dd)
 
 COMMON OPTIONS:
@@ -258,6 +266,14 @@ function run_cli(args::Vector{String})
             elseif command == "list-registrations"
                 event_id = length(positional) >= 1 ? positional[1] : nothing
                 return cmd_list_registrations(event_id; options...)
+            elseif command == "edit-registrations"
+                event_id = get(options, :event_id, length(positional) >= 1 ? positional[1] : nothing)
+                return cmd_edit_registrations(;
+                    event_id=event_id,
+                    name=get(options, :name, nothing),
+                    since=get(options, :since, nothing),
+                    db_path=get(options, :db_path, "events.duckdb"),
+                )
             elseif command == "event-overview"
                 if isempty(positional)
                     @error "event-id required"

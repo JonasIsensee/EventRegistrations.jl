@@ -1429,6 +1429,44 @@ try
         println("  ✓ Config-specified filename works")
     end
 
+    @testset "24aa. CSV Line Parsing" begin
+        println("\n=== Test 24aa: CSV Line Parsing ===")
+
+        parse_csv_line = EventRegistrations.BankTransfers.parse_csv_line
+
+        # Basic semicolon-separated
+        @test parse_csv_line("a;b;c", ';') == ["a", "b", "c"]
+
+        # Quoted fields
+        @test parse_csv_line("\"hello world\";b;c", ';') == ["hello world", "b", "c"]
+
+        # Quoted field with delimiter inside
+        @test parse_csv_line("\"a;b\";c;d", ';') == ["a;b", "c", "d"]
+
+        # Empty fields
+        @test parse_csv_line(";;", ';') == ["", "", ""]
+
+        # Single field
+        @test parse_csv_line("hello", ';') == ["hello"]
+
+        println("  ✓ CSV line parsing works correctly")
+    end
+
+    @testset "24a. CLI cmd_process_emails" begin
+        println("\n=== Test 24a: CLI cmd_process_emails ===")
+
+        # Ensure test emails exist
+        if !isdir(TEST_EMAILS_DIR) || isempty(readdir(TEST_EMAILS_DIR))
+            create_test_emails()
+        end
+
+        # cmd_process_emails should not crash (regression test for stats.terminated bug)
+        exit_code = EventRegistrations.cmd_process_emails(TEST_EMAILS_DIR;
+                                                          db_path=TEST_DB_PATH)
+        @test exit_code == 0
+        println("  ✓ cmd_process_emails completes without error")
+    end
+
     @testset "24. Export Combined in Sync Workflow" begin
         println("\n=== Test 24: Export Combined in Sync Workflow ===")
 
@@ -1446,6 +1484,74 @@ try
         @test EventRegistrations.cmd_sync isa Function
 
         println("  ✓ Sync workflow accepts --export-combined parameter")
+    end
+
+    @testset "25. edit-registrations (TableEdit)" begin
+        println("\n=== Test 25: edit-registrations (TableEdit) ===")
+
+        # Ensure we have registrations (from Test 3)
+        if !isdir(TEST_EMAILS_DIR) || isempty(readdir(TEST_EMAILS_DIR))
+            create_test_emails()
+        end
+        setup_test_event_config(db)
+        stats = process_email_folder!(db, TEST_EMAILS_DIR)
+        @test stats.processed >= 1
+
+        # Happy path: cmd_edit_registrations with spawn_editor=false returns (path, finish_and_apply)
+        result = EventRegistrations.cmd_edit_registrations(event_id="PWE_2026_01", db_path=TEST_DB_PATH, spawn_editor=false)
+        @test result isa Tuple
+        path, finish_and_apply = result
+        @test isfile(path)
+        content = read(path, String)
+        lines = split(content, '\n')
+        # Find first data row (after header and separator)
+        header_idx = 0
+        for (i, line) in enumerate(lines)
+            if !startswith(strip(line), "#") && !isempty(strip(line))
+                header_idx = i
+                break
+            end
+        end
+        first_data_idx = header_idx + 2
+        @test first_data_idx <= length(lines)
+        parts = split(lines[first_data_idx], '\t')
+        @test length(parts) >= 3
+        parts[3] = "edited@example.de"
+        lines[first_data_idx] = join(parts, '\t')
+        write(path, join(lines, '\n'))
+        code, n = finish_and_apply(db)
+        @test code == 0
+        @test n >= 1
+        r = DBInterface.execute(db, "SELECT id, email FROM registrations WHERE email = ?", ["edited@example.de"]) |> collect
+        @test !isempty(r)
+        reg_id_edited = r[1][1]
+        @test r[1][2] == "edited@example.de"
+        println("  ✓ edit-registrations happy path: DB updated after edit")
+
+        # Validation failure: corrupt file, finish_and_apply returns error, no changes applied
+        result2 = EventRegistrations.cmd_edit_registrations(event_id="PWE_2026_01", db_path=TEST_DB_PATH, spawn_editor=false)
+        path2, finish_and_apply2 = result2
+        content2 = read(path2, String)
+        lines2 = split(content2, '\n')
+        header_idx2 = 0
+        for (i, line) in enumerate(lines2)
+            if !startswith(strip(line), "#") && !isempty(strip(line))
+                header_idx2 = i
+                break
+            end
+        end
+        first_data_idx2 = header_idx2 + 2
+        if first_data_idx2 <= length(lines2)
+            lines2[first_data_idx2] = lines2[first_data_idx2] * "\t"
+        end
+        write(path2, join(lines2, '\n'))
+        code2, n2 = finish_and_apply2(db)
+        @test code2 != 0
+        @test n2 == 0
+        r2 = DBInterface.execute(db, "SELECT email FROM registrations WHERE id = ?", [reg_id_edited]) |> collect
+        @test !isempty(r2)
+        @test r2[1][1] == "edited@example.de"
+        println("  ✓ edit-registrations validation failure: errors reported, DB unchanged")
     end
 end
 
