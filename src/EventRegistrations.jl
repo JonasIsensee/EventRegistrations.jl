@@ -188,11 +188,13 @@ using .Registrations: RegistrationDetailTable, get_registration_detail_table
 using .Registrations: grant_subsidy!, get_subsidies, revoke_subsidy!
 using .Registrations: get_registration_by_reference, recalculate_costs!
 using .Registrations: get_registrations_for_edit, update_registration!
+using .Registrations: cancel_registration!, prompt_user_bool
 export process_email_folder!, get_registrations
 export RegistrationDetailTable, get_registration_detail_table
 export grant_subsidy!, get_subsidies, revoke_subsidy!
 export get_registration_by_reference, recalculate_costs!
 export get_registrations_for_edit, update_registration!
+export cancel_registration!, prompt_user_bool
 
 # Re-export from BankTransfers
 using .BankTransfers: import_bank_csv!, match_transfers!, get_unmatched_transfers
@@ -377,26 +379,29 @@ export init_project
 # Include CLI functions directly into EventRegistrations module
 # This must be after all other modules are loaded so their exports are available
 include("cli/CLI.jl")
-export run_cli
+export run_cli, run_repl, dispatch_to_command, parse_cli_args, parse_repl_line
 
 """
     main(args::Vector{String}=ARGS)
 
-Main CLI entry point. This function dispatches to the appropriate CLI command.
+Main CLI entry point. Dispatches to the appropriate CLI command, or enters REPL when args is empty.
+
+- With no arguments: enter REPL mode (single DB connection; type exit or Ctrl-D to quit).
+- With arguments: run the given command (opens and closes DB per invocation).
 
 Can be called in two ways:
-1. From bin/eventreg script (development): `./bin/eventreg <command>`
-2. Directly: `julia --project -e 'using EventRegistrations; EventRegistrations.main(ARGS)' -- <command>`
+1. From bin/eventreg script (development): `./bin/eventreg` or `./bin/eventreg <command>`
+2. Directly: `julia --project -e 'using EventRegistrations; EventRegistrations.main(ARGS)' -- [command]`
 
-For a permanent installation, you can:
-- Add bin/eventreg to your PATH
-- Create a shell alias: `alias eventreg='/path/to/EventRegistrations.jl/bin/eventreg'`
-- Use Julia's App system with `@main` macro (requires Julia 1.11+)
-
-The `@main` macro support has been removed for now due to compatibility issues.
-Use the bin/eventreg wrapper script which provides the same functionality.
+Run eventreg with no arguments to enter REPL mode. Database is connected once at startup.
+Type exit or quit, or press Ctrl-D to quit.
 """
-main(ARGS) = run_cli(ARGS)
+function main(args::Vector{String}=ARGS)
+    if isempty(args)
+        return run_repl()
+    end
+    return run_cli(args)
+end
 export main
 
 using PrecompileTools
@@ -404,9 +409,7 @@ using PrecompileTools
     cd(joinpath(@__DIR__,"..", "testingfolder"))
     @compile_workload begin
         # inside here, put a "toy example" of everything you want to be fast
-        cmd_sync(;
-            export_details="--format=csv",
-            export_payments="--format=csv")
+        run_cli(["sync", "--export-details=--format=csv", "--export-payments=--format=csv"])
     end
 end
 

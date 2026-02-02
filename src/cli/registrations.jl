@@ -6,63 +6,59 @@ const EDIT_REGISTRATIONS_COLUMN_TYPES = Dict("id" => Int)
 
 """
 Edit registrations in an external editor (TableEdit.jl).
-Queries DB for matching registrations, dumps to a temp file, opens the editor;
-on save, parses and validates, then applies changes (update_registration!) in one transaction.
+Caller must open db; run_cli opens it before calling.
 """
-function cmd_edit_registrations(; event_id::Union{String,Nothing}=nothing,
-                                 name::Union{String,Nothing}=nothing,
-                                 since::Union{String,Nothing}=nothing,
-                                 db_path::String="events.duckdb",
-                                 spawn_editor::Bool=true)
-    return require_database(db_path) do db
-        local_event_id = event_id
+function cmd_edit_registrations(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing,
+        name::Union{String,Nothing}=nothing,
+        since::Union{String,Nothing}=nothing,
+        spawn_editor::Bool=true)
+    local_event_id = event_id
+    if local_event_id === nothing
+        local_event_id = get_most_recent_event(db)
         if local_event_id === nothing
-            local_event_id = get_most_recent_event(db)
-            if local_event_id === nothing
-                @error "No events with registrations found; specify --event-id"
-                return 1
-            end
-            @info "Using most recent event" event_id=local_event_id
+            @error "No events with registrations found; specify --event-id"
+            return 1
         end
+        @info "Using most recent event" event_id=local_event_id
+    end
 
-        columns, rows = get_registrations_for_edit(db, local_event_id; name=name, since=since)
-        if isempty(rows)
-            @info "No registrations match the filter" event_id=local_event_id name=name since=since
-            return 0
-        end
+    columns, rows = get_registrations_for_edit(db, local_event_id; name=name, since=since)
+    if isempty(rows)
+        @info "No registrations match the filter" event_id=local_event_id name=name since=since
+        return 0
+    end
 
-        table = (columns, rows)
-        if !spawn_editor
-            # Test-friendly: return (path, finish_and_apply) so caller can edit file and call callback with an open db
-            (path, finish_fn) = TableEdit.edit_table(
-                table;
-                key_columns = EDIT_REGISTRATIONS_KEY_COLUMNS,
-                required_columns = EDIT_REGISTRATIONS_REQUIRED_COLUMNS,
-                column_types = EDIT_REGISTRATIONS_COLUMN_TYPES,
-                original_table = table,
-                return_mode = :diff,
-                spawn_editor = false,
-                header_comment_lines = ["Edit registration fields below. Save and close to apply. Do not remove or reorder rows."],
-            )
-            # Callback takes db so caller can pass an open connection (require_database closes db on return)
-            finish_and_apply(open_db) = _apply_edit_result(open_db, finish_fn)
-            return (path, finish_and_apply)
-        end
-
-        ok, result, errors = TableEdit.edit_table(
+    table = (columns, rows)
+    if !spawn_editor
+        # Test-friendly: return (path, finish_and_apply) so caller can edit file and call callback with an open db
+        (path, finish_fn) = TableEdit.edit_table(
             table;
             key_columns = EDIT_REGISTRATIONS_KEY_COLUMNS,
             required_columns = EDIT_REGISTRATIONS_REQUIRED_COLUMNS,
             column_types = EDIT_REGISTRATIONS_COLUMN_TYPES,
             original_table = table,
             return_mode = :diff,
-            spawn_editor = true,
+            spawn_editor = false,
             header_comment_lines = ["Edit registration fields below. Save and close to apply. Do not remove or reorder rows."],
         )
-
-        code, _ = _apply_edit_result(db, ok, result, errors)
-        return code
+        # Callback takes db so caller can pass an open connection (require_database closes db on return)
+        finish_and_apply(open_db) = _apply_edit_result(open_db, finish_fn)
+        return (path, finish_and_apply)
     end
+
+    ok, result, errors = TableEdit.edit_table(
+        table;
+        key_columns = EDIT_REGISTRATIONS_KEY_COLUMNS,
+        required_columns = EDIT_REGISTRATIONS_REQUIRED_COLUMNS,
+        column_types = EDIT_REGISTRATIONS_COLUMN_TYPES,
+        original_table = table,
+        return_mode = :diff,
+        spawn_editor = true,
+        header_comment_lines = ["Edit registration fields below. Save and close to apply. Do not remove or reorder rows."],
+    )
+
+    code, _ = _apply_edit_result(db, ok, result, errors)
+    return code
 end
 
 """
@@ -103,90 +99,145 @@ end
 
 """
 List registrations with optional filtering.
-Provides a quick view of registrations with payment status.
+Caller must open db; run_cli opens it before calling.
 """
-function cmd_list_registrations(event_id::Union{String,Nothing}=nothing;
-                                 db_path::String="events.duckdb",
-                                 filter::String="all",
-                                 name::Union{String,Nothing}=nothing,
-                                 email::Union{String,Nothing}=nothing,
-                                 since::Union{String,Nothing}=nothing)
-    return require_database(db_path) do db
-        # Default to most recent event if not specified
-        local_event_id = event_id
+function cmd_list_registrations(db::DuckDB.DB, event_id::Union{String,Nothing}=nothing;
+        filter::String="all",
+        name::Union{String,Nothing}=nothing,
+        email::Union{String,Nothing}=nothing,
+        since::Union{String,Nothing}=nothing)
+    # Default to most recent event if not specified
+    local_event_id = event_id
+    if local_event_id === nothing
+        local_event_id = get_most_recent_event(db)
         if local_event_id === nothing
-            local_event_id = get_most_recent_event(db)
-            if local_event_id === nothing
-                @error "No events with registrations found"
-                return 1
-            end
-            @info "Using most recent event" event_id=local_event_id
+            @error "No events with registrations found"
+            return 1
         end
+        @info "Using most recent event" event_id=local_event_id
+    end
 
-        # Parse since date if provided
-        since_date = if since !== nothing
-            try
-                Date(since, dateformat"yyyy-mm-dd")
-            catch
-                @error "Invalid date format for --since. Use yyyy-mm-dd" since=since
-                return 1
-            end
-        else
-            nothing
+    # Parse since date if provided
+    since_date = if since !== nothing
+        try
+            Date(since, dateformat"yyyy-mm-dd")
+        catch
+            @error "Invalid date format for --since. Use yyyy-mm-dd" since=since
+            return 1
         end
+    else
+        nothing
+    end
 
-        # Build filter from options
-        reg_filter = RegistrationFilter(
-            unpaid_only = filter == "unpaid",
-            problems_only = filter == "problems",
-            paid_only = filter == "paid",
-            name_pattern = name,
-            email_pattern = email,
-            since = since_date
-        )
+    # Build filter from options
+    reg_filter = RegistrationFilter(
+        unpaid_only = filter == "unpaid",
+        problems_only = filter == "problems",
+        paid_only = filter == "paid",
+        name_pattern = name,
+        email_pattern = email,
+        since = since_date
+    )
 
-        # Get registration data
-        table_data = get_registration_table_data(db, local_event_id)
+    # Get registration data
+    table_data = get_registration_table_data(db, local_event_id)
 
-        if table_data.total_registrations == 0
-            @info "No registrations found for event" event_id=local_event_id
+    if table_data.total_registrations == 0
+        @info "No registrations found for event" event_id=local_event_id
+        return 0
+    end
+
+    # Print colored table
+    print_registration_table(table_data; filter=reg_filter)
+    return 0
+end
+
+"""
+Resolve identifier (numeric id or reference number) to (reg_id, reference_number, event_id) for display.
+Returns nothing if not found.
+"""
+function _resolve_registration_for_display(db::DuckDB.DB, identifier::AbstractString)
+    id_str = strip(identifier)
+    # Try numeric id first
+    try
+        reg_id = parse(Int, id_str)
+        result = DBInterface.execute(db, """
+            SELECT id, reference_number, event_id FROM registrations WHERE id = ?
+        """, [reg_id])
+        rows = collect(result)
+        isempty(rows) && return nothing
+        r = rows[1]
+        return (reg_id=r[1], reference_number=string(r[2]), event_id=string(r[3]))
+    catch
+        nothing
+    end
+    # Try reference number
+    reg = get_registration_by_reference(db, uppercase(id_str))
+    reg === nothing && return nothing
+    return (reg_id=reg[1], reference_number=string(reg[3]), event_id=string(reg[2]))
+end
+
+"""
+Delete (cancel) a registration by id or reference number.
+Soft delete: sets status to 'cancelled'. Prompts for confirmation unless --yes.
+Caller must open db; run_cli opens it before calling.
+"""
+function cmd_delete_registration(db::DuckDB.DB, identifier::String;
+        event_id::Union{String,Nothing}=nothing,
+        yes::Bool=false)
+    resolved = _resolve_registration_for_display(db, identifier)
+    if resolved === nothing
+        @error "Registration not found" identifier=identifier
+        return 1
+    end
+    if event_id !== nothing && resolved.event_id != event_id
+        @error "Registration does not belong to event" identifier=identifier resolved_event=resolved.event_id expected_event=event_id
+        return 1
+    end
+    if !yes
+        ok = prompt_user_bool("Cancel registration $(resolved.reference_number) (event $(resolved.event_id))? "; default=false)
+        if !ok
+            @info "Aborted."
             return 0
         end
-
-        # Print colored table
-        print_registration_table(table_data; filter=reg_filter)
+    end
+    try
+        cancel_registration!(db, resolved.reg_id)
+        @info "✓ Registration cancelled" reference=resolved.reference_number
         return 0
+    catch e
+        @error "Failed to cancel registration" exception=(e, catch_backtrace())
+        return 1
     end
 end
 
 """
 Show detailed overview for an event.
+Caller must open db; run_cli opens it before calling.
 """
-function cmd_event_overview(event_id::String; db_path::String="events.duckdb")
-    return require_database(db_path) do db
-        overview = event_overview(db, event_id)
+function cmd_event_overview(db::DuckDB.DB, event_id::String)
+    overview = event_overview(db, event_id)
 
-        if overview === nothing
-            @error "Event not found" event_id=event_id
-            return 1
-        end
-
-        lines = [
-            "Event: $(overview.event_name)",
-            "ID: $(overview.event_id)",
-            "-" ^ 80,
-            "  Total registrations: $(overview.registrations)",
-            "  Fully paid: $(overview.fully_paid)",
-            "  Partially paid: $(overview.partially_paid)",
-            "  Unpaid: $(overview.unpaid)",
-            "",
-            "  Total expected: $(overview.total_expected) €",
-            "  Total received (payments): $(overview.total_received) €",
-            "  Total subsidies: $(overview.total_subsidies) €",
-            "  Total credits: $(overview.total_credits) €",
-            "  Outstanding: $(overview.outstanding) €",
-        ]
-        @info join(lines, "\n")
-        return 0
+    if overview === nothing
+        @error "Event not found" event_id=event_id
+        return 1
     end
+
+    lines = [
+        "Event: $(overview.event_name)",
+        "ID: $(overview.event_id)",
+        "-" ^ 80,
+        "  Total registrations: $(overview.registrations)",
+        "  Fully paid: $(overview.fully_paid)",
+        "  Partially paid: $(overview.partially_paid)",
+        "  Unpaid: $(overview.unpaid)",
+        "",
+        "  Total expected: $(overview.total_expected) €",
+        "  Total received (payments): $(overview.total_received) €",
+        "  Total subsidies: $(overview.total_subsidies) €",
+        "  Total credits: $(overview.total_credits) €",
+        "  Outstanding: $(overview.outstanding) €",
+    ]
+    @info join(lines, "\n")
+    return 0
 end
