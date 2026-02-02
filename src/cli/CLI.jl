@@ -10,6 +10,8 @@ using Logging
 using Dates: Date, @dateformat_str
 using JSON
 using PrettyTables: pretty_table
+using REPL
+using REPL.LineEdit
 
 with_cli_logger(f::Function; io::IO=stdout) = with_logger(ConsoleLogger(io)) do
     f()
@@ -433,11 +435,113 @@ EventRegistrations REPL — database connected. Same commands as CLI (without th
   list-registrations, grant-subsidy <ref> <amount>, exit, etc. Type help for full usage.
 """
 
+# Available commands for completion
+const REPL_COMMANDS = [
+    "init", "sync", "process-emails", "generate-field-config", "create-event-config",
+    "sync-config", "recalculate-costs", "list-registrations", "edit-registrations",
+    "event-overview", "status", "import-bank-csv", "match-transfers", "list-unmatched",
+    "review-near-misses", "manual-match", "grant-subsidy", "delete-registration",
+    "export-payment-status", "export-registrations", "export-combined",
+    "list-pending-emails", "mark-email", "send-emails", "help", "exit", "quit"
+]
+
+# Common options for completion
+const REPL_OPTIONS = [
+    "--db-path=", "--config-dir=", "--verbose", "--strict", "--dry-run", "--nonstop",
+    "--format=", "--filter=", "--event-id=", "--name=", "--email=", "--since=",
+    "--output=", "--details", "--summary-only", "--upload", "--yes", "--id=",
+    "--all", "--email-type=", "--delimiter=", "--decimal-comma", "--reason=",
+    "--granted-by=", "--send-emails", "--export-details", "--export-payments",
+    "--export-combined"
+]
+
+# Filter values for completion
+const REPL_FILTER_VALUES = ["all", "unpaid", "problems", "paid", "no-config"]
+const REPL_FORMAT_VALUES = ["terminal", "pdf", "latex", "csv", "xlsx"]
+
 """
-Run the interactive REPL. Resolves db_path (default events.duckdb in cwd),
-ensures the database exists, opens it once, then runs a read loop dispatching
-each line via dispatch_to_command. Type exit or quit, or Ctrl-D to quit.
-After 'init', the connection is closed and re-opened to use the new project.
+Custom completion provider for the eventreg REPL.
+Provides completion for commands, options, and option values.
+Returns a tuple of (completions, should_complete, prefix).
+"""
+function eventreg_complete(s::LineEdit.PromptState)
+    input = String(take!(copy(LineEdit.buffer(s))))
+    words = split(input, r"\s+"; keepempty=true)
+    
+    # If input is empty or just whitespace, return all commands
+    if isempty(strip(input)) || (length(words) == 1 && isempty(strip(words[1])))
+        completions = REPL.Completion[REPL.Completion(cmd, cmd, "") for cmd in REPL_COMMANDS]
+        return completions, true, ""
+    end
+    
+    last_word = isempty(words) ? "" : words[end]
+    prev_word = length(words) >= 2 ? words[end-1] : ""
+    
+    # Complete commands if we're at the start or after whitespace
+    if length(words) == 1 && !startswith(last_word, "--")
+        matches = filter(cmd -> startswith(cmd, last_word), REPL_COMMANDS)
+        completions = REPL.Completion[REPL.Completion(cmd, cmd, "") for cmd in matches]
+        return completions, true, last_word
+    end
+    
+    # Complete options
+    if startswith(last_word, "--")
+        # Check if this is an option that needs a value
+        if prev_word == "--format" || startswith(prev_word, "--format=")
+            # Extract value after = if present
+            value_part = contains(last_word, "=") ? last_word[findfirst("=", last_word)[1]+1:end] : ""
+            matches = filter(fmt -> startswith(fmt, value_part), REPL_FORMAT_VALUES)
+            completions = REPL.Completion[REPL.Completion("--format=$fmt", "--format=$fmt", "") for fmt in matches]
+            return completions, true, last_word
+        elseif prev_word == "--filter" || startswith(prev_word, "--filter=")
+            value_part = contains(last_word, "=") ? last_word[findfirst("=", last_word)[1]+1:end] : ""
+            matches = filter(flt -> startswith(flt, value_part), REPL_FILTER_VALUES)
+            completions = REPL.Completion[REPL.Completion("--filter=$flt", "--filter=$flt", "") for flt in matches]
+            return completions, true, last_word
+        else
+            # Complete option names
+            matches = filter(opt -> startswith(opt, last_word), REPL_OPTIONS)
+            completions = REPL.Completion[REPL.Completion(opt, opt, "") for opt in matches]
+            return completions, true, last_word
+        end
+    end
+    
+    # If we're after an option that takes a value, suggest values
+    if prev_word == "--format" || startswith(prev_word, "--format=")
+        matches = filter(fmt -> startswith(fmt, last_word), REPL_FORMAT_VALUES)
+        completions = REPL.Completion[REPL.Completion(fmt, fmt, "") for fmt in matches]
+        return completions, true, last_word
+    elseif prev_word == "--filter" || startswith(prev_word, "--filter=")
+        matches = filter(flt -> startswith(flt, last_word), REPL_FILTER_VALUES)
+        completions = REPL.Completion[REPL.Completion(flt, flt, "") for flt in matches]
+        return completions, true, last_word
+    end
+    
+    return REPL.Completion[], false, ""
+end
+
+"""
+Check if input is complete (for multi-line support).
+Currently always returns true for single-line commands.
+"""
+function eventreg_is_complete(s::LineEdit.MIState)
+    input = String(take!(copy(LineEdit.buffer(s))))
+    # For now, we treat each line as complete
+    # Could be enhanced to support multi-line commands in the future
+    return true
+end
+
+"""
+Run the interactive REPL with enhanced features:
+- TAB completion for commands and options
+- History navigation with arrow keys
+- Arrow key navigation for cursor movement
+- Ctrl-D to exit
+
+Resolves db_path (default events.duckdb in cwd), ensures the database exists,
+opens it once, then runs a read loop dispatching each line via dispatch_to_command.
+Type exit or quit, or Ctrl-D to quit. After 'init', the connection is closed
+and re-opened to use the new project.
 """
 function run_repl(; db_path::String="events.duckdb")
     db_path = get(ENV, "EVENTREG_DB_PATH", db_path)
@@ -448,14 +552,111 @@ function run_repl(; db_path::String="events.duckdb")
     db = init_database(db_path)
     try
         println(REPL_BANNER)
+        
+        # Set up history provider
+        hist = LineEdit.HistoryProvider(Dict{Symbol, Any}())
+        
+        # Create search prompt for history search
+        search_prompt, search_keymap = LineEdit.setup_search_keymap(hist)
+        
+        # Create prefix prompt for history navigation  
+        prefix_prompt, prefix_keymap = LineEdit.setup_prefix_keymap(hist, nothing)
+        
+        # Create a custom prompt with completion and history
+        prompt = LineEdit.Prompt(
+            REPL_PROMPT;
+            prompt_prefix = "",
+            prompt_suffix = "",
+            keymap_dict = LineEdit.keymap(Dict{Any,Any}[
+                search_keymap,
+                prefix_keymap,
+                LineEdit.history_keymap,
+                LineEdit.default_keymap,
+                LineEdit.escape_defaults,
+            ]),
+            on_enter = eventreg_is_complete,
+            complete = eventreg_complete,
+            sticky = false
+        )
+        
+        # Link history to prompt
+        hist.mode_mapping[:eventreg] = prompt
+        prompt.hist = hist
+        
+        # Create a terminal interface for LineEdit
+        term = REPL.Terminals.TTYTerminal(get(ENV, "TERM", "dumb"), stdin, stdout, stderr)
+        
+        # Set up the on_done callback to process commands
+        # Store the result in a way we can access from the main loop
+        result_ref = Ref{Union{String, Nothing}}(nothing)
+        
+        prompt.on_done = (s, buf, ok) -> begin
+            if ok
+                result_ref[] = String(take!(buf))
+            else
+                result_ref[] = nothing
+            end
+        end
+        
+        # Create a minimal REPL interface for LineEdit
+        # We need a dummy REPL object
+        dummy_repl = REPL.LineEditREPL(term, false)
+        if !isdefined(dummy_repl, :interface)
+            dummy_repl.interface = REPL.setup_interface(dummy_repl)
+        end
+        
+        # Main REPL loop
         while true
-            print(REPL_PROMPT)
-            flush(stdout)
-            line = readline()
+            # Read a line using LineEdit with full editing capabilities
+            # This provides TAB completion, history, and arrow key navigation
+            try
+                # Reset the result
+                result_ref[] = nothing
+                
+                # Create a state and transition to our prompt
+                state = LineEdit.init_state(term)
+                LineEdit.transition(state, prompt)
+                
+                # Run the interface - this will handle all input including TAB, arrows, etc.
+                # The on_done callback will set result_ref when Enter is pressed
+                LineEdit.run_interface(state)
+                
+                line = result_ref[]
+            catch e
+                # Handle Ctrl-C or other interrupts
+                if isa(e, InterruptException)
+                    println()
+                    continue
+                elseif isa(e, EOFError)
+                    # Ctrl-D pressed
+                    break
+                else
+                    rethrow(e)
+                end
+            end
+            
             if line === nothing || isempty(strip(line))
+                # Ctrl-D pressed or empty line
+                if line === nothing
+                    break
+                end
+                continue
+            end
+            
+            line = strip(line)
+            if isempty(line)
+                continue
+            end
+            
+            if line in ("exit", "quit")
                 break
             end
-            strip(line) in ("exit", "quit") && break
+            
+            # Add to history (only if not empty and not a duplicate of last entry)
+            if !isempty(line)
+                LineEdit.add_history(hist, line)
+            end
+            
             args = parse_repl_line(line)
             isempty(args) && continue
             command, positional, options = parse_cli_args(args)
