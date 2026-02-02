@@ -590,19 +590,13 @@ function run_repl(; db_path::String="events.duckdb")
         # Store the result in a way we can access from the main loop
         result_ref = Ref{Union{String, Nothing}}(nothing)
         
+        # Set up the on_done callback - this will be called when Enter is pressed
         prompt.on_done = (s, buf, ok) -> begin
             if ok
                 result_ref[] = String(take!(buf))
             else
                 result_ref[] = nothing
             end
-        end
-        
-        # Create a minimal REPL interface for LineEdit
-        # We need a dummy REPL object
-        dummy_repl = REPL.LineEditREPL(term, false)
-        if !isdefined(dummy_repl, :interface)
-            dummy_repl.interface = REPL.setup_interface(dummy_repl)
         end
         
         # Main REPL loop
@@ -613,13 +607,9 @@ function run_repl(; db_path::String="events.duckdb")
                 # Reset the result
                 result_ref[] = nothing
                 
-                # Create a state and transition to our prompt
-                state = LineEdit.init_state(term)
-                LineEdit.transition(state, prompt)
-                
-                # Run the interface - this will handle all input including TAB, arrows, etc.
-                # The on_done callback will set result_ref when Enter is pressed
-                LineEdit.run_interface(state)
+                # Use LineEdit.readline which handles all the editing features
+                # It will call on_done when Enter is pressed (if on_enter returns true)
+                LineEdit.readline(term, prompt)
                 
                 line = result_ref[]
             catch e
