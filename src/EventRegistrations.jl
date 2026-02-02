@@ -377,16 +377,20 @@ export init_project
 # Include CLI functions directly into EventRegistrations module
 # This must be after all other modules are loaded so their exports are available
 include("cli/CLI.jl")
-export run_cli
+export run_cli, run_repl, parse_repl_line
 
 """
     main(args::Vector{String}=ARGS)
 
-Main CLI entry point. This function dispatches to the appropriate CLI command.
+Main CLI entry point. Dispatches to the appropriate CLI command or enters REPL mode.
+
+- With no arguments: enter interactive REPL mode (TAB completion, history, arrow keys).
+  Type `exit` or press Ctrl-D to quit.
+- With arguments: run the given command.
 
 Can be called in two ways:
-1. From bin/eventreg script (development): `./bin/eventreg <command>`
-2. Directly: `julia --project -e 'using EventRegistrations; EventRegistrations.main(ARGS)' -- <command>`
+1. From bin/eventreg script (development): `./bin/eventreg` or `./bin/eventreg <command>`
+2. Directly: `julia --project -e 'using EventRegistrations; EventRegistrations.main(ARGS)' -- [command]`
 
 For a permanent installation, you can:
 - Add bin/eventreg to your PATH
@@ -396,7 +400,7 @@ For a permanent installation, you can:
 The `@main` macro support has been removed for now due to compatibility issues.
 Use the bin/eventreg wrapper script which provides the same functionality.
 """
-main(ARGS) = run_cli(ARGS)
+main(args::Vector{String}=ARGS) = run_cli(args)
 export main
 
 using PrecompileTools
