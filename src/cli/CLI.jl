@@ -12,6 +12,7 @@ using JSON
 using PrettyTables: pretty_table
 using REPL
 using REPL.LineEdit
+using ReplMaker
 
 with_cli_logger(f::Function; io::IO=stdout) = with_logger(ConsoleLogger(io)) do
     f()
@@ -532,7 +533,14 @@ function eventreg_is_complete(s::LineEdit.MIState)
 end
 
 """
-Run the interactive REPL with enhanced features:
+Parser function for ReplMaker - just returns the input as-is since we parse it ourselves.
+"""
+function eventreg_parser(input::String)
+    return input
+end
+
+"""
+Run the interactive REPL with enhanced features using ReplMaker:
 - TAB completion for commands and options
 - History navigation with arrow keys
 - Arrow key navigation for cursor movement
@@ -553,65 +561,87 @@ function run_repl(; db_path::String="events.duckdb")
     try
         println(REPL_BANNER)
         
-        # Set up history provider
-        hist = LineEdit.HistoryProvider(Dict{Symbol, Any}())
-        
-        # Create search prompt for history search
-        search_prompt, search_keymap = LineEdit.setup_search_keymap(hist)
-        
-        # Create prefix prompt for history navigation  
-        prefix_prompt, prefix_keymap = LineEdit.setup_prefix_keymap(hist, nothing)
-        
-        # Create a custom prompt with completion and history
-        prompt = LineEdit.Prompt(
-            REPL_PROMPT;
-            prompt_prefix = "",
-            prompt_suffix = "",
-            keymap_dict = LineEdit.keymap(Dict{Any,Any}[
-                search_keymap,
-                prefix_keymap,
-                LineEdit.history_keymap,
-                LineEdit.default_keymap,
-                LineEdit.escape_defaults,
-            ]),
-            on_enter = eventreg_is_complete,
-            complete = eventreg_complete,
-            sticky = false
-        )
-        
-        # Link history to prompt
-        hist.mode_mapping[:eventreg] = prompt
-        prompt.hist = hist
-        
-        # Create a terminal interface for LineEdit
+        # Create a terminal and REPL for ReplMaker
         term = REPL.Terminals.TTYTerminal(get(ENV, "TERM", "dumb"), stdin, stdout, stderr)
-        
-        # Set up the on_done callback to process commands
-        # Store the result in a way we can access from the main loop
-        result_ref = Ref{Union{String, Nothing}}(nothing)
-        
-        # Set up the on_done callback - this will be called when Enter is pressed
-        prompt.on_done = (s, buf, ok) -> begin
-            if ok
-                result_ref[] = String(take!(buf))
-            else
-                result_ref[] = nothing
-            end
+        repl = REPL.LineEditREPL(term, false)
+        if !isdefined(repl, :interface)
+            repl.interface = REPL.setup_interface(repl)
         end
         
-        # Main REPL loop
-        while true
-            # Read a line using LineEdit with full editing capabilities
-            # This provides TAB completion, history, and arrow key navigation
+        # Set up result storage for the REPL loop
+        result_ref = Ref{Union{String, Nothing}}(nothing)
+        should_exit = Ref{Bool}(false)
+        
+        # Create a custom show function that captures the input
+        function eventreg_respond(input, repl, prompt)
+            if input === nothing || isempty(strip(input))
+                should_exit[] = true
+                return nothing
+            end
+            result_ref[] = input
+            return nothing
+        end
+        
+        # Initialize ReplMaker with our parser and completion
+        lang_mode = initrepl(
+            eventreg_parser,
+            prompt_text = REPL_PROMPT,
+            prompt_color = :blue,
+            start_key = '>',  # This won't be used since we're in standalone mode
+            repl = repl,
+            mode_name = :eventreg,
+            valid_input_checker = eventreg_is_complete,
+            completion_provider = eventreg_complete,
+            sticky = false,
+            startup_text = false  # Don't print startup message
+        )
+        
+        # Override the on_done to capture input
+        lang_mode.on_done = REPL.respond(eventreg_respond, repl, lang_mode)
+        
+        # Main REPL loop - manually enter the mode and process input
+        while !should_exit[]
             try
                 # Reset the result
                 result_ref[] = nothing
                 
-                # Use LineEdit.readline which handles all the editing features
-                # It will call on_done when Enter is pressed (if on_enter returns true)
-                LineEdit.readline(term, prompt)
+                # Create a state and transition to our prompt
+                state = LineEdit.init_state(term)
+                LineEdit.transition(state, lang_mode)
+                
+                # Run the interface - this handles all input including TAB, arrows, etc.
+                # The on_done callback will be triggered when Enter is pressed
+                LineEdit.run_interface(state)
                 
                 line = result_ref[]
+                
+                if line === nothing || should_exit[]
+                    break
+                end
+                
+                line = strip(line)
+                if isempty(line)
+                    continue
+                end
+                
+                if line in ("exit", "quit")
+                    break
+                end
+                
+                args = parse_repl_line(line)
+                isempty(args) && continue
+                command, positional, options = parse_cli_args(args)
+                if command in ["--help", "-h", "help"]
+                    @info HELP_TEXT
+                    continue
+                end
+                code = with_cli_logger() do
+                    dispatch_to_command(db, command, positional, options; db_path=db_path, events_dir="events", credentials_path="credentials.toml")
+                end
+                if command == "init"
+                    DBInterface.close!(db)
+                    db = init_database(db_path)
+                end
             catch e
                 # Handle Ctrl-C or other interrupts
                 if isa(e, InterruptException)
@@ -623,43 +653,6 @@ function run_repl(; db_path::String="events.duckdb")
                 else
                     rethrow(e)
                 end
-            end
-            
-            if line === nothing || isempty(strip(line))
-                # Ctrl-D pressed or empty line
-                if line === nothing
-                    break
-                end
-                continue
-            end
-            
-            line = strip(line)
-            if isempty(line)
-                continue
-            end
-            
-            if line in ("exit", "quit")
-                break
-            end
-            
-            # Add to history (only if not empty and not a duplicate of last entry)
-            if !isempty(line)
-                LineEdit.add_history(hist, line)
-            end
-            
-            args = parse_repl_line(line)
-            isempty(args) && continue
-            command, positional, options = parse_cli_args(args)
-            if command in ["--help", "-h", "help"]
-                @info HELP_TEXT
-                continue
-            end
-            code = with_cli_logger() do
-                dispatch_to_command(db, command, positional, options; db_path=db_path, events_dir="events", credentials_path="credentials.toml")
-            end
-            if command == "init"
-                DBInterface.close!(db)
-                db = init_database(db_path)
             end
         end
     finally

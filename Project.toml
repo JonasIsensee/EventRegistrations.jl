@@ -25,6 +25,7 @@ StringEncodings = "69024149-9ee7-55f6-a4c4-859efe599b68"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 TableEdit = "6fd26c76-9c3a-4270-bdc3-4821c052fe8b"
 TableExport = "d40d089f-2874-4e7a-b862-5b61c18daa50"
+ReplMaker = "0.1"
 tectonic_jll = "d7dd28d6-a5e6-559c-9131-7eb760cdacc5"
 
 [compat]
