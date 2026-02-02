@@ -188,11 +188,15 @@ using .Registrations: RegistrationDetailTable, get_registration_detail_table
 using .Registrations: grant_subsidy!, get_subsidies, revoke_subsidy!
 using .Registrations: get_registration_by_reference, recalculate_costs!
 using .Registrations: get_registrations_for_edit, update_registration!
+using .Registrations: delete_registration!, restore_registration!
+using .Registrations: get_deleted_registrations
 export process_email_folder!, get_registrations
 export RegistrationDetailTable, get_registration_detail_table
 export grant_subsidy!, get_subsidies, revoke_subsidy!
 export get_registration_by_reference, recalculate_costs!
 export get_registrations_for_edit, update_registration!
+export delete_registration!, restore_registration!
+export get_deleted_registrations
 
 # Re-export from BankTransfers
 using .BankTransfers: import_bank_csv!, match_transfers!, get_unmatched_transfers
@@ -234,7 +238,7 @@ function list_events(db::DuckDB.DB)
             SUM(r.computed_cost) as total_expected,
             COUNT(pm.id) as paid_count
         FROM events e
-        LEFT JOIN registrations r ON r.event_id = e.event_id
+        LEFT JOIN registrations r ON r.event_id = e.event_id AND r.deleted_at IS NULL
         LEFT JOIN payment_matches pm ON pm.registration_id = r.id
         GROUP BY e.event_id, e.event_name
         ORDER BY e.event_id
@@ -251,6 +255,7 @@ function get_most_recent_event(db::DuckDB.DB)
     result = DBInterface.execute(db, """
         SELECT event_id
         FROM registrations
+        WHERE deleted_at IS NULL
         ORDER BY registration_date DESC
         LIMIT 1
     """)
@@ -276,7 +281,7 @@ function event_overview(db::DuckDB.DB, event_id::AbstractString)
 
     # Registration count
     reg_count = first(collect(DBInterface.execute(db,
-        "SELECT COUNT(*) FROM registrations WHERE event_id = ?",
+        "SELECT COUNT(*) FROM registrations WHERE event_id = ? AND deleted_at IS NULL",
         [event_id])))[1]
 
     # Payment summary

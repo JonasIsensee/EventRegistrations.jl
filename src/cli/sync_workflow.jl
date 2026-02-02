@@ -74,7 +74,7 @@ function cmd_sync(;
             check = DBInterface.execute(db, """
                 SELECT COUNT(*)
                 FROM registrations r
-                WHERE r.event_id = ?
+                WHERE r.event_id = ? AND r.deleted_at IS NULL
                     AND (r.computed_cost IS NULL OR r.cost_rules_hash IS NULL OR r.cost_rules_hash <> ?)
             """, [evt_id, cfg.config_hash])
             if collect(check)[1][1] > 0

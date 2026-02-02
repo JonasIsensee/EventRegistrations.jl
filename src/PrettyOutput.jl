@@ -194,7 +194,7 @@ function get_payment_table_data(db::DuckDB.DB, event_id::String)::PaymentTableDa
             FROM subsidies
             GROUP BY registration_id
         ) subsidies ON subsidies.registration_id = r.id
-        WHERE r.event_id = ?
+        WHERE r.event_id = ? AND r.deleted_at IS NULL
         ORDER BY r.last_name, r.first_name
     """, [event_id])
 
@@ -535,7 +535,7 @@ function get_registration_table_data(db::DuckDB.DB, event_id::String)::Registrat
             FROM subsidies
             GROUP BY registration_id
         ) subsidies ON subsidies.registration_id = r.id
-        WHERE r.event_id = ?
+        WHERE r.event_id = ? AND r.deleted_at IS NULL
         ORDER BY r.last_name, r.first_name
     """, [event_id])
 

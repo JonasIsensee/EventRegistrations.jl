@@ -425,8 +425,8 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
         for ref_candidate in candidates
             # Look up registration
             reg_query = event_id === nothing ?
-                "SELECT id, event_id, computed_cost, first_name, last_name, email FROM registrations WHERE reference_number = ?" :
-                "SELECT id, event_id, computed_cost, first_name, last_name, email FROM registrations WHERE reference_number = ? AND event_id = ?"
+                "SELECT id, event_id, computed_cost, first_name, last_name, email FROM registrations WHERE reference_number = ? AND deleted_at IS NULL" :
+                "SELECT id, event_id, computed_cost, first_name, last_name, email FROM registrations WHERE reference_number = ? AND event_id = ? AND deleted_at IS NULL"
 
             params = event_id === nothing ? [ref_candidate] : [ref_candidate, event_id]
             result = DBInterface.execute(db, reg_query, params)
@@ -527,8 +527,8 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
 
                             # Look up the nearby registration
                             reg_query = event_id === nothing ?
-                                "SELECT id, event_id, computed_cost, first_name, last_name, email FROM registrations WHERE reference_number = ?" :
-                                "SELECT id, event_id, computed_cost, first_name, last_name, email FROM registrations WHERE reference_number = ? AND event_id = ?"
+                                "SELECT id, event_id, computed_cost, first_name, last_name, email FROM registrations WHERE reference_number = ? AND deleted_at IS NULL" :
+                                "SELECT id, event_id, computed_cost, first_name, last_name, email FROM registrations WHERE reference_number = ? AND event_id = ? AND deleted_at IS NULL"
 
                             params = event_id === nothing ? [nearby_ref] : [nearby_ref, event_id]
                             result = DBInterface.execute(db, reg_query, params)
@@ -617,12 +617,13 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                 """
                 SELECT id, reference_number, first_name, last_name, email, computed_cost
                 FROM registrations
-                WHERE event_id = ?
+                WHERE event_id = ? AND deleted_at IS NULL
                 """
             else
                 """
                 SELECT id, reference_number, first_name, last_name, email, computed_cost
                 FROM registrations
+                WHERE deleted_at IS NULL
                 """
             end
             params = event_id !== nothing ? [event_id] : []
@@ -839,7 +840,7 @@ Match by reference number string.
 function manual_match!(db::DuckDB.DB, transfer_id::Integer, reference::AbstractString;
                        notes::String="")
     reg_result = DBInterface.execute(db,
-        "SELECT id FROM registrations WHERE reference_number = ?",
+        "SELECT id FROM registrations WHERE reference_number = ? AND deleted_at IS NULL",
         [uppercase(strip(reference))])
     rows = collect(reg_result)
 
@@ -891,7 +892,7 @@ function get_payment_status(db::DuckDB.DB, event_id::AbstractString)
             FROM subsidies
             GROUP BY registration_id
         ) subs ON subs.registration_id = r.id
-        WHERE r.event_id = ?
+        WHERE r.event_id = ? AND r.deleted_at IS NULL
         ORDER BY r.last_name, r.first_name
     """, [event_id])
     return collect(result)
@@ -924,7 +925,7 @@ Get payment history by reference number.
 """
 function get_payment_history(db::DuckDB.DB, reference::AbstractString)
     reg_result = DBInterface.execute(db,
-        "SELECT id FROM registrations WHERE reference_number = ?",
+        "SELECT id FROM registrations WHERE reference_number = ? AND deleted_at IS NULL",
         [uppercase(strip(reference))])
     rows = collect(reg_result)
 
@@ -955,7 +956,7 @@ function get_payment_summary(db::DuckDB.DB, event_id::AbstractString)
                 FROM subsidies
                 GROUP BY registration_id
             ) sub ON sub.registration_id = r.id
-            WHERE r.event_id = ?
+            WHERE r.event_id = ? AND r.deleted_at IS NULL
             GROUP BY r.id, r.computed_cost, sub.total_subsidy
         )
         SELECT
@@ -1008,7 +1009,7 @@ function get_payment_discrepancies(db::DuckDB.DB, event_id::AbstractString)
             FROM subsidies
             GROUP BY registration_id
         ) sub ON sub.registration_id = r.id
-        WHERE r.event_id = ?
+        WHERE r.event_id = ? AND r.deleted_at IS NULL
         GROUP BY r.id, r.reference_number, r.first_name, r.last_name, r.email, r.computed_cost, sub.total_subsidy
         HAVING COALESCE(SUM(bt.amount), 0) + COALESCE(sub.total_subsidy, 0) != r.computed_cost
            AND COALESCE(SUM(bt.amount), 0) + COALESCE(sub.total_subsidy, 0) > 0

@@ -284,7 +284,7 @@ Get all unique field names from registrations for an event.
 """
 function get_event_field_names(db::DuckDB.DB, event_id::String)::Set{String}
     result = DBInterface.execute(db,
-        "SELECT DISTINCT json_keys(fields) FROM registrations WHERE event_id = ?",
+        "SELECT DISTINCT json_keys(fields) FROM registrations WHERE event_id = ? AND deleted_at IS NULL",
         [event_id])
 
     all_fields = Set{String}()
@@ -304,7 +304,7 @@ Get all unique field names across all registrations.
 """
 function get_all_field_names(db::DuckDB.DB)::Set{String}
     result = DBInterface.execute(db,
-        "SELECT DISTINCT json_keys(fields) FROM registrations")
+        "SELECT DISTINCT json_keys(fields) FROM registrations WHERE deleted_at IS NULL")
 
     all_fields = Set{String}()
     for row in result

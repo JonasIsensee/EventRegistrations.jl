@@ -460,7 +460,7 @@ function get_matched_transfers_data(db::DuckDB.DB, event_id::String)
         FROM registrations r
         JOIN payment_matches pm ON pm.registration_id = r.id
         JOIN bank_transfers bt ON bt.id = pm.transfer_id
-        WHERE r.event_id = ?
+        WHERE r.event_id = ? AND r.deleted_at IS NULL
         ORDER BY r.reference_number, bt.transfer_date
     """, [event_id])
 

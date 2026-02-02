@@ -102,6 +102,9 @@ COMMANDS:
     --event-id=<id>              Event to edit (required if not default)
     --name=<pattern>             Filter by name (regex)
     --since=<date>               Only registrations since date (yyyy-mm-dd)
+  delete-registration <ref>      Mark a registration as deleted (soft delete)
+  restore-registration <ref>     Restore a deleted registration
+  list-deleted-registrations [event-id]  List all deleted registrations for an event
   event-overview <event-id>      Show event details
   status                         Show system status and configuration
 
@@ -284,6 +287,21 @@ function run_cli(args::Vector{String})
                     return 1
                 end
                 return cmd_event_overview(positional[1]; options...)
+            elseif command == "delete-registration"
+                if isempty(positional)
+                    @error "reference number required"
+                    return 1
+                end
+                return cmd_delete_registration(positional[1]; options...)
+            elseif command == "restore-registration"
+                if isempty(positional)
+                    @error "reference number required"
+                    return 1
+                end
+                return cmd_restore_registration(positional[1]; options...)
+            elseif command == "list-deleted-registrations"
+                event_id = length(positional) >= 1 ? positional[1] : nothing
+                return cmd_list_deleted_registrations(event_id; options...)
             elseif command == "status"
                 return cmd_status(; options...)
             elseif command == "import-bank-csv"
