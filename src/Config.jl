@@ -53,8 +53,8 @@ function generate_field_config(db::DuckDB.DB, output_path::AbstractString;
                                 event_id::Union{String,Nothing}=nothing)
     # Get all unique field names
     query = event_id === nothing ?
-        "SELECT DISTINCT json_keys(fields) FROM registrations" :
-        "SELECT DISTINCT json_keys(fields) FROM registrations WHERE event_id = ?"
+        "SELECT DISTINCT json_keys(fields) FROM registrations WHERE deleted_at IS NULL" :
+        "SELECT DISTINCT json_keys(fields) FROM registrations WHERE event_id = ? AND deleted_at IS NULL"
 
     params = event_id === nothing ? [] : [event_id]
     result = DBInterface.execute(db, query, params)
@@ -374,7 +374,7 @@ function generate_event_config_template(event_id::AbstractString,
     if db !== nothing
         # Get all unique field names from registrations for this event
         result = DBInterface.execute(db,
-            "SELECT DISTINCT json_keys(fields) FROM registrations WHERE event_id = ?",
+            "SELECT DISTINCT json_keys(fields) FROM registrations WHERE event_id = ? AND deleted_at IS NULL",
             [event_id])
 
         for row in result
@@ -392,7 +392,7 @@ function generate_event_config_template(event_id::AbstractString,
                 result = DBInterface.execute(db, """
                     SELECT DISTINCT json_extract_string(fields, ?) as val
                     FROM registrations
-                    WHERE event_id = ? AND json_extract_string(fields, ?) IS NOT NULL
+                    WHERE event_id = ? AND deleted_at IS NULL AND json_extract_string(fields, ?) IS NOT NULL
                     LIMIT 10
                 """, [field, event_id, field])
 

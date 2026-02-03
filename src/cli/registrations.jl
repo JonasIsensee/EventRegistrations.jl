@@ -241,3 +241,84 @@ function cmd_event_overview(db::DuckDB.DB, event_id::String)
     @info join(lines, "\n")
     return 0
 end
+
+"""
+Mark a registration as deleted (soft delete).
+Caller must open db; run_cli opens it before calling.
+"""
+function cmd_soft_delete_registration(db::DuckDB.DB, reference::String)
+    try
+        delete_registration!(db, reference)
+        @info "✓ Registration deleted" reference=reference
+        return 0
+    catch e
+        @error "Failed to delete registration" reference=reference exception=e
+        return 1
+    end
+end
+
+"""
+Restore a deleted registration.
+Caller must open db; run_cli opens it before calling.
+"""
+function cmd_restore_registration(db::DuckDB.DB, reference::String)
+    try
+        restore_registration!(db, reference)
+        @info "✓ Registration restored" reference=reference
+        return 0
+    catch e
+        @error "Failed to restore registration" reference=reference exception=e
+        return 1
+    end
+end
+
+"""
+List all deleted registrations for an event.
+Caller must open db; run_cli opens it before calling.
+"""
+function cmd_list_deleted_registrations(db::DuckDB.DB, event_id::Union{String,Nothing}=nothing)
+        # Default to most recent event if not specified
+        local_event_id = event_id
+        if local_event_id === nothing
+            local_event_id = get_most_recent_event(db)
+            if local_event_id === nothing
+                @error "No events with registrations found"
+                return 1
+            end
+            @info "Using most recent event" event_id=local_event_id
+        end
+
+        deleted = get_deleted_registrations(db, local_event_id)
+        
+        if isempty(deleted)
+            @info "No deleted registrations found for event" event_id=local_event_id
+            return 0
+        end
+
+        println()
+        println("Deleted Registrations: $local_event_id")
+        println("=" ^ 80)
+        println()
+        
+        # Print table header
+        println(lpad("Reference", 15), " | ", 
+                lpad("Name", 30), " | ",
+                lpad("Email", 30), " | ",
+                lpad("Deleted At", 20))
+        println("-" ^ 80)
+        
+        for reg in deleted
+            id, email, ref, first_name, last_name, fields, cost, reg_date, deleted_at = reg
+            name = string(something(first_name, ""), " ", something(last_name, ""))
+            deleted_str = deleted_at === nothing ? "" : string(deleted_at)
+            println(lpad(string(ref), 15), " | ",
+                    lpad(name, 30), " | ",
+                    lpad(string(email), 30), " | ",
+                    lpad(deleted_str, 20))
+        end
+        
+        println()
+        println("Total: $(length(deleted)) deleted registration(s)")
+        return 0
+    end
+end

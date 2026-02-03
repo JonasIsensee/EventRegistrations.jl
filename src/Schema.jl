@@ -60,9 +60,17 @@ function init_database(db_path::AbstractString="events.duckdb")
             status VARCHAR DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'paid', 'cancelled', 'refunded')),
             valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- Temporal support
             valid_to TIMESTAMP,  -- NULL = current version
+            deleted_at TIMESTAMP,  -- Soft delete: NULL = active, timestamp = deleted
             UNIQUE(event_id, email)
         )
     """)
+    
+    # Add deleted_at column to existing databases (migration)
+    try
+        DBInterface.execute(db, "ALTER TABLE registrations ADD COLUMN deleted_at TIMESTAMP")
+    catch
+        # Column already exists, ignore
+    end
 
     # =========================================================================
     # SUBMISSIONS TABLE

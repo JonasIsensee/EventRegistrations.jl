@@ -109,6 +109,9 @@ COMMANDS:
     --event-id=<id>              Event to edit (required if not default)
     --name=<pattern>             Filter by name (regex)
     --since=<date>               Only registrations since date (yyyy-mm-dd)
+  delete-registration <ref>      Mark a registration as deleted (soft delete)
+  restore-registration <ref>     Restore a deleted registration
+  list-deleted-registrations [event-id]  List all deleted registrations for an event
   event-overview <event-id>      Show event details
   status                         Show system status and configuration
 
@@ -306,6 +309,15 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
         elseif command == "delete-registration"
             isempty(positional) && (@error "identifier (id or reference) required"; return 1)
             return cmd_delete_registration(db, positional[1]; event_id=get(options, :event_id, nothing), yes=get(options, :yes, false))
+        elseif command == "soft-delete-registration"
+            isempty(positional) && (@error "reference number required"; return 1)
+            return cmd_soft_delete_registration(db, positional[1])
+        elseif command == "restore-registration"
+            isempty(positional) && (@error "reference number required"; return 1)
+            return cmd_restore_registration(db, positional[1])
+        elseif command == "list-deleted-registrations"
+            event_id = length(positional) >= 1 ? positional[1] : nothing
+            return cmd_list_deleted_registrations(db, event_id)
         elseif command == "export-payment-status"
             event_id = length(positional) >= 1 ? positional[1] : nothing
             output = length(positional) >= 2 ? positional[2] : get(options, :output, nothing)
@@ -355,7 +367,10 @@ function run_cli(args::Vector{String})
             @info HELP_TEXT
             return 0
         end
+        command, positional, options = parse_cli_args(args)
         db_path = get(options, :db_path, "events.duckdb")
+        events_dir = get(options, :events_dir, "events")
+        credentials_path = get(options, :credentials_path, "credentials.toml")
         # Commands that don't need a DB connection
         if command == "init"
             return cmd_init(; db_path=db_path)
@@ -376,7 +391,7 @@ function run_cli(args::Vector{String})
             db = init_database(db_path)
         end
         try
-            return dispatch_to_command(db, command, positional, options; db_path=db_path, events_dir="events", credentials_path="credentials.toml")
+            return dispatch_to_command(db, command, positional, options; db_path=db_path, events_dir=events_dir, credentials_path=credentials_path)
         finally
             DBInterface.close!(db)
         end

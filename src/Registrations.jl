@@ -22,6 +22,8 @@ export grant_subsidy!, get_subsidies, revoke_subsidy!, grant_subsidies_batch!
 export get_registration_by_reference, recalculate_costs!
 export get_registrations_for_edit, update_registration!
 export cancel_registration!
+export delete_registration!, restore_registration!
+export get_deleted_registrations, get_registration_by_reference_including_deleted
 
 """
 Prompt the user for a yes/no decision and return `true` for yes, `false` for no.
@@ -172,7 +174,7 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString; events_d
     # Check for existing registration (resubmission case)
     existing = DBInterface.execute(db, """
         SELECT id, reference_number FROM registrations
-        WHERE event_id = ? AND email = ?
+        WHERE event_id = ? AND email = ? AND deleted_at IS NULL
     """, [submission.event_id, submission.email])
     existing_rows = collect(existing)
 
@@ -294,7 +296,7 @@ function get_registrations_for_edit(db::DuckDB.DB, event_id::AbstractString;
     result = DBInterface.execute(db, """
         SELECT id, reference_number, email, first_name, last_name, registration_date
         FROM registrations
-        WHERE event_id = ?
+        WHERE event_id = ? AND deleted_at IS NULL
         ORDER BY last_name, first_name
     """, [event_id])
 
@@ -358,14 +360,14 @@ function update_registration!(db::DuckDB.DB, registration_id::Integer;
 end
 
 """
-Get all registrations for an event.
+Get all registrations for an event (excluding deleted ones).
 """
 function get_registrations(db::DuckDB.DB, event_id::AbstractString)
     result = DBInterface.execute(db, """
         SELECT id, email, reference_number, first_name, last_name,
                fields, computed_cost, registration_date
         FROM registrations
-        WHERE event_id = ?
+        WHERE event_id = ? AND deleted_at IS NULL
         ORDER BY registration_date
     """, [event_id])
     return collect(result)
@@ -378,7 +380,7 @@ function get_registration_field_names(db::DuckDB.DB, event_id::AbstractString)
     field_result = DBInterface.execute(db, """
         SELECT DISTINCT json_keys(fields) as keys
         FROM registrations
-        WHERE event_id = ?
+        WHERE event_id = ? AND deleted_at IS NULL
     """, [event_id])
 
     all_fields = Set{String}()
@@ -422,7 +424,7 @@ function get_registration_by_reference(db::DuckDB.DB, reference::AbstractString)
         SELECT r.id, r.event_id, r.email, r.reference_number, r.first_name, r.last_name,
                r.fields, r.computed_cost, r.registration_date
         FROM registrations r
-        WHERE r.reference_number = ?
+        WHERE r.reference_number = ? AND r.deleted_at IS NULL
     """, [uppercase(strip(reference))])
     rows = collect(result)
     return isempty(rows) ? nothing : rows[1]
@@ -741,6 +743,80 @@ function recalculate_costs!(db::DuckDB.DB, event_id::AbstractString;
     @info "Recalculated costs for event" event_id=event_id count=length(registrations) warnings=length(all_warnings)
 
     return (success=true, updated=length(updates), warnings=length(all_warnings), details=updates)
+end
+
+"""
+Mark a registration as deleted (soft delete).
+"""
+function delete_registration!(db::DuckDB.DB, registration_id::Integer)
+    with_transaction(db) do
+        DBInterface.execute(db, """
+            UPDATE registrations SET deleted_at = ? WHERE id = ?
+        """, [now(), registration_id])
+    end
+    @info "Marked registration as deleted" registration_id=registration_id
+end
+
+"""
+Mark a registration as deleted by reference number.
+"""
+function delete_registration!(db::DuckDB.DB, reference::AbstractString)
+    reg = get_registration_by_reference(db, reference)
+    if reg === nothing
+        error("Registration not found for reference: $reference")
+    end
+    delete_registration!(db, reg[1])
+end
+
+"""
+Restore a deleted registration (un-delete).
+"""
+function restore_registration!(db::DuckDB.DB, registration_id::Integer)
+    with_transaction(db) do
+        DBInterface.execute(db, """
+            UPDATE registrations SET deleted_at = NULL WHERE id = ?
+        """, [registration_id])
+    end
+    @info "Restored registration" registration_id=registration_id
+end
+
+"""
+Restore a deleted registration by reference number.
+"""
+function restore_registration!(db::DuckDB.DB, reference::AbstractString)
+    reg = get_registration_by_reference_including_deleted(db, reference)
+    if reg === nothing
+        error("Registration not found for reference: $reference")
+    end
+    restore_registration!(db, reg[1])
+end
+
+"""
+Get a registration by reference number, including deleted ones.
+"""
+function get_registration_by_reference_including_deleted(db::DuckDB.DB, reference::AbstractString)
+    result = DBInterface.execute(db, """
+        SELECT r.id, r.event_id, r.email, r.reference_number, r.first_name, r.last_name,
+               r.fields, r.computed_cost, r.registration_date, r.deleted_at
+        FROM registrations r
+        WHERE r.reference_number = ?
+    """, [uppercase(strip(reference))])
+    rows = collect(result)
+    return isempty(rows) ? nothing : rows[1]
+end
+
+"""
+Get all deleted registrations for an event.
+"""
+function get_deleted_registrations(db::DuckDB.DB, event_id::AbstractString)
+    result = DBInterface.execute(db, """
+        SELECT id, email, reference_number, first_name, last_name,
+               fields, computed_cost, registration_date, deleted_at
+        FROM registrations
+        WHERE event_id = ? AND deleted_at IS NOT NULL
+        ORDER BY deleted_at DESC
+    """, [event_id])
+    return collect(result)
 end
 
 end # module Registrations

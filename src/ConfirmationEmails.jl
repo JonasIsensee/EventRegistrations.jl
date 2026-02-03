@@ -786,7 +786,7 @@ function queue_pending_emails!(cfg::EmailConfig, db::DuckDB.DB, event_id::Abstra
                 ROW_NUMBER() OVER (PARTITION BY ce.registration_id ORDER BY ce.sent_at DESC) as rn
             FROM confirmation_emails ce
             JOIN registrations r ON r.id = ce.registration_id
-            WHERE r.event_id = ?
+            WHERE r.event_id = ? AND r.deleted_at IS NULL
               AND ce.email_type = 'registration_confirmation'
               AND ce.status = 'sent'
         ),
@@ -798,7 +798,7 @@ function queue_pending_emails!(cfg::EmailConfig, db::DuckDB.DB, event_id::Abstra
                 ROW_NUMBER() OVER (PARTITION BY ce.registration_id ORDER BY ce.sent_at DESC) as rn
             FROM confirmation_emails ce
             JOIN registrations r ON r.id = ce.registration_id
-            WHERE r.event_id = ?
+            WHERE r.event_id = ? AND r.deleted_at IS NULL
               AND ce.email_type = 'confirmation_email'
               AND ce.status = 'sent'
         )
@@ -811,7 +811,7 @@ function queue_pending_emails!(cfg::EmailConfig, db::DuckDB.DB, event_id::Abstra
         FROM registrations r
         LEFT JOIN latest_registration_emails lre ON lre.registration_id = r.id AND lre.rn = 1
         LEFT JOIN latest_payment_emails lpe ON lpe.registration_id = r.id AND lpe.rn = 1
-        WHERE r.event_id = ?
+        WHERE r.event_id = ? AND r.deleted_at IS NULL
     """, [event_id, event_id, event_id])
 
     registration_emails = 0
