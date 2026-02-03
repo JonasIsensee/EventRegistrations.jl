@@ -2,19 +2,9 @@
 
 """
 Comprehensive sync command that does the full workflow.
-
-New in this version: supports post-sync operations via flags:
-- --send-emails[="opts"]: Send queued emails after sync
-- --export-details[="opts"]: Export registration details after sync
-- --export-payments[="opts"]: Export payment status after sync
-- --export-combined[="opts"]: Export combined multi-sheet workbook after sync
-
-Each flag can be:
-- Absent: operation skipped
-- Present without value: operation runs with defaults
-- Present with value: operation runs with parsed options (e.g., "--format=csv --filter=unpaid")
+Caller must open db; run_cli opens it before calling (or creates it for sync).
 """
-function cmd_sync(;
+function cmd_sync(db::DuckDB.DB;
     db_path::String="events.duckdb",
     events_dir::String="events",
     emails_dir::String="emails",
@@ -25,18 +15,7 @@ function cmd_sync(;
     export_details::Union{Bool,String}=false,
     export_payments::Union{Bool,String}=false,
     export_combined::Union{Bool,String}=false)
-    @info "=== EventRegistrations Sync ==="
-
-    # Step 1: Initialize database if necessary
-    db = if !isfile(db_path)
-        @info "[1/9] Initializing database..." db_path=db_path
-        init_project(db_path)
-    else
-        @info "[1/9] Database exists" db_path=db_path
-        init_database(db_path)
-    end
-    try
-        @info "Syncing event configurations to database..." events_dir
+    @info "Syncing event configurations to database..." events_dir
         updated_events = sync_event_configs_to_db!(db, events_dir)
 
         ctx = load_app_config(; db_path, credentials_path,
@@ -44,7 +23,7 @@ function cmd_sync(;
                         dry_run=true)
 
         # Step 2: Download emails (if credentials exist)
-        @info "[2/9] Checking for new emails..."
+        @info "[2/7] Checking for new emails..."
         if !isempty(ctx.email.pop3_server)
             result = download_emails!(ctx.email; emails_dir, verbose=false)
             if result.error_count == 0
@@ -56,13 +35,13 @@ function cmd_sync(;
             @info "Skipping download (no credentials file found)"
         end
 
-        # # Step 3: Process emails
-        @info "[3/9] Processing emails..." emails_dir=emails_dir
+        # Step 3: Process emails
+        @info "[3/7] Processing emails..." emails_dir=emails_dir
         process_email_folder!(db, emails_dir; events_dir)
         sync_event_configs_to_db!(db, events_dir)
 
-        # Step 6: Recalculate costs for changed events and NULL costs
-        @info "[6/9] Recalculating costs..."
+        # Step 4: Recalculate costs for changed events and NULL costs
+        @info "[4/7] Recalculating costs..."
 
         events = list_events(db)
         for event_row in events
@@ -83,8 +62,8 @@ function cmd_sync(;
         end
 
 
-        # Step 7: Import bank transfers
-        @info "[7/9] Checking for bank transfers..." bank_dir=bank_dir
+        # Step 5: Import bank transfers
+        @info "[5/7] Checking for bank transfers..." bank_dir=bank_dir
         if isdir(bank_dir)
             csv_files = filter(f -> endswith(lowercase(f), ".csv"), readdir(bank_dir))
             if !isempty(csv_files)
@@ -103,8 +82,8 @@ function cmd_sync(;
             @info "No bank transfers directory" bank_dir=bank_dir
         end
 
-        # Step 8: Match transfers
-        @info "[8/9] Matching bank transfers..." event_id=event_id
+        # Step 6: Match transfers
+        @info "[6/7] Matching bank transfers..." event_id=event_id
         if event_id !== nothing
             result = match_transfers!(db; event_id, email_cfg=ctx.email)
             @info "Matching results" matched=result.matched unmatched=length(result.unmatched)
@@ -119,8 +98,8 @@ function cmd_sync(;
             @info "Total matched across events" matched=total_matched
         end
 
-        # Step 9: Queue emails for review (pending for manual review/sending)
-        @info "[9/9] Queuing emails for pending registrations..."
+        # Step 7: Queue emails for review (pending for manual review/sending)
+        @info "[7/7] Queuing emails for pending registrations..."
 
         target_events = [row[1] for row in list_events(db)]
 
@@ -181,9 +160,9 @@ function cmd_sync(;
                 @info join(summary, "\n")
             end
         end
-        # Step 10: Send emails (if requested)
+        # Optional: Send emails (if requested)
         if send_emails !== false
-            @info "[10/12] Sending queued emails..."
+            @info "Sending queued emails..."
             send_opts = parse_subcommand_options(send_emails)
 
             # Determine which emails to send
@@ -214,9 +193,9 @@ function cmd_sync(;
             end
         end
 
-        # Step 11: Export registration details
+        # Optional: Export registration details
         if export_details !== false
-            @info "[11/12] Exporting registration details..."
+            @info "Exporting registration details..."
             export_opts = parse_subcommand_options(export_details)
             upload = get(export_opts, :upload, false)
 
@@ -252,9 +231,9 @@ function cmd_sync(;
             end
         end
 
-        # Step 12: Export payment status (if requested)
+        # Optional: Export payment status (if requested)
         if export_payments !== false
-            @info "[12/12] Exporting payment status..."
+            @info "Exporting payment status..."
             payment_opts = parse_subcommand_options(export_payments)
             upload = get(payment_opts, :upload, false)
 
@@ -318,9 +297,9 @@ function cmd_sync(;
             end
         end
 
-        # Step 13: Export combined workbook (if requested)
+        # Optional: Export combined workbook (if requested)
         if export_combined !== false
-            @info "[13/13] Exporting combined workbook..."
+            @info "Exporting combined workbook..."
             combined_opts = parse_subcommand_options(export_combined)
             upload = get(combined_opts, :upload, false)
 
@@ -361,8 +340,5 @@ function cmd_sync(;
         end
 
         @info "=== Sync Complete ==="
-    finally
-        DBInterface.close!(db)
-    end
     return 0
 end

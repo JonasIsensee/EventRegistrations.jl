@@ -4,13 +4,14 @@ A complete event registration management system built in Julia for processing fo
 
 ## Features
 
-- 📧 Parse registration form submissions from .eml email files
-- 💰 Calculate costs based on configurable rules (accommodation, bus, surcharges)
-- 🔢 Generate unique bank-transfer-friendly reference numbers
-- 🏦 Import bank transfer CSVs and auto-match payments
-- 💸 Track subsidies (financial help) as virtual credits
-- ✉️ Send confirmation emails with payment details
-- 📊 Export payment status and registration reports
+- Parse registration form submissions from .eml email files
+- Calculate costs based on configurable rules (accommodation, meals, transport, etc.)
+- Generate unique bank-transfer-friendly reference numbers
+- Import bank transfer CSVs and auto-match payments
+- Track subsidies (financial help) as virtual credits
+- Send confirmation and payment emails with QR codes via SMTP
+- Export payment status and registration reports (terminal, CSV, XLSX, PDF, LaTeX)
+- Upload exports to WebDAV (ownCloud, Nextcloud)
 
 ## Installation
 
@@ -25,7 +26,6 @@ A complete event registration management system built in Julia for processing fo
 ```bash
 cd /path/to/your/projects
 git clone <repository-url> EventRegistrations.jl
-# or download and extract the package
 ```
 
 2. Install dependencies:
@@ -49,7 +49,7 @@ export PATH="$PATH:/path/to/EventRegistrations.jl/bin"
 
 ### Initialize a New Project
 
-Navigate to the directory where you want to store your data (database, config, emails):
+Navigate to the directory where you want to store your data (database, events, emails):
 
 ```bash
 cd ~/my-event-registrations
@@ -59,10 +59,8 @@ eventreg init
 This creates:
 
 - `events.duckdb` - Database file
-- `config/` - Configuration directory
-  - `fields.toml` - Field name aliases
-  - `events/` - Per-event cost rules
-  - `templates/` - Email templates
+- `events/` - Per-event configuration files (TOML)
+- `templates/` - Email templates (Mustache)
 
 ### Process Registration Emails
 
@@ -73,28 +71,17 @@ This creates:
 eventreg process-emails emails/
 ```
 
+Event configuration templates are auto-generated for newly seen events.
+
 ### Configure Event Costs
 
-1. Generate field configuration from processed emails:
+1. Edit the auto-generated event config at `events/<event_id>.toml` to set aliases and cost rules
 
-```bash
-eventreg generate-field-config
-```
-
-2. Edit `config/fields.toml` to customize field aliases
-
-3. Create event configuration:
-
-```bash
-eventreg create-event-config PWE_2026_01 --name="Workshop Weekend January 2026"
-```
-
-4. Edit `config/events/PWE_2026_01.toml` to set cost rules
-
-5. Sync configuration to database:
+2. Sync configuration and recalculate costs:
 
 ```bash
 eventreg sync-config
+eventreg recalculate-costs <event-id>
 ```
 
 ### Import Bank Transfers
@@ -108,7 +95,16 @@ eventreg match-transfers --event-id=PWE_2026_01
 
 ```bash
 eventreg export-payment-status PWE_2026_01 payment_status.csv
-eventreg export-registrations PWE_2026_01 registrations.csv
+eventreg export-registrations PWE_2026_01 --details registrations.csv
+eventreg export-combined PWE_2026_01 report.xlsx
+```
+
+### Full Workflow
+
+Run the entire pipeline in one command:
+
+```bash
+eventreg sync --send-emails --export-combined --export-payments
 ```
 
 ## CLI Commands
@@ -116,35 +112,63 @@ eventreg export-registrations PWE_2026_01 registrations.csv
 ### Project Management
 
 - `eventreg init` - Initialize new project
-- `eventreg list-events` - List all events
+- `eventreg status` - Show system status and configuration
 - `eventreg event-overview <event-id>` - Show event details
+- `eventreg sync` - Full sync workflow (download, process, match, queue emails)
 
 ### Email Processing
 
 - `eventreg process-emails [folder]` - Process registration emails
-- `eventreg generate-field-config` - Generate field configuration
+- `eventreg download-emails` - Download emails from POP3 server
 
 ### Configuration
 
 - `eventreg create-event-config <id>` - Create event config template
 - `eventreg sync-config` - Sync config files to database
+- `eventreg recalculate-costs <event-id>` - Recalculate costs after config changes
 
-### Bank Transfers
+### Bank Transfers & Payments
 
 - `eventreg import-bank-csv <file>` - Import bank transfers
 - `eventreg match-transfers` - Match transfers to registrations
 - `eventreg list-unmatched` - List unmatched transfers
 - `eventreg manual-match <id> <ref>` - Manually match a transfer
-
-### Subsidies
-
 - `eventreg grant-subsidy <id> <amount>` - Grant subsidy to registration
+- `eventreg delete-registration <id|ref>` - Cancel a registration (soft delete); use `--yes` to skip confirmation
 
-### Reports
+### Email Management
 
-- `eventreg export-payment-status <event-id> <output>` - Export payment report
-- `eventreg export-registrations <event-id> <output>` - Export registration data
-- `eventreg export-registration-details <event-id> <output>` - Export all registration fields (terminal or CSV)
+- `eventreg list-pending-emails [-v]` - List emails waiting to be sent
+- `eventreg send-emails [--id=N]` - Send pending emails via SMTP
+- `eventreg mark-email sent|discarded <id>` - Mark email status
+- `eventreg mark-email sent|discarded --all` - Bulk mark emails
+
+### Exports
+
+- `eventreg export-payment-status [event-id] [output]` - Payment status report
+- `eventreg export-registrations [event-id] [output]` - Registration data
+- `eventreg export-combined [event-id] [output]` - Combined multi-sheet XLSX workbook
+- `eventreg list-registrations [event-id]` - Quick registration listing with filters
+- `eventreg edit-registrations [event-id]` - Edit registrations in external editor (TableEdit); `--event-id=`, `--name=`, `--since=` to filter; save and close editor to apply changes in one transaction
+
+**Edit registrations (TableEdit):** Dumps filtered registrations (id, reference_number, email, first_name, last_name) to a temp tab-delimited file, opens `$EDITOR`, and on save parses/validates and applies only **modified** rows via `update_registration!` in one transaction. Validation errors (e.g. wrong column count) are reported with line number and no changes are applied.
+
+**Runnable examples:**
+```bash
+# From a directory that has events.duckdb (e.g. demo_pwe or testingfolder):
+cd /path/to/EventRegistrations.jl
+./bin/eventreg edit-registrations --event-id=PWE_2026_01
+# Or filter by name:
+./bin/eventreg edit-registrations --event-id=PWE_2026_01 --name=Müller
+# Editor opens; edit email/name, save and close; CLI reports success and DB is updated.
+```
+```bash
+# Non-interactive example (edits file in code, then applies):
+julia --project=. examples/edit_registrations_example.jl
+# Or with a data dir: julia --project=. examples/edit_registrations_example.jl testingfolder
+```
+
+All export commands support `--format=terminal|csv|xlsx|pdf|latex`, `--filter=all|unpaid|paid|problems`, and `--upload` for WebDAV.
 
 Run `eventreg --help` for full command list and options.
 
@@ -172,16 +196,18 @@ match_transfers!(db; event_id="PWE_2026_01")
 DBInterface.close!(db)
 ```
 
-See the [CLAUDE.md](../registration_software/CLAUDE.md) file for detailed API documentation.
+See [CLAUDE.md](CLAUDE.md) for detailed API documentation.
 
 ## Working Directory
 
 **Important:** The package is designed to work from any directory. The current working directory (where you run `eventreg`) should be where you want your data stored:
 
 - Database file (`events.duckdb`)
-- Configuration directory (`config/`)
+- Event configurations (`events/`)
+- Email templates (`templates/`)
 - Email folders (`emails/`)
 - Bank transfer files (`bank_transfers/`)
+- Credentials (`credentials.toml`)
 
 The package code can be installed anywhere - it doesn't need to be in the same location as your data.
 
@@ -191,86 +217,71 @@ Run the test suite:
 
 ```bash
 cd EventRegistrations.jl
-julia --project test/runtests.jl
-```
-
-Or using Julia's test runner:
-
-```bash
 julia --project -e 'using Pkg; Pkg.test()'
 ```
 
 ## Configuration Files
 
-### Field Aliases (`config/fields.toml`)
+### Event Configuration (`events/<event_id>.toml`)
 
-Maps short names to actual form field names:
+Each event has a unified configuration file with aliases, cost rules, and export settings:
 
 ```toml
+[event]
+name = "Workshop Weekend January 2026"
+
 [aliases]
 uebernachtung_fr = "Übernachtung Freitag"
 uebernachtung_sa = "Übernachtung Samstag"
-busfahrt_hin = "Busfahrt Hinweg (10€)"
-```
 
-### Event Cost Rules (`config/events/<event_id>.toml`)
+[costs]
+base = 0.0
 
-Defines pricing logic:
-
-````toml
-event_id = "PWE_2026_01"
-### Registration Detail Export Order
-
-Control the column order for `export-registration-details` by adding an optional
-section to your event config:
-
-```toml
-[export.registration_details]
-columns = [
-  "reference_number",
-  "email",
-  "first_name",
-  "last_name",
-  "Stimmgruppe",
-  "Übernachtung Freitag"
-]
-````
-
-Entries may include built-in fields (like `reference_number` or `registration_date`)
-or form fields. Form fields can use aliases defined in the same file; they are
-resolved to the actual form field names automatically. Only the listed columns are
-exported, so add every column you want in the report.
-event_name = "Workshop Weekend January 2026"
-base_cost = 0.0
-
-[[rules]]
+[[costs.rules]]
 field = "uebernachtung_fr"
 value = "Ja"
 cost = 25.0
 
-[[rules]]
-field = "busfahrt_hin"
-value = "Ja"
-cost = 10.0
+[costs.computed_fields.nights]
+sum_of = [
+    { field = "uebernachtung_fr", value = "Ja", count = 1 },
+    { field = "uebernachtung_sa", value = "Ja", count = 1 },
+]
 
+[export.registration_details]
+columns = [
+    "reference_number",
+    "email",
+    "first_name",
+    "last_name",
+    "uebernachtung_fr",
+    "uebernachtung_sa",
+]
 ```
 
-### Email Templates (`config/templates/*.txt`)
+Entries in `[export.registration_details]` may include built-in fields (like `reference_number` or `registration_date`) or form field aliases. Aliases are resolved to actual form field names automatically. Only the listed columns are exported.
 
-Customizable email templates with placeholders:
+### Email Templates (`templates/*.mustache`)
+
+Customizable Mustache email templates with placeholders:
 
 ```
-
-Hallo {first_name},
+Hallo {{first_name}},
 
 vielen Dank für deine Anmeldung!
 
-Kosten: {cost} €
-Referenznummer: {reference_number}
+Kosten: {{cost}} Euro
+Referenznummer: {{reference_number}}
 
 Bitte überweise den Betrag mit der Referenznummer.
 
+{{{bank_details}}}
+{{{qr_block}}}
 ```
+
+### Credentials (`credentials.toml`)
+
+See `credentials.toml.example` for the format. Contains POP3, SMTP, bank details, and WebDAV credentials.
 
 ## License
 
@@ -280,7 +291,5 @@ See LICENSE file.
 
 For issues and questions, please check:
 
-- The comprehensive documentation in CLAUDE.md
-- Example workflows in the registration_software/ directory
+- The comprehensive documentation in [CLAUDE.md](CLAUDE.md)
 - Test files for usage examples
-```
