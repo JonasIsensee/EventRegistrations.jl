@@ -1116,7 +1116,7 @@ try
         println("\n=== Test 17b: Delete (cancel) registration ===")
 
         rows = DBInterface.execute(db,
-            "SELECT id, reference_number, event_id, status FROM registrations WHERE event_id = ? ORDER BY id",
+            "SELECT id, reference_number, event_id, status FROM registrations WHERE event_id = ? AND deleted_at IS NULL ORDER BY id",
             ["PWE_2026_01"]) |> collect
         @test length(rows) >= 2
 
@@ -1142,7 +1142,7 @@ try
         println("  ✓ Unknown identifier returns exit code 1")
 
         # dispatch_to_command: delete-registration with --yes
-        ref_row = DBInterface.execute(db, "SELECT id, reference_number FROM registrations WHERE event_id = ? AND status != ? LIMIT 1", ["PWE_2026_01", "cancelled"]) |> collect
+        ref_row = DBInterface.execute(db, "SELECT id, reference_number FROM registrations WHERE event_id = ? AND status != ? AND deleted_at IS NULL LIMIT 1", ["PWE_2026_01", "cancelled"]) |> collect
         if !isempty(ref_row)
             _rid, rnum = ref_row[1][1], ref_row[1][2]
             orig_dir = pwd()
@@ -1160,6 +1160,258 @@ try
         else
             println("  (skip dispatch test: no uncancelled registration left)")
         end
+    end
+
+    @testset "17c. Soft Delete Registration" begin
+        println("\n=== Test 17c: Soft Delete Registration ===")
+
+        # Get some active registrations (not cancelled, not deleted)
+        rows = DBInterface.execute(db,
+            "SELECT id, reference_number, event_id FROM registrations WHERE event_id = ? AND deleted_at IS NULL AND status != 'cancelled' ORDER BY id LIMIT 3",
+            ["PWE_2026_01"]) |> collect
+        @test length(rows) >= 2
+
+        reg1_id, ref1, _event_id = rows[1][1], rows[1][2], rows[1][3]
+        reg2_id, ref2 = rows[2][1], rows[2][2]
+
+        # Test 1: Soft delete by ID
+        EventRegistrations.delete_registration!(db, reg1_id)
+        deleted_at1 = DBInterface.execute(db, "SELECT deleted_at FROM registrations WHERE id = ?", [reg1_id]) |> collect |> first |> first
+        @test deleted_at1 !== nothing && deleted_at1 !== missing
+        println("  ✓ delete_registration!(db, id): sets deleted_at timestamp")
+
+        # Test 2: Soft delete by reference
+        EventRegistrations.delete_registration!(db, string(ref2))
+        deleted_at2 = DBInterface.execute(db, "SELECT deleted_at FROM registrations WHERE id = ?", [reg2_id]) |> collect |> first |> first
+        @test deleted_at2 !== nothing && deleted_at2 !== missing
+        println("  ✓ delete_registration!(db, reference): sets deleted_at timestamp")
+
+        # Test 3: Deleted registrations are excluded from get_registrations
+        all_regs = EventRegistrations.get_registrations(db, "PWE_2026_01")
+        reg_ids = [r[1] for r in all_regs]
+        @test reg1_id ∉ reg_ids
+        @test reg2_id ∉ reg_ids
+        println("  ✓ Deleted registrations excluded from get_registrations")
+
+        # Test 4: Deleted registrations are excluded from get_registration_by_reference
+        reg_by_ref = EventRegistrations.get_registration_by_reference(db, string(ref1))
+        @test reg_by_ref === nothing
+        reg_by_ref2 = EventRegistrations.get_registration_by_reference(db, string(ref2))
+        @test reg_by_ref2 === nothing
+        println("  ✓ Deleted registrations excluded from get_registration_by_reference")
+
+        # Test 5: get_registration_by_reference_including_deleted can find deleted registrations
+        reg_incl_deleted = EventRegistrations.get_registration_by_reference_including_deleted(db, string(ref1))
+        @test reg_incl_deleted !== nothing
+        @test reg_incl_deleted[1] == reg1_id
+        println("  ✓ get_registration_by_reference_including_deleted finds deleted registrations")
+
+        # Test 6: get_deleted_registrations returns deleted registrations
+        deleted_regs = EventRegistrations.get_deleted_registrations(db, "PWE_2026_01")
+        deleted_refs = [r[3] for r in deleted_regs]  # reference_number is 3rd column
+        @test string(ref1) in deleted_refs || uppercase(string(ref1)) in deleted_refs
+        @test string(ref2) in deleted_refs || uppercase(string(ref2)) in deleted_refs
+        println("  ✓ get_deleted_registrations returns deleted registrations")
+
+        # Test 7: Deleted registrations are excluded from payment table data
+        payment_data = EventRegistrations.get_payment_table_data(db, "PWE_2026_01")
+        payment_refs = [r.reference for r in payment_data.rows]
+        @test string(ref1) ∉ payment_refs && uppercase(string(ref1)) ∉ payment_refs
+        @test string(ref2) ∉ payment_refs && uppercase(string(ref2)) ∉ payment_refs
+        println("  ✓ Deleted registrations excluded from payment table data")
+
+        # Test 8: Deleted registrations are excluded from registration table data
+        reg_data = EventRegistrations.get_registration_table_data(db, "PWE_2026_01")
+        reg_table_refs = [r.reference for r in reg_data.rows]
+        @test string(ref1) ∉ reg_table_refs && uppercase(string(ref1)) ∉ reg_table_refs
+        @test string(ref2) ∉ reg_table_refs && uppercase(string(ref2)) ∉ reg_table_refs
+        println("  ✓ Deleted registrations excluded from registration table data")
+
+        # Test 9: Restore by ID
+        EventRegistrations.restore_registration!(db, reg1_id)
+        deleted_at_restored1 = DBInterface.execute(db, "SELECT deleted_at FROM registrations WHERE id = ?", [reg1_id]) |> collect |> first |> first
+        @test deleted_at_restored1 === nothing || deleted_at_restored1 === missing
+        println("  ✓ restore_registration!(db, id): clears deleted_at")
+
+        # Test 10: Restore by reference
+        EventRegistrations.restore_registration!(db, string(ref2))
+        deleted_at_restored2 = DBInterface.execute(db, "SELECT deleted_at FROM registrations WHERE id = ?", [reg2_id]) |> collect |> first |> first
+        @test deleted_at_restored2 === nothing || deleted_at_restored2 === missing
+        println("  ✓ restore_registration!(db, reference): clears deleted_at")
+
+        # Test 11: Restored registrations appear in queries again
+        all_regs_after_restore = EventRegistrations.get_registrations(db, "PWE_2026_01")
+        reg_ids_after = [r[1] for r in all_regs_after_restore]
+        @test reg1_id in reg_ids_after
+        @test reg2_id in reg_ids_after
+        println("  ✓ Restored registrations appear in queries again")
+
+        # Test 12: Error when trying to delete non-existent registration
+        @test_throws Exception EventRegistrations.delete_registration!(db, "NONEXISTENT_REF_12345")
+        println("  ✓ Error thrown when deleting non-existent registration")
+
+        # Test 13: Error when trying to restore non-existent registration
+        @test_throws Exception EventRegistrations.restore_registration!(db, "NONEXISTENT_REF_12345")
+        println("  ✓ Error thrown when restoring non-existent registration")
+    end
+
+    @testset "17d. Soft Delete CLI Commands" begin
+        println("\n=== Test 17d: Soft Delete CLI Commands ===")
+
+        # Get an active registration
+        rows = DBInterface.execute(db,
+            "SELECT id, reference_number FROM registrations WHERE event_id = ? AND deleted_at IS NULL AND status != 'cancelled' ORDER BY id LIMIT 1",
+            ["PWE_2026_01"]) |> collect
+        @test length(rows) >= 1
+
+        reg_id, ref = rows[1][1], rows[1][2]
+
+        # Test 1: CLI command soft-delete-registration
+        code = EventRegistrations.cmd_soft_delete_registration(db, string(ref))
+        @test code == 0
+        deleted_at = DBInterface.execute(db, "SELECT deleted_at FROM registrations WHERE id = ?", [reg_id]) |> collect |> first |> first
+        @test deleted_at !== nothing && deleted_at !== missing
+        println("  ✓ cmd_soft_delete_registration works")
+
+        # Test 2: CLI command restore-registration
+        code_restore = EventRegistrations.cmd_restore_registration(db, string(ref))
+        @test code_restore == 0
+        deleted_at_after = DBInterface.execute(db, "SELECT deleted_at FROM registrations WHERE id = ?", [reg_id]) |> collect |> first |> first
+        @test deleted_at_after === nothing || deleted_at_after === missing
+        println("  ✓ cmd_restore_registration works")
+
+        # Test 3: CLI command list-deleted-registrations
+        # First, delete a registration
+        EventRegistrations.delete_registration!(db, reg_id)
+        
+        # List deleted registrations
+        code_list = EventRegistrations.cmd_list_deleted_registrations(db, "PWE_2026_01")
+        @test code_list == 0
+        println("  ✓ cmd_list_deleted_registrations works")
+
+        # Test 4: list-deleted-registrations with no deleted registrations
+        # Restore the registration first
+        EventRegistrations.restore_registration!(db, reg_id)
+        
+        # Try listing deleted (should return 0 with message)
+        code_list_empty = EventRegistrations.cmd_list_deleted_registrations(db, "PWE_2026_01")
+        @test code_list_empty == 0
+        println("  ✓ cmd_list_deleted_registrations handles empty list")
+
+        # Test 5: dispatch_to_command: soft-delete-registration
+        EventRegistrations.delete_registration!(db, reg_id)  # Delete again for test
+        EventRegistrations.restore_registration!(db, reg_id)  # Restore to test CLI
+        
+        orig_dir = pwd()
+        try
+            cd(TEST_DIR)
+            command, positional, options = EventRegistrations.parse_cli_args(["soft-delete-registration", string(ref)])
+            code_dispatch = EventRegistrations.dispatch_to_command(db, command, positional, options; db_path=TEST_DB_PATH)
+            @test code_dispatch == 0
+            deleted_at_dispatch = DBInterface.execute(db, "SELECT deleted_at FROM registrations WHERE id = ?", [reg_id]) |> collect |> first |> first
+            @test deleted_at_dispatch !== nothing && deleted_at_dispatch !== missing
+        finally
+            cd(orig_dir)
+        end
+        println("  ✓ dispatch_to_command: soft-delete-registration")
+
+        # Test 6: dispatch_to_command: restore-registration
+        orig_dir = pwd()
+        try
+            cd(TEST_DIR)
+            command, positional, options = EventRegistrations.parse_cli_args(["restore-registration", string(ref)])
+            code_dispatch = EventRegistrations.dispatch_to_command(db, command, positional, options; db_path=TEST_DB_PATH)
+            @test code_dispatch == 0
+            deleted_at_restore_dispatch = DBInterface.execute(db, "SELECT deleted_at FROM registrations WHERE id = ?", [reg_id]) |> collect |> first |> first
+            @test deleted_at_restore_dispatch === nothing || deleted_at_restore_dispatch === missing
+        finally
+            cd(orig_dir)
+        end
+        println("  ✓ dispatch_to_command: restore-registration")
+
+        # Test 7: dispatch_to_command: list-deleted-registrations
+        EventRegistrations.delete_registration!(db, reg_id)  # Delete for list test
+        orig_dir = pwd()
+        try
+            cd(TEST_DIR)
+            command, positional, options = EventRegistrations.parse_cli_args(["list-deleted-registrations", "PWE_2026_01"])
+            code_dispatch = EventRegistrations.dispatch_to_command(db, command, positional, options; db_path=TEST_DB_PATH)
+            @test code_dispatch == 0
+        finally
+            cd(orig_dir)
+        end
+        println("  ✓ dispatch_to_command: list-deleted-registrations")
+
+        # Clean up: restore the registration
+        EventRegistrations.restore_registration!(db, reg_id)
+    end
+
+    @testset "17e. Soft Delete Exclusion from Exports" begin
+        println("\n=== Test 17e: Soft Delete Exclusion from Exports ===")
+
+        # Get an active registration
+        rows = DBInterface.execute(db,
+            "SELECT id, reference_number FROM registrations WHERE event_id = ? AND deleted_at IS NULL AND status != 'cancelled' ORDER BY id LIMIT 1",
+            ["PWE_2026_01"]) |> collect
+        @test length(rows) >= 1
+
+        reg_id, ref = rows[1][1], rows[1][2]
+
+        # Get initial counts
+        payment_data_before = EventRegistrations.get_payment_table_data(db, "PWE_2026_01")
+        count_before = payment_data_before.total_registrations
+
+        # Soft delete the registration
+        EventRegistrations.delete_registration!(db, reg_id)
+
+        # Test 1: Payment table data excludes deleted registration
+        payment_data_after = EventRegistrations.get_payment_table_data(db, "PWE_2026_01")
+        count_after = payment_data_after.total_registrations
+        @test count_after == count_before - 1
+        payment_refs = [r.reference for r in payment_data_after.rows]
+        @test string(ref) ∉ payment_refs && uppercase(string(ref)) ∉ payment_refs
+        println("  ✓ Payment table data excludes deleted registration")
+
+        # Test 2: Registration table data excludes deleted registration
+        reg_data_before = EventRegistrations.get_registration_table_data(db, "PWE_2026_01")
+        reg_count_before = reg_data_before.total_registrations
+        
+        reg_data_after = EventRegistrations.get_registration_table_data(db, "PWE_2026_01")
+        reg_count_after = reg_data_after.total_registrations
+        @test reg_count_after == reg_count_before - 1
+        reg_table_refs = [r.reference for r in reg_data_after.rows]
+        @test string(ref) ∉ reg_table_refs && uppercase(string(ref)) ∉ reg_table_refs
+        println("  ✓ Registration table data excludes deleted registration")
+
+        # Test 3: Registration detail table excludes deleted registration
+        detail_table_before = EventRegistrations.get_registration_detail_table(db, "PWE_2026_01"; events_dir=TEST_EVENTS_DIR)
+        detail_count_before = length(detail_table_before.rows)
+        
+        detail_table_after = EventRegistrations.get_registration_detail_table(db, "PWE_2026_01"; events_dir=TEST_EVENTS_DIR)
+        detail_count_after = length(detail_table_after.rows)
+        @test detail_count_after == detail_count_before - 1
+        
+        # Check that the reference is not in the detail table
+        if !isempty(detail_table_after.rows)
+            ref_col_idx = findfirst(==("reference_number"), detail_table_after.columns)
+            if ref_col_idx !== nothing
+                detail_refs = [row[ref_col_idx] for row in detail_table_after.rows]
+                @test string(ref) ∉ detail_refs && uppercase(string(ref)) ∉ detail_refs
+            end
+        end
+        println("  ✓ Registration detail table excludes deleted registration")
+
+        # Test 4: Event overview excludes deleted registration
+        overview_before = EventRegistrations.event_overview(db, "PWE_2026_01")
+        reg_count_overview_before = overview_before.registrations
+        
+        overview_after = EventRegistrations.event_overview(db, "PWE_2026_01")
+        reg_count_overview_after = overview_after.registrations
+        @test reg_count_overview_after == reg_count_overview_before - 1
+        println("  ✓ Event overview excludes deleted registration")
+
+        # Clean up: restore the registration
+        EventRegistrations.restore_registration!(db, reg_id)
     end
 
     @testset "18. Config File Generation and Sync" begin
