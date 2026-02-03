@@ -1112,6 +1112,56 @@ try
 
     end
 
+    @testset "17b. Delete (cancel) registration" begin
+        println("\n=== Test 17b: Delete (cancel) registration ===")
+
+        rows = DBInterface.execute(db,
+            "SELECT id, reference_number, event_id, status FROM registrations WHERE event_id = ? ORDER BY id",
+            ["PWE_2026_01"]) |> collect
+        @test length(rows) >= 2
+
+        reg1_id, ref1, _event_id, _ = rows[1][1], rows[1][2], rows[1][3], rows[1][4]
+        reg2_id, ref2 = rows[2][1], rows[2][2]
+
+        # Cancel by reference via CLI (--yes to skip prompt)
+        code = EventRegistrations.cmd_delete_registration(db, string(ref1); yes=true)
+        @test code == 0
+        status1 = DBInterface.execute(db, "SELECT status FROM registrations WHERE id = ?", [reg1_id]) |> collect |> first |> first
+        @test status1 == "cancelled"
+        println("  ✓ cmd_delete_registration by reference (--yes): status = cancelled")
+
+        # Cancel by numeric id via backend
+        EventRegistrations.cancel_registration!(db, reg2_id)
+        status2 = DBInterface.execute(db, "SELECT status FROM registrations WHERE id = ?", [reg2_id]) |> collect |> first |> first
+        @test status2 == "cancelled"
+        println("  ✓ cancel_registration!(db, id): status = cancelled")
+
+        # Unknown identifier returns 1
+        code_bad = EventRegistrations.cmd_delete_registration(db, "NO_SUCH_REF_XYZ"; yes=true)
+        @test code_bad == 1
+        println("  ✓ Unknown identifier returns exit code 1")
+
+        # dispatch_to_command: delete-registration with --yes
+        ref_row = DBInterface.execute(db, "SELECT id, reference_number FROM registrations WHERE event_id = ? AND status != ? LIMIT 1", ["PWE_2026_01", "cancelled"]) |> collect
+        if !isempty(ref_row)
+            _rid, rnum = ref_row[1][1], ref_row[1][2]
+            orig_dir = pwd()
+            try
+                cd(TEST_DIR)
+                command, positional, options = EventRegistrations.parse_cli_args(["delete-registration", string(rnum), "--yes"])
+                code_dispatch = EventRegistrations.dispatch_to_command(db, command, positional, options; db_path=TEST_DB_PATH)
+                @test code_dispatch == 0
+                st = DBInterface.execute(db, "SELECT status FROM registrations WHERE id = ?", [_rid]) |> collect |> first |> first
+                @test st == "cancelled"
+            finally
+                cd(orig_dir)
+            end
+            println("  ✓ dispatch_to_command: delete-registration with --yes")
+        else
+            println("  (skip dispatch test: no uncancelled registration left)")
+        end
+    end
+
     @testset "18. Config File Generation and Sync" begin
         println("\n=== Test 18: Config File Generation and Sync ===")
 
@@ -1374,13 +1424,9 @@ try
         # Test the CLI command directly
         output_file = joinpath(TEST_DIR, "cli_combined_export.xlsx")
 
-        # Use cmd_export_combined
-        exit_code = EventRegistrations.cmd_export_combined(
-            "PWE_2026_01",
-            output_file;
-            db_path=TEST_DB_PATH,
-            events_dir=TEST_EVENTS_DIR
-        )
+        # Use cmd_export_combined (caller passes db)
+        exit_code = EventRegistrations.cmd_export_combined(db, "PWE_2026_01", output_file;
+            events_dir=TEST_EVENTS_DIR, db_path=TEST_DB_PATH)
 
         @test exit_code == 0
         @test isfile(output_file)
@@ -1413,9 +1459,7 @@ try
         write(config_path, config_with_export)
 
         # Call without output parameter - should use config filename
-        exit_code2 = EventRegistrations.cmd_export_combined(
-            "PWE_2026_01",
-            nothing;
+        exit_code2 = EventRegistrations.cmd_export_combined(db, "PWE_2026_01", nothing;
             db_path=TEST_DB_PATH,
             events_dir=TEST_EVENTS_DIR
         )
@@ -1461,8 +1505,7 @@ try
         end
 
         # cmd_process_emails should not crash (regression test for stats.terminated bug)
-        exit_code = EventRegistrations.cmd_process_emails(TEST_EMAILS_DIR;
-                                                          db_path=TEST_DB_PATH)
+        exit_code = EventRegistrations.cmd_process_emails(db, TEST_EMAILS_DIR)
         @test exit_code == 0
         println("  ✓ cmd_process_emails completes without error")
     end
@@ -1498,7 +1541,7 @@ try
         @test stats.processed >= 1
 
         # Happy path: cmd_edit_registrations with spawn_editor=false returns (path, finish_and_apply)
-        result = EventRegistrations.cmd_edit_registrations(event_id="PWE_2026_01", db_path=TEST_DB_PATH, spawn_editor=false)
+        result = EventRegistrations.cmd_edit_registrations(db; event_id="PWE_2026_01", spawn_editor=false)
         @test result isa Tuple
         path, finish_and_apply = result
         @test isfile(path)
@@ -1529,7 +1572,7 @@ try
         println("  ✓ edit-registrations happy path: DB updated after edit")
 
         # Validation failure: corrupt file, finish_and_apply returns error, no changes applied
-        result2 = EventRegistrations.cmd_edit_registrations(event_id="PWE_2026_01", db_path=TEST_DB_PATH, spawn_editor=false)
+        result2 = EventRegistrations.cmd_edit_registrations(db; event_id="PWE_2026_01", spawn_editor=false)
         path2, finish_and_apply2 = result2
         content2 = read(path2, String)
         lines2 = split(content2, '\n')
@@ -1552,6 +1595,57 @@ try
         @test !isempty(r2)
         @test r2[1][1] == "edited@example.de"
         println("  ✓ edit-registrations validation failure: errors reported, DB unchanged")
+    end
+
+    @testset "26. REPL and dispatch_to_command" begin
+        println("\n=== Test 26: REPL and dispatch_to_command ===")
+
+        # parse_repl_line: split on spaces, respect quotes, preserve --key=value
+        args = EventRegistrations.parse_repl_line("list-registrations --filter=unpaid")
+        @test args == ["list-registrations", "--filter=unpaid"]
+        args3 = EventRegistrations.parse_repl_line("list-registrations --name=\"Müller\"")
+        @test args3 == ["list-registrations", "--name=Müller"]
+        println("  ✓ parse_repl_line: quotes and --key=value")
+
+        # dispatch_to_command with passed-in db: same behavior as CLI (no second connection)
+        orig_dir = pwd()
+        try
+            cd(TEST_DIR)
+            command, positional, options = EventRegistrations.parse_cli_args(["list-registrations"])
+            code = EventRegistrations.dispatch_to_command(db, command, positional, options; db_path=TEST_DB_PATH, events_dir=TEST_EVENTS_DIR)
+            @test code == 0
+            command2, positional2, options2 = EventRegistrations.parse_cli_args(["event-overview", "PWE_2026_01"])
+            code2 = EventRegistrations.dispatch_to_command(db, command2, positional2, options2; db_path=TEST_DB_PATH)
+            @test code2 == 0
+        finally
+            cd(orig_dir)
+        end
+        println("  ✓ dispatch_to_command(db, ...): list-registrations and event-overview")
+
+        # grant-subsidy via dispatch_to_command (if we have a registration with reference)
+        ref_row = DBInterface.execute(db, "SELECT id, reference_number FROM registrations WHERE event_id = ? LIMIT 1", ["PWE_2026_01"]) |> collect
+        if !isempty(ref_row)
+            ref_id, ref_num = ref_row[1][1], ref_row[1][2]
+            orig_dir = pwd()
+            try
+                cd(TEST_DIR)
+                command, positional, options = EventRegistrations.parse_cli_args(["grant-subsidy", ref_num, "5.0"])
+                code = EventRegistrations.dispatch_to_command(db, command, positional, options; db_path=TEST_DB_PATH)
+                @test code == 0
+                subs = EventRegistrations.get_subsidies(db, ref_id)
+                @test length(subs) >= 1
+            finally
+                cd(orig_dir)
+            end
+            println("  ✓ dispatch_to_command: grant-subsidy applied with single db connection")
+        end
+
+        # run_repl when DB does not exist returns 1
+        nonexistent = joinpath(TEST_DIR, "nonexistent.duckdb")
+        @test !isfile(nonexistent)
+        code_missing = EventRegistrations.run_repl(; db_path=nonexistent)
+        @test code_missing == 1
+        println("  ✓ run_repl with missing DB returns 1")
     end
 end
 

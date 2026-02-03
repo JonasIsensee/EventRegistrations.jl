@@ -476,12 +476,7 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
     end
 
     try
-        println("\n[SMTP DEBUG] Preparing to send email...")
-        println("  Server: $(cfg.smtp_server):$(cfg.smtp_port)")
-        println("  From: $(cfg.from_name) <$(cfg.from_address)>")
-        println("  To: $to")
-        println("  Subject: $subject")
-        println("  Body length: $(length(body)) characters")
+        @debug "Preparing to send email" server="$(cfg.smtp_server):$(cfg.smtp_port)" from="$(cfg.from_name) <$(cfg.from_address)>" to=to subject=subject body_length=length(body)
 
         # Prepare email message
         from = cfg.from_name * " <" * cfg.from_address * ">"
@@ -503,7 +498,7 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
             multipart_subtype=SMTPClient.RELATED)
 
 
-        println("  [SMTP DEBUG] Connecting to SMTP server...")
+        @debug "Connecting to SMTP server..."
 
         # Send using SMTPClient
         use_ssl = cfg.smtp_port == 465 || cfg.smtp_port == 587
@@ -514,9 +509,7 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
 
         url = "smtp://$(cfg.smtp_server):$(cfg.smtp_port)"
 
-        println("  [SMTP DEBUG] URL: $url")
-        println("  [SMTP DEBUG] Username: $(cfg.username)")
-        println("  [SMTP DEBUG] SSL: $(use_ssl)")
+        @debug "SMTP connection details" url=url username=cfg.username ssl=use_ssl
 
         # Send the email
         resp = send(
@@ -527,29 +520,18 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
             opt
         )
 
-        println("  [SMTP DEBUG] Response: $resp")
+        @debug "SMTP response" response=resp
 
         if resp.code == 250 || resp.code == 0  # 250 = success, 0 = success in some versions
-            println("  [SMTP DEBUG] ✓ Email sent successfully!")
             @info "Email sent successfully" to=to subject=subject
             return true
         else
-            println("  [SMTP DEBUG] Failed to send to $to")
-            println("  [SMTP DEBUG] ✗ SMTP error code: $(resp.code)")
-            println("  [SMTP DEBUG] Error message: $(resp.message)")
-            @error "SMTP error" code=resp.code message=resp.message
+            @error "SMTP error" to=to code=resp.code message=resp.message
             return false
         end
 
     catch e
-        println("  [SMTP DEBUG] ✗ Exception occurred:")
-        println("  [SMTP DEBUG] $(typeof(e)): $e")
-        @error "Failed to send email" exception=e
-        # Print stack trace for debugging
-        for (exc, bt) in Base.catch_stack()
-            showerror(stdout, exc, bt)
-            println()
-        end
+        @error "Failed to send email" exception=(e, catch_backtrace())
         return false
     end
 end
