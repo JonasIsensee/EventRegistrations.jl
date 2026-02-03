@@ -88,285 +88,238 @@ function upload_export_to_webdav(ctx::AppConfig, local_file::String)
 end
 
 """
-Export payment status report with pretty colored output.
-
-Options:
-    --format=<fmt>     Output format: terminal (default), pdf, latex, csv, xlsx
-  --filter=<filter>  Filter: all (default), unpaid, problems, paid, no-config
+Export payment status report. Caller must open db; run_cli opens it before calling.
 """
-function cmd_export_payment_status(event_id::Union{String,Nothing}=nothing,
-                                     output_pos::Union{String,Nothing}=nothing;
-                                     db_path::String="events.duckdb",
-                                     format::String="terminal",
-                                     filter::String="all",
-                                     summary_only::Bool=false,
-                                     output::Union{String,Nothing}=nothing,
-                                     upload::Bool=false,
-                                     credentials_path::String="credentials.toml")
-
-    # Allow output to be passed as positional or keyword argument
-    actual_output = output_pos !== nothing ? output_pos : output
-
-    return require_database(db_path) do db
-        # Default to most recent event if not specified
-        local_event_id = event_id
+function cmd_export_payment_status(db::DuckDB.DB,
+    event_id::Union{String,Nothing}=nothing,
+    actual_output::Union{String,Nothing}=nothing;
+    format::String="terminal",
+    filter::String="all",
+    summary_only::Bool=false,
+    upload::Bool=false,
+    credentials_path::String="credentials.toml",
+    db_path::String="events.duckdb")
+    local_event_id = event_id
+    if local_event_id === nothing
+        local_event_id = get_most_recent_event(db)
         if local_event_id === nothing
-            local_event_id = get_most_recent_event(db)
-            if local_event_id === nothing
-                @error "No events with registrations found"
-                return 1
-            end
-            @info "Using most recent event" event_id=local_event_id
-        end
-
-        # Build filter from option
-        payment_filter = if filter == "unpaid"
-            PaymentFilter(unpaid_only=true)
-        elseif filter == "problems"
-            PaymentFilter(problems_only=true)
-        elseif filter == "paid"
-            PaymentFilter(paid_only=true)
-        elseif filter == "no-config"
-            PaymentFilter(no_config_only=true)
-        else
-            PaymentFilter()  # all
-        end
-
-        # Get payment data from database
-        table_data = get_payment_table_data(db, local_event_id)
-
-        if table_data.total_registrations == 0
-            @info "No registrations found for event" event_id=local_event_id
-            return 0
-        end
-
-        # Handle summary-only mode
-        if summary_only
-            title_str = "Payment Status: $(table_data.event_id)"
-            if table_data.event_name !== nothing
-                title_str *= " - $(table_data.event_name)"
-            end
-            @info """$title_str
-$("=" ^ length(title_str))"""
-            print_summary(table_data)
-            return 0
-        end
-
-        # Determine output format and destination
-        output_format = format
-        if actual_output !== nothing && output_format == "terminal"
-            # Infer format from file extension
-            ext = lowercase(splitext(actual_output)[2])
-            if ext == ".pdf"
-                output_format = "pdf"
-            elseif ext == ".tex"
-                output_format = "latex"
-            elseif ext == ".csv"
-                output_format = "csv"
-            elseif ext == ".xlsx"
-                output_format = "xlsx"
-            end
-        end
-
-        if output_format == "terminal" || (actual_output === nothing && output_format == "terminal")
-            print_payment_table(table_data; filter=payment_filter)
-        elseif output_format == "pdf"
-            output_path = actual_output === nothing ? "payment_status_$(local_event_id).pdf" : actual_output
-            @info "Generating PDF" output_path=output_path
-            export_payment_pdf(table_data, output_path; filter=payment_filter)
-            @info "✓ PDF exported" output_path=output_path
-
-            # Upload if requested
-            if upload
-                ctx = load_app_config(; db_path, credentials_path)
-                upload_export_to_webdav(ctx, output_path)
-            end
-        elseif output_format == "latex"
-            output_path = actual_output === nothing ? "payment_status_$(local_event_id).tex" : actual_output
-            @info "Generating LaTeX" output_path=output_path
-            latex_content = generate_latex_document(table_data; filter=payment_filter)
-            open(output_path, "w") do f
-                write(f, latex_content)
-            end
-            @info "✓ LaTeX exported" output_path=output_path
-            # Note: .tex files are not uploaded (filtered by upload_export_to_webdav)
-        elseif output_format == "xlsx"
-            output_path = actual_output === nothing ? "payment_status_$(local_event_id).xlsx" : actual_output
-            @info "Exporting XLSX" output_path=output_path
-            export_payment_xlsx(table_data, output_path; filter=payment_filter)
-            @info "✓ XLSX exported" output_path=output_path
-
-            # Upload if requested
-            if upload
-                ctx = load_app_config(; db_path, credentials_path)
-                upload_export_to_webdav(ctx, output_path)
-            end
-        elseif output_format == "csv"
-            output_path = actual_output === nothing ? "payment_status_$(local_event_id).csv" : actual_output
-            @info "Exporting CSV" output_path=output_path
-            export_payment_csv(table_data, output_path; filter=payment_filter)
-            @info "✓ CSV exported" output_path=output_path
-
-            # Upload if requested
-            if upload
-                ctx = load_app_config(; db_path, credentials_path)
-                upload_export_to_webdav(ctx, output_path)
-            end
-        else
-            @error "Unknown format" format=output_format supported=["terminal", "pdf", "latex", "xlsx", "csv"]
+            @error "No events with registrations found"
             return 1
         end
+        @info "Using most recent event" event_id=local_event_id
+    end
+
+    payment_filter = if filter == "unpaid"
+        PaymentFilter(unpaid_only=true)
+    elseif filter == "problems"
+        PaymentFilter(problems_only=true)
+    elseif filter == "paid"
+        PaymentFilter(paid_only=true)
+    elseif filter == "no-config"
+        PaymentFilter(no_config_only=true)
+    else
+        PaymentFilter()
+    end
+
+    table_data = get_payment_table_data(db, local_event_id)
+    if table_data.total_registrations == 0
+        @info "No registrations found for event" event_id=local_event_id
         return 0
     end
+
+    if summary_only
+        title_str = "Payment Status: $(table_data.event_id)"
+        if table_data.event_name !== nothing
+            title_str *= " - $(table_data.event_name)"
+        end
+        @info """$title_str
+$("=" ^ length(title_str))"""
+        print_summary(table_data)
+        return 0
+    end
+
+    output_format = format
+    if actual_output !== nothing && output_format == "terminal"
+        ext = lowercase(splitext(actual_output)[2])
+        if ext == ".pdf"
+            output_format = "pdf"
+        elseif ext == ".tex"
+            output_format = "latex"
+        elseif ext == ".csv"
+            output_format = "csv"
+        elseif ext == ".xlsx"
+            output_format = "xlsx"
+        end
+    end
+
+    if output_format == "terminal" || (actual_output === nothing && output_format == "terminal")
+        print_payment_table(table_data; filter=payment_filter)
+    elseif output_format == "pdf"
+        output_path = actual_output === nothing ? "payment_status_$(local_event_id).pdf" : actual_output
+        @info "Generating PDF" output_path=output_path
+        export_payment_pdf(table_data, output_path; filter=payment_filter)
+        @info "✓ PDF exported" output_path=output_path
+        if upload
+            ctx = load_app_config(; db_path, credentials_path)
+            upload_export_to_webdav(ctx, output_path)
+        end
+    elseif output_format == "latex"
+        output_path = actual_output === nothing ? "payment_status_$(local_event_id).tex" : actual_output
+        @info "Generating LaTeX" output_path=output_path
+        latex_content = generate_latex_document(table_data; filter=payment_filter)
+        open(output_path, "w") do f
+            write(f, latex_content)
+        end
+        @info "✓ LaTeX exported" output_path=output_path
+    elseif output_format == "xlsx"
+        output_path = actual_output === nothing ? "payment_status_$(local_event_id).xlsx" : actual_output
+        @info "Exporting XLSX" output_path=output_path
+        export_payment_xlsx(table_data, output_path; filter=payment_filter)
+        @info "✓ XLSX exported" output_path=output_path
+        if upload
+            ctx = load_app_config(; db_path, credentials_path)
+            upload_export_to_webdav(ctx, output_path)
+        end
+    elseif output_format == "csv"
+        output_path = actual_output === nothing ? "payment_status_$(local_event_id).csv" : actual_output
+        @info "Exporting CSV" output_path=output_path
+        export_payment_csv(table_data, output_path; filter=payment_filter)
+        @info "✓ CSV exported" output_path=output_path
+        if upload
+            ctx = load_app_config(; db_path, credentials_path)
+            upload_export_to_webdav(ctx, output_path)
+        end
+    else
+        @error "Unknown format" format=output_format supported=["terminal", "pdf", "latex", "xlsx", "csv"]
+        return 1
+    end
+    return 0
 end
 
 """
-Export full registration data.
+Export full registration data. Caller must open db; run_cli opens it before calling.
 """
-function cmd_export_registrations(event_id::Union{String,Nothing}=nothing,
-                                   output_pos::Union{String,Nothing}=nothing;
-                                   db_path::String="events.duckdb",
-                                   format::String="terminal",
-                                   filter::String="all",
-                                   output::Union{String,Nothing}=nothing,
-                                   details::Bool=false,
-                                   events_dir::String="events",
-                                   upload::Bool=false,
-                                   credentials_path::String="credentials.toml")
-
-    # Allow output to be passed as positional or keyword argument
-    actual_output = output_pos !== nothing ? output_pos : output
-
-    return require_database(db_path) do db
-        # Default to most recent event if not specified
-        local_event_id = event_id
+function cmd_export_registrations(db::DuckDB.DB,
+    event_id::Union{String,Nothing}=nothing,
+    actual_output::Union{String,Nothing}=nothing;
+    format::String="terminal",
+    filter::String="all",
+    details::Bool=false,
+    events_dir::String="events",
+    upload::Bool=false,
+    credentials_path::String="credentials.toml",
+    db_path::String="events.duckdb")
+    local_event_id = event_id
+    if local_event_id === nothing
+        local_event_id = get_most_recent_event(db)
         if local_event_id === nothing
-            local_event_id = get_most_recent_event(db)
-            if local_event_id === nothing
-                @error "No events with registrations found"
-                return 1
-            end
-            @info "Using most recent event" event_id=local_event_id
+            @error "No events with registrations found"
+            return 1
         end
+        @info "Using most recent event" event_id=local_event_id
+    end
 
-        # Build filter from option (summary view only)
-        reg_filter = if filter == "unpaid"
-            RegistrationFilter(unpaid_only=true)
-        elseif filter == "problems"
-            RegistrationFilter(problems_only=true)
-        elseif filter == "paid"
-            RegistrationFilter(paid_only=true)
-        else
-            RegistrationFilter()  # all
+    reg_filter = if filter == "unpaid"
+        RegistrationFilter(unpaid_only=true)
+    elseif filter == "problems"
+        RegistrationFilter(problems_only=true)
+    elseif filter == "paid"
+        RegistrationFilter(paid_only=true)
+    else
+        RegistrationFilter()
+    end
+
+    output_format = format
+    if actual_output !== nothing && output_format == "terminal"
+        ext = lowercase(splitext(actual_output)[2])
+        if ext == ".pdf"
+            output_format = "pdf"
+        elseif ext == ".tex"
+            output_format = "latex"
+        elseif ext == ".csv"
+            output_format = "csv"
+        elseif ext == ".xlsx"
+            output_format = "xlsx"
         end
+    end
 
-        # Determine output format and destination
-        output_format = format
-        if actual_output !== nothing && output_format == "terminal"
-            ext = lowercase(splitext(actual_output)[2])
-            if ext == ".pdf"
-                output_format = "pdf"
-            elseif ext == ".tex"
-                output_format = "latex"
-            elseif ext == ".csv"
-                output_format = "csv"
-            elseif ext == ".xlsx"
-                output_format = "xlsx"
-            end
-        end
-
-        if details
-            detail_table = get_registration_detail_table(db, local_event_id; events_dir)
-            if isempty(detail_table.rows)
-                @info "No registrations found for event" event_id=local_event_id
-                return 0
-            end
-
-            if output_format == "terminal"
-                print_registration_detail_table(detail_table)
-            elseif output_format == "csv"
-                output_path = actual_output === nothing ? "registration_details_$(local_event_id).csv" : actual_output
-                export_registration_detail_csv(detail_table, output_path)
-
-                # Upload if requested
-                if upload
-                    ctx = load_app_config(; db_path, credentials_path)
-                    upload_export_to_webdav(ctx, output_path)
-                end
-            elseif output_format == "xlsx"
-                output_path = actual_output === nothing ? "registration_details_$(local_event_id).xlsx" : actual_output
-                export_registration_detail_xlsx(detail_table, output_path)
-
-                # Upload if requested
-                if upload
-                    ctx = load_app_config(; db_path, credentials_path)
-                    upload_export_to_webdav(ctx, output_path)
-                end
-            else
-                @error "Unsupported format for details view" format=output_format supported=["terminal", "csv", "xlsx"]
-                return 1
-            end
-            return 0
-        end
-
-        # Summary view
-        table_data = get_registration_table_data(db, local_event_id)
-
-        if table_data.total_registrations == 0
+    if details
+        detail_table = get_registration_detail_table(db, local_event_id; events_dir)
+        if isempty(detail_table.rows)
             @info "No registrations found for event" event_id=local_event_id
             return 0
         end
-
-        if output_format == "terminal" || (actual_output === nothing && output_format == "terminal")
-            print_registration_table(table_data; filter=reg_filter)
-        elseif output_format == "pdf"
-            output_path = actual_output === nothing ? "registrations_$(local_event_id).pdf" : actual_output
-            @info "Generating PDF" output_path=output_path
-            export_registration_pdf(table_data, output_path; filter=reg_filter)
-            @info "✓ PDF exported" output_path=output_path
-
-            # Upload if requested
-            if upload
-                ctx = load_app_config(; db_path, credentials_path)
-                upload_export_to_webdav(ctx, output_path)
-            end
-        elseif output_format == "latex"
-            output_path = actual_output === nothing ? "registrations_$(local_event_id).tex" : actual_output
-            @info "Generating LaTeX" output_path=output_path
-            latex_content = generate_registration_latex_document(table_data; filter=reg_filter)
-            open(output_path, "w") do f
-                write(f, latex_content)
-            end
-            @info "✓ LaTeX exported" output_path=output_path
-            # Note: .tex files are not uploaded (filtered by upload_export_to_webdav)
-        elseif output_format == "xlsx"
-            output_path = actual_output === nothing ? "registrations_$(local_event_id).xlsx" : actual_output
-            @info "Exporting XLSX" output_path=output_path
-            export_registration_xlsx(table_data, output_path; filter=reg_filter)
-            @info "✓ XLSX exported" output_path=output_path
-
-            # Upload if requested
-            if upload
-                ctx = load_app_config(; db_path, credentials_path)
-                upload_export_to_webdav(ctx, output_path)
-            end
+        if output_format == "terminal"
+            print_registration_detail_table(detail_table)
         elseif output_format == "csv"
-            output_path = actual_output === nothing ? "registrations_$(local_event_id).csv" : actual_output
-            @info "Exporting CSV" output_path=output_path
-            export_registration_csv(table_data, output_path; filter=reg_filter)
-            @info "✓ CSV exported" output_path=output_path
-
-            # Upload if requested
+            output_path = actual_output === nothing ? "registration_details_$(local_event_id).csv" : actual_output
+            export_registration_detail_csv(detail_table, output_path)
+            if upload
+                ctx = load_app_config(; db_path, credentials_path)
+                upload_export_to_webdav(ctx, output_path)
+            end
+        elseif output_format == "xlsx"
+            output_path = actual_output === nothing ? "registration_details_$(local_event_id).xlsx" : actual_output
+            export_registration_detail_xlsx(detail_table, output_path)
             if upload
                 ctx = load_app_config(; db_path, credentials_path)
                 upload_export_to_webdav(ctx, output_path)
             end
         else
-            @error "Unknown format" format=output_format supported=["terminal", "pdf", "latex", "xlsx", "csv"]
+            @error "Unsupported format for details view" format=output_format supported=["terminal", "csv", "xlsx"]
             return 1
         end
         return 0
     end
+
+    table_data = get_registration_table_data(db, local_event_id)
+    if table_data.total_registrations == 0
+        @info "No registrations found for event" event_id=local_event_id
+        return 0
+    end
+
+    if output_format == "terminal" || (actual_output === nothing && output_format == "terminal")
+        print_registration_table(table_data; filter=reg_filter)
+    elseif output_format == "pdf"
+        output_path = actual_output === nothing ? "registrations_$(local_event_id).pdf" : actual_output
+        @info "Generating PDF" output_path=output_path
+        export_registration_pdf(table_data, output_path; filter=reg_filter)
+        @info "✓ PDF exported" output_path=output_path
+        if upload
+            ctx = load_app_config(; db_path, credentials_path)
+            upload_export_to_webdav(ctx, output_path)
+        end
+    elseif output_format == "latex"
+        output_path = actual_output === nothing ? "registrations_$(local_event_id).tex" : actual_output
+        @info "Generating LaTeX" output_path=output_path
+        latex_content = generate_registration_latex_document(table_data; filter=reg_filter)
+        open(output_path, "w") do f
+            write(f, latex_content)
+        end
+        @info "✓ LaTeX exported" output_path=output_path
+    elseif output_format == "xlsx"
+        output_path = actual_output === nothing ? "registrations_$(local_event_id).xlsx" : actual_output
+        @info "Exporting XLSX" output_path=output_path
+        export_registration_xlsx(table_data, output_path; filter=reg_filter)
+        @info "✓ XLSX exported" output_path=output_path
+        if upload
+            ctx = load_app_config(; db_path, credentials_path)
+            upload_export_to_webdav(ctx, output_path)
+        end
+    elseif output_format == "csv"
+        output_path = actual_output === nothing ? "registrations_$(local_event_id).csv" : actual_output
+        @info "Exporting CSV" output_path=output_path
+        export_registration_csv(table_data, output_path; filter=reg_filter)
+        @info "✓ CSV exported" output_path=output_path
+        if upload
+            ctx = load_app_config(; db_path, credentials_path)
+            upload_export_to_webdav(ctx, output_path)
+        end
+    else
+        @error "Unknown format" format=output_format supported=["terminal", "pdf", "latex", "xlsx", "csv"]
+        return 1
+    end
+    return 0
 end
 
 function format_detail_display_value(value)
@@ -636,63 +589,45 @@ function export_combined_xlsx(db::DuckDB.DB, event_id::String, output_path::Stri
 end
 
 """
-Export combined multi-sheet XLSX workbook with configurable defaults.
-
-Options:
-    --output=<path>       Output file path (overrides config)
-    --event-id=<id>       Event ID to export (default: most recent)
+Export combined multi-sheet XLSX workbook. Caller must open db; run_cli opens it before calling.
 """
-function cmd_export_combined(event_id::Union{String,Nothing}=nothing,
-                              output_pos::Union{String,Nothing}=nothing;
-                              db_path::String="events.duckdb",
-                              events_dir::String="events",
-                              output::Union{String,Nothing}=nothing,
-                              upload::Bool=false,
-                              credentials_path::String="credentials.toml")
-
-    # Allow output to be passed as positional or keyword argument
-    actual_output = output_pos !== nothing ? output_pos : output
-
-    return require_database(db_path) do db
-        # Default to most recent event if not specified
-        local_event_id = event_id
+function cmd_export_combined(db::DuckDB.DB,
+    event_id::Union{String,Nothing}=nothing,
+    actual_output::Union{String,Nothing}=nothing;
+    events_dir::String="events",
+    upload::Bool=false,
+    credentials_path::String="credentials.toml",
+    db_path::String="events.duckdb")
+    local_event_id = event_id
+    if local_event_id === nothing
+        local_event_id = get_most_recent_event(db)
         if local_event_id === nothing
-            local_event_id = get_most_recent_event(db)
-            if local_event_id === nothing
-                @error "No events with registrations found"
-                return 1
-            end
-            @info "Using most recent event" event_id=local_event_id
+            @error "No events with registrations found"
+            return 1
         end
-
-        # Load event config to get export settings
-        cfg = Config.load_event_config(local_event_id, events_dir)
-
-        # Determine output path
-        output_path = if actual_output !== nothing
-            actual_output
-        elseif cfg !== nothing && cfg.export_combined_config !== nothing && cfg.export_combined_config.filename !== nothing
-            cfg.export_combined_config.filename
-        else
-            "combined_export_$(local_event_id).xlsx"
-        end
-
-        # Perform the export
-        @info "Exporting combined workbook" event_id=local_event_id output_path=output_path
-        result = export_combined_xlsx(db, local_event_id, output_path; events_dir)
-
-        if result == 0
-            @info "✓ Combined export complete" output_path=output_path
-
-            # Upload if requested
-            if upload
-                ctx = load_app_config(; db_path, credentials_path)
-                upload_export_to_webdav(ctx, output_path)
-            end
-        end
-
-        return result
+        @info "Using most recent event" event_id=local_event_id
     end
+
+    cfg = Config.load_event_config(local_event_id, events_dir)
+    output_path = if actual_output !== nothing
+        actual_output
+    elseif cfg !== nothing && cfg.export_combined_config !== nothing && cfg.export_combined_config.filename !== nothing
+        cfg.export_combined_config.filename
+    else
+        "combined_export_$(local_event_id).xlsx"
+    end
+
+    @info "Exporting combined workbook" event_id=local_event_id output_path=output_path
+    result = export_combined_xlsx(db, local_event_id, output_path; events_dir)
+
+    if result == 0
+        @info "✓ Combined export complete" output_path=output_path
+        if upload
+            ctx = load_app_config(; db_path, credentials_path)
+            upload_export_to_webdav(ctx, output_path)
+        end
+    end
+    return result
 end
 
 function export_registration_detail_xlsx(table::RegistrationDetailTable, output_path::String)

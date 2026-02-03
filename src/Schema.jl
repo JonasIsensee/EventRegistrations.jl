@@ -256,7 +256,7 @@ function init_database(db_path::AbstractString="events.duckdb")
         "CREATE INDEX IF NOT EXISTS idx_reg_event ON registrations(event_id)",
         "CREATE INDEX IF NOT EXISTS idx_reg_email ON registrations(email)",
         "CREATE INDEX IF NOT EXISTS idx_reg_ref ON registrations(reference_number)",
-        "CREATE INDEX IF NOT EXISTS idx_reg_status ON registrations(status)",
+        # idx_reg_status omitted: DuckDB #20246 - updating indexed non-PK column incorrectly triggers FK violation when cancelling
         "CREATE INDEX IF NOT EXISTS idx_reg_temporal ON registrations(id, valid_from, valid_to)",
         "CREATE INDEX IF NOT EXISTS idx_sub_event ON submissions(event_id)",
         "CREATE INDEX IF NOT EXISTS idx_sub_email ON submissions(email)",

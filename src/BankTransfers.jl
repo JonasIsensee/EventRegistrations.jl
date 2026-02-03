@@ -8,7 +8,7 @@ using SHA: SHA
 using StringEncodings
 
 # Import from parent module
-import ..EventRegistrations: with_transaction, EmailConfig
+import ..EventRegistrations: with_transaction, log_financial_transaction!, EmailConfig
 
 # Import from parent module's submodules
 using ..ReferenceNumbers
@@ -17,27 +17,7 @@ using ..ConfirmationEmails: queue_payment_confirmation!
 export import_bank_csv!, match_transfers!, get_unmatched_transfers
 export manual_match!, get_payment_status, get_payment_summary
 export get_payment_history, get_payment_discrepancies
-
-"""
-Log a financial transaction to the immutable ledger.
-"""
-function log_financial_transaction!(db::DuckDB.DB, registration_id::Integer,
-                                     transaction_type::String, amount::Real;
-                                     reference_id::Union{Integer,Nothing}=nothing,
-                                     reference_table::Union{String,Nothing}=nothing,
-                                     effective_date::Date=today(),
-                                     recorded_by::String="system",
-                                     notes::String="")
-    with_transaction(db) do
-        DBInterface.execute(db, """
-            INSERT INTO financial_transactions (id, registration_id, transaction_type, amount,
-                                                reference_id, reference_table, effective_date,
-                                                recorded_at, recorded_by, notes)
-            VALUES (nextval('transaction_id_seq'), ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, [registration_id, transaction_type, amount, reference_id, reference_table,
-              effective_date, now(), recorded_by, notes])
-    end
-end
+export get_near_miss_transfers, get_uncertain_matches
 
 """
 Import bank transfers from a CSV file.
@@ -203,20 +183,19 @@ Parse a CSV line handling quoted fields.
 """
 function parse_csv_line(line::AbstractString, delimiter::Char)
     fields = String[]
-    current = ""
+    buf = IOBuffer()
     in_quotes = false
 
     for char in line
         if char == '"'
             in_quotes = !in_quotes
         elseif char == delimiter && !in_quotes
-            push!(fields, current)
-            current = ""
+            push!(fields, String(take!(buf)))
         else
-            current *= char
+            write(buf, char)
         end
     end
-    push!(fields, current)
+    push!(fields, String(take!(buf)))
 
     return fields
 end
@@ -743,6 +722,256 @@ function get_uncertain_matches(db::DuckDB.DB; threshold::Float64=0.8)
         ORDER BY pm.match_confidence ASC
     """, [threshold])
     return collect(result)
+end
+
+"""
+Find unmatched transfers that have likely candidates but weren't matched automatically.
+
+This is useful for identifying transfers where:
+- A reference number was found but the amount doesn't match
+- A name matches but there's no reference or amount confirmation
+- The reference has a typo (off-by-one) but other criteria don't fully match
+
+Returns a vector of named tuples with transfer info and candidate registrations:
+[
+    (transfer_id, transfer_date, amount, sender_name, reference_text,
+     candidates=[
+         (reg_id, reference_number, first_name, last_name, computed_cost,
+          match_reason, amount_diff, confidence)
+     ])
+]
+
+Candidates are sorted by confidence (highest first).
+"""
+function get_near_miss_transfers(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing)
+    # Get unmatched transfers
+    unmatched = get_unmatched_transfers(db)
+    
+    near_misses = []
+    
+    for transfer in unmatched
+        transfer_id, transfer_date, amount, sender_name, reference_text = transfer
+        amount = Float64(amount)
+        ref_text = something(reference_text, "")
+        
+        candidates = []
+        seen_reg_ids = Set{Int}()  # Avoid duplicate candidates
+        
+        # Strategy 1: Reference number found but amount mismatch
+        ref_candidates = extract_reference_candidates(ref_text)
+        for ref_candidate in ref_candidates
+            reg_query = event_id === nothing ?
+                "SELECT id, event_id, reference_number, first_name, last_name, email, computed_cost FROM registrations WHERE reference_number = ?" :
+                "SELECT id, event_id, reference_number, first_name, last_name, email, computed_cost FROM registrations WHERE reference_number = ? AND event_id = ?"
+            
+            params = event_id === nothing ? [ref_candidate] : [ref_candidate, event_id]
+            result = DBInterface.execute(db, reg_query, params)
+            rows = collect(result)
+            
+            for row in rows
+                reg_id, _evt_id, ref_num, first_name, last_name, email, expected_cost = row
+                reg_id in seen_reg_ids && continue
+                push!(seen_reg_ids, reg_id)
+                
+                expected_cost_val = expected_cost === nothing ? nothing : Float64(expected_cost)
+                amount_diff = expected_cost_val === nothing ? nothing : amount - expected_cost_val
+                
+                # Check name match
+                name_matches, name_score = check_name_match(
+                    something(sender_name, ""), ref_text,
+                    something(first_name, ""), something(last_name, "")
+                )
+                
+                # Determine match quality and reason
+                if expected_cost_val !== nothing && abs(amount - expected_cost_val) < 0.01
+                    # Amount matches - this should have been caught by auto-match
+                    # Skip unless there was a name conflict
+                    has_conflict = has_conflicting_name(ref_text, something(first_name, ""), something(last_name, ""))
+                    if has_conflict
+                        match_reason = "Reference + amount match, but conflicting name in text"
+                        confidence = 0.80
+                    else
+                        continue  # Should have been auto-matched
+                    end
+                elseif expected_cost_val !== nothing
+                    # Amount mismatch
+                    if name_matches
+                        match_reason = "Reference + name match, but amount differs (expected $(expected_cost_val)€, got $(amount)€)"
+                        confidence = 0.75
+                    else
+                        match_reason = "Reference matches, but amount differs (expected $(expected_cost_val)€, got $(amount)€)"
+                        confidence = 0.60
+                    end
+                else
+                    # No cost configured
+                    if name_matches
+                        match_reason = "Reference + name match (no cost configured)"
+                        confidence = 0.65
+                    else
+                        match_reason = "Reference matches (no cost configured, no name match)"
+                        confidence = 0.40
+                    end
+                end
+                
+                push!(candidates, (
+                    reg_id = reg_id,
+                    reference_number = ref_num,
+                    first_name = first_name,
+                    last_name = last_name,
+                    email = email,
+                    computed_cost = expected_cost_val,
+                    match_reason = match_reason,
+                    amount_diff = amount_diff,
+                    confidence = confidence
+                ))
+            end
+        end
+        
+        # Strategy 2: Off-by-one reference typos
+        for ref_candidate in ref_candidates
+            parsed = parse_reference_number(ref_candidate)
+            if parsed !== nothing
+                event_part, num = parsed.event_id, parsed.id
+                if event_id !== nothing && event_part != event_id
+                    continue
+                end
+                
+                for offset in [-1, 1]
+                    nearby_num = num + offset
+                    if nearby_num >= 1 && nearby_num <= 999
+                        nearby_ref = generate_reference_number(event_part, nearby_num)
+                        
+                        reg_query = event_id === nothing ?
+                            "SELECT id, event_id, reference_number, first_name, last_name, email, computed_cost FROM registrations WHERE reference_number = ?" :
+                            "SELECT id, event_id, reference_number, first_name, last_name, email, computed_cost FROM registrations WHERE reference_number = ? AND event_id = ?"
+                        
+                        params = event_id === nothing ? [nearby_ref] : [nearby_ref, event_id]
+                        result = DBInterface.execute(db, reg_query, params)
+                        rows = collect(result)
+                        
+                        for row in rows
+                            reg_id, _evt_id, ref_num, first_name, last_name, email, expected_cost = row
+                            reg_id in seen_reg_ids && continue
+                            push!(seen_reg_ids, reg_id)
+                            
+                            expected_cost_val = expected_cost === nothing ? nothing : Float64(expected_cost)
+                            amount_diff = expected_cost_val === nothing ? nothing : amount - expected_cost_val
+                            
+                            name_matches, _ = check_name_match(
+                                something(sender_name, ""), ref_text,
+                                something(first_name, ""), something(last_name, "")
+                            )
+                            
+                            amount_match = expected_cost_val !== nothing && abs(amount - expected_cost_val) < 0.01
+                            
+                            if amount_match && name_matches
+                                # This should have been auto-matched as off-by-one
+                                continue
+                            elseif amount_match
+                                match_reason = "Off-by-one typo ($(ref_candidate) → $(nearby_ref)), amount matches"
+                                confidence = 0.70
+                            elseif name_matches
+                                match_reason = "Off-by-one typo ($(ref_candidate) → $(nearby_ref)), name matches"
+                                confidence = 0.55
+                            else
+                                match_reason = "Off-by-one typo ($(ref_candidate) → $(nearby_ref)), partial match"
+                                confidence = 0.35
+                            end
+                            
+                            push!(candidates, (
+                                reg_id = reg_id,
+                                reference_number = ref_num,
+                                first_name = first_name,
+                                last_name = last_name,
+                                email = email,
+                                computed_cost = expected_cost_val,
+                                match_reason = match_reason,
+                                amount_diff = amount_diff,
+                                confidence = confidence
+                            ))
+                        end
+                    end
+                end
+            end
+        end
+        
+        # Strategy 3: Name-only matching (for transfers without valid references)
+        if isempty(candidates) && !isempty(something(sender_name, ""))
+            # Look for registrations where name matches
+            query = if event_id !== nothing
+                """
+                SELECT id, reference_number, first_name, last_name, email, computed_cost
+                FROM registrations
+                WHERE event_id = ?
+                """
+            else
+                """
+                SELECT id, reference_number, first_name, last_name, email, computed_cost
+                FROM registrations
+                """
+            end
+            params = event_id !== nothing ? [event_id] : []
+            result = DBInterface.execute(db, query, params)
+            
+            for row in result
+                reg_id, ref_num, first_name, last_name, email, cost = row
+                reg_id in seen_reg_ids && continue
+                
+                cost_val = cost === nothing ? nothing : Float64(cost)
+                
+                name_matches, name_score = check_name_match(
+                    something(sender_name, ""), ref_text,
+                    something(first_name, ""), something(last_name, "")
+                )
+                
+                if name_matches
+                    push!(seen_reg_ids, reg_id)
+                    amount_diff = cost_val === nothing ? nothing : amount - cost_val
+                    amount_match = cost_val !== nothing && abs(amount - cost_val) < 0.01
+                    
+                    if amount_match
+                        # Should have been auto-matched by name
+                        continue
+                    elseif cost_val !== nothing
+                        match_reason = "Name matches ($(first_name) $(last_name)), but amount differs (expected $(cost_val)€, got $(amount)€)"
+                        confidence = 0.50
+                    else
+                        match_reason = "Name matches ($(first_name) $(last_name)), no cost configured"
+                        confidence = 0.45
+                    end
+                    
+                    push!(candidates, (
+                        reg_id = reg_id,
+                        reference_number = ref_num,
+                        first_name = first_name,
+                        last_name = last_name,
+                        email = email,
+                        computed_cost = cost_val,
+                        match_reason = match_reason,
+                        amount_diff = amount_diff,
+                        confidence = confidence
+                    ))
+                end
+            end
+        end
+        
+        # Only include transfers that have at least one candidate
+        if !isempty(candidates)
+            # Sort candidates by confidence (highest first)
+            sort!(candidates, by=c -> -c.confidence)
+            
+            push!(near_misses, (
+                transfer_id = transfer_id,
+                transfer_date = transfer_date,
+                amount = amount,
+                sender_name = sender_name,
+                reference_text = reference_text,
+                candidates = candidates
+            ))
+        end
+    end
+    
+    return near_misses
 end
 
 """

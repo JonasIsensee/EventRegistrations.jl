@@ -21,6 +21,7 @@ export RegistrationDetailTable, get_registration_detail_table
 export grant_subsidy!, get_subsidies, revoke_subsidy!, grant_subsidies_batch!
 export get_registration_by_reference, recalculate_costs!
 export get_registrations_for_edit, update_registration!
+export cancel_registration!
 export delete_registration!, restore_registration!
 export get_deleted_registrations, get_registration_by_reference_including_deleted
 
@@ -397,6 +398,25 @@ function get_registration_field_names(db::DuckDB.DB, event_id::AbstractString)
 end
 
 """
+Resolve an identifier (numeric id or reference number) to a registration id.
+Returns the registration id or nothing if not found.
+"""
+function resolve_registration_identifier(db::DuckDB.DB, identifier::AbstractString)
+    id_str = strip(identifier)
+    # Try numeric id first
+    try
+        reg_id = parse(Int, id_str)
+        result = DBInterface.execute(db, "SELECT id FROM registrations WHERE id = ?", [reg_id])
+        rows = collect(result)
+        return isempty(rows) ? nothing : reg_id
+    catch
+        # Not a number; try reference number
+    end
+    reg = get_registration_by_reference(db, uppercase(id_str))
+    return reg === nothing ? nothing : reg[1]
+end
+
+"""
 Get a registration by reference number.
 """
 function get_registration_by_reference(db::DuckDB.DB, reference::AbstractString)
@@ -585,6 +605,33 @@ Revoke (delete) a specific subsidy by its ID.
 function revoke_subsidy!(db::DuckDB.DB, subsidy_id::Integer)
     DBInterface.execute(db, "DELETE FROM subsidies WHERE id = ?", [subsidy_id])
     @info "Revoked subsidy" subsidy_id=subsidy_id
+end
+
+"""
+Cancel a registration (soft delete: set status = 'cancelled').
+Payments, subsidies, and ledger rows remain; the registration is no longer active.
+Uses with_transaction for consistency.
+"""
+function cancel_registration!(db::DuckDB.DB, registration_id::Integer)
+    with_transaction(db) do
+        result = DBInterface.execute(db, """
+            UPDATE registrations SET status = 'cancelled', updated_at = ?
+            WHERE id = ?
+        """, [now(), registration_id])
+        # DuckDB execute returns a result; check that a row was updated if needed
+    end
+    @info "Cancelled registration" registration_id=registration_id
+end
+
+"""
+Cancel a registration by identifier (numeric id or reference number).
+"""
+function cancel_registration!(db::DuckDB.DB, identifier::AbstractString)
+    reg_id = resolve_registration_identifier(db, identifier)
+    if reg_id === nothing
+        error("Registration not found for identifier: $identifier")
+    end
+    cancel_registration!(db, reg_id)
 end
 
 """

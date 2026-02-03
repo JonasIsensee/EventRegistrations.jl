@@ -134,6 +134,7 @@ eventreg sync --send-emails --export-combined --export-payments
 - `eventreg list-unmatched` - List unmatched transfers
 - `eventreg manual-match <id> <ref>` - Manually match a transfer
 - `eventreg grant-subsidy <id> <amount>` - Grant subsidy to registration
+- `eventreg delete-registration <id|ref>` - Cancel a registration (soft delete); use `--yes` to skip confirmation
 
 ### Email Management
 

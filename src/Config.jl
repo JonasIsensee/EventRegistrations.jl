@@ -420,10 +420,10 @@ function generate_event_config_template(event_id::AbstractString,
         end
     end
 
-            alias_to_field = Dict{String, String}()
-            for (field, alias) in field_to_alias
-                alias_to_field[alias] = field
-            end
+    alias_to_field = Dict{String, String}()
+    for (field, alias) in field_to_alias
+        alias_to_field[alias] = field
+    end
 
     # Build the template
     lines = String[]

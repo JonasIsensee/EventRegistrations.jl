@@ -2,40 +2,33 @@
 
 """
 Process registration emails from a folder.
+Caller must open db; run_cli opens it before calling.
 """
-function cmd_process_emails(email_folder::String="emails";
-                            db_path::String="events.duckdb",
-                            nonstop::Bool=false)
+function cmd_process_emails(db::DuckDB.DB, email_folder::String="emails";
+    nonstop::Bool=false)
     if !isdir(email_folder)
         @error "Email folder not found" email_folder=email_folder
         return 1
     end
+    @info "Processing emails" folder=email_folder
+    stats = process_email_folder!(db, email_folder; prompt_for_new_events=false)
 
-    return require_database(db_path) do db
-        @info "Processing emails" folder=email_folder
-        stats = process_email_folder!(db, email_folder; prompt_for_new_events=false)
+    @info "✓ Email processing complete!"
 
-        if stats.terminated
-            @warn "⚠ Processing halted by user request to edit configuration."
-        else
-            @info "✓ Email processing complete!"
-        end
+    summary = [
+        "Processed: $(stats.processed)",
+        "Submissions: $(stats.submissions)",
+        "New registrations: $(stats.new_registrations)",
+        "Updates: $(stats.updates)",
+        "Skipped: $(stats.skipped)",
+    ]
 
-        summary = [
-            "Processed: $(stats.processed)",
-            "Submissions: $(stats.submissions)",
-            "New registrations: $(stats.new_registrations)",
-            "Updates: $(stats.updates)",
-            "Skipped: $(stats.skipped)",
-        ]
+    @info join(summary, "\n")
 
-        @info join(summary, "\n")
-
-        if stats.no_cost_config > 0
-            @warn "Registrations without cost config" count=stats.no_cost_config
-        end
-        return 0
+    if stats.no_cost_config > 0
+        @warn "Registrations without cost config" count=stats.no_cost_config
     end
+    return 0
 end
 
 """
@@ -49,15 +42,9 @@ function cmd_download_emails(;
 
 
     if isempty(ctx.email.pop3_server)
-        @error """Credentials file not found!
+        @error """POP3 server not configured!
 
-Searched locations:
-- config/email_credentials.toml
-- config/credentials.toml
-- credentials.toml
-- email_credentials.toml
-
-Create a credentials file with the following format:
+Ensure your credentials file (credentials.toml) contains:
 [email]
 server = "mail.example.com"
 username = "user@example.com"
