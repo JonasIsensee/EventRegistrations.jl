@@ -80,6 +80,7 @@ include("sync_workflow.jl")
 include("payments.jl")
 include("exports.jl")
 include("email_queue.jl")
+include("repl.jl")
 
 const HELP_TEXT = """
 EventRegistrations CLI - Event registration management system
@@ -347,8 +348,10 @@ Main CLI entry: open DB once (except for init/download-emails), then dispatch.
 """
 function run_cli(args::Vector{String})
     return with_cli_logger() do
-        command, positional, options = parse_cli_args(args)
-        if isempty(command) || command in ["--help", "-h", "help"]
+        if isempty(args)
+            return run_repl()
+        end
+        if args[1] in ["--help", "-h", "help"]
             @info HELP_TEXT
             return 0
         end
