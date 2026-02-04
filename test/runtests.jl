@@ -14,6 +14,7 @@ using EventRegistrations
 using DBInterface
 using Dates
 using TOML
+using SHA
 
 # =============================================================================
 # TEST CONFIGURATION
@@ -161,17 +162,20 @@ end
 """Create additional test registrations directly in the database"""
 function create_additional_test_registrations(db, event_id, count)
     timestamp_suffix = round(Int, time() * 1000)  # Millisecond timestamp for uniqueness
+    created_ids = Int[]
     for i in 1:count
         email = "testuser$(i)_$(timestamp_suffix)@example.de"
         first_name = "Test$(i)"
         last_name = "User$(i)"
         fields = "{\"Stimmgruppe\": \"Violine\"}"
+        # Generate a unique file_hash for the submission
+        file_hash = bytes2hex(SHA.sha256("test_submission_$(timestamp_suffix)_$(i)"))
         
         # Insert a submission
         DBInterface.execute(db, """
-            INSERT INTO submissions (event_id, email, first_name, last_name, fields, email_date)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        """, [event_id, email, first_name, last_name, fields])
+            INSERT INTO submissions (file_hash, event_id, email, first_name, last_name, fields, email_date)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, [file_hash, event_id, email, first_name, last_name, fields])
         
         # Get the submission ID
         submission_id = DBInterface.execute(db, "SELECT last_insert_rowid()") |> collect |> first |> first
@@ -183,8 +187,23 @@ function create_additional_test_registrations(db, event_id, count)
                                       fields, latest_submission_id, registration_date, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'pending')
         """, [event_id, email, ref_number, first_name, last_name, fields, submission_id])
+        
+        # Get the registration ID
+        reg_id = DBInterface.execute(db, "SELECT last_insert_rowid()") |> collect |> first |> first
+        push!(created_ids, reg_id)
     end
     @info "Created $count additional test registrations for $event_id"
+    return created_ids
+end
+
+"""Delete test registrations by their IDs"""
+function cleanup_test_registrations(db, registration_ids)
+    for reg_id in registration_ids
+        DBInterface.execute(db, """
+            UPDATE registrations SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?
+        """, [reg_id])
+    end
+    @info "Cleaned up $(length(registration_ids)) test registrations"
 end
 
 
@@ -1196,7 +1215,7 @@ try
         println("\n=== Test 17c: Soft Delete Registration ===")
 
         # Create additional test registrations to ensure we have enough data
-        create_additional_test_registrations(db, "PWE_2026_01", 3)
+        test_reg_ids = create_additional_test_registrations(db, "PWE_2026_01", 3)
 
         # Get some active registrations (not cancelled, not deleted)
         rows = DBInterface.execute(db,
@@ -1286,13 +1305,16 @@ try
         # Test 13: Error when trying to restore non-existent registration
         @test_throws Exception EventRegistrations.restore_registration!(db, "NONEXISTENT_REF_12345")
         println("  ✓ Error thrown when restoring non-existent registration")
+        
+        # Clean up test registrations
+        cleanup_test_registrations(db, test_reg_ids)
     end
 
     @testset "17d. Soft Delete CLI Commands" begin
         println("\n=== Test 17d: Soft Delete CLI Commands ===")
 
         # Create additional test registrations to ensure we have enough data
-        create_additional_test_registrations(db, "PWE_2026_01", 2)
+        test_reg_ids = create_additional_test_registrations(db, "PWE_2026_01", 2)
 
         # Get an active registration
         rows = DBInterface.execute(db,
@@ -1378,15 +1400,16 @@ try
         end
         println("  ✓ dispatch_to_command: list-deleted-registrations")
 
-        # Clean up: restore the registration
+        # Clean up: restore the registration and delete test registrations
         EventRegistrations.restore_registration!(db, reg_id)
+        cleanup_test_registrations(db, test_reg_ids)
     end
 
     @testset "17e. Soft Delete Exclusion from Exports" begin
         println("\n=== Test 17e: Soft Delete Exclusion from Exports ===")
 
         # Create additional test registrations to ensure we have enough data
-        create_additional_test_registrations(db, "PWE_2026_01", 2)
+        test_reg_ids = create_additional_test_registrations(db, "PWE_2026_01", 2)
 
         # Get an active registration
         rows = DBInterface.execute(db,
@@ -1449,8 +1472,9 @@ try
         @test reg_count_overview_after == reg_count_overview_before - 1
         println("  ✓ Event overview excludes deleted registration")
 
-        # Clean up: restore the registration
+        # Clean up: restore the registration and delete test registrations
         EventRegistrations.restore_registration!(db, reg_id)
+        cleanup_test_registrations(db, test_reg_ids)
     end
 
     @testset "18. Config File Generation and Sync" begin
