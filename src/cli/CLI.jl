@@ -80,6 +80,7 @@ include("sync_workflow.jl")
 include("payments.jl")
 include("exports.jl")
 include("email_queue.jl")
+include("config.jl")
 include("repl.jl")
 
 const HELP_TEXT = """
@@ -136,6 +137,11 @@ EMAIL MANAGEMENT:
   send-emails                    Send all pending emails via SMTP
     --id=<id>                    Send specific email by ID
     --event-id=<id>              Send only emails for specific event
+
+CONFIGURATION:
+  set-email-redirect <email>     Redirect ALL emails to test address (for testing)
+  get-email-redirect             Show current email redirect setting
+  clear-email-redirect           Remove email redirect (send to actual recipients)
 EXPORTS:
   export-payment-status [event-id] [output]  Payment status with color highlighting
     --format=<fmt>               Output: terminal, pdf, latex, csv, xlsx
@@ -377,6 +383,17 @@ function run_cli(args::Vector{String})
         end
         if command == "download-emails"
             return cmd_download_emails(; options...)
+        end
+        # Configuration commands don't need a DB connection
+        if command == "set-email-redirect"
+            isempty(positional) && (@error "email address required"; return 1)
+            return cmd_set_email_redirect(positional[1]; credentials_path=credentials_path)
+        end
+        if command == "get-email-redirect"
+            return cmd_get_email_redirect(; credentials_path=credentials_path)
+        end
+        if command == "clear-email-redirect"
+            return cmd_clear_email_redirect(; credentials_path=credentials_path)
         end
         # Sync can create the DB; all other commands require it to exist
         if command == "sync"

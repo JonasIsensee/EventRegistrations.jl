@@ -475,8 +475,15 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
         return false
     end
 
+    # Check for email redirection
+    actual_to = to
+    if !isempty(cfg.redirect_to)
+        @debug "Email redirection enabled - redirecting email" original_to=to redirect_to=cfg.redirect_to
+        actual_to = cfg.redirect_to
+    end
+
     try
-        @debug "Preparing to send email" server="$(cfg.smtp_server):$(cfg.smtp_port)" from="$(cfg.from_name) <$(cfg.from_address)>" to=to subject=subject body_length=length(body)
+        @debug "Preparing to send email" server="$(cfg.smtp_server):$(cfg.smtp_port)" from="$(cfg.from_name) <$(cfg.from_address)>" to=actual_to subject=subject body_length=length(body)
 
         # Prepare email message
         from = cfg.from_name * " <" * cfg.from_address * ">"
@@ -493,7 +500,7 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
 
         message = HTML{String}(body)
         mime_msg = SMTPClient.get_mime_msg(message)
-        email_body = get_body_fixed([to], from, encode_mime_header(subject), mime_msg;
+        email_body = get_body_fixed([actual_to], from, encode_mime_header(subject), mime_msg;
             attachments = attachments,
             multipart_subtype=SMTPClient.RELATED)
 
@@ -514,7 +521,7 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
         # Send the email
         resp = send(
             url,
-            [to],
+            [actual_to],
             cfg.from_address,
             email_body,
             opt
@@ -523,10 +530,10 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
         @debug "SMTP response" response=resp
 
         if resp.code == 250 || resp.code == 0  # 250 = success, 0 = success in some versions
-            @info "Email sent successfully" to=to subject=subject
+            @info "Email sent successfully" to=actual_to subject=subject
             return true
         else
-            @error "SMTP error" to=to code=resp.code message=resp.message
+            @error "SMTP error" to=actual_to code=resp.code message=resp.message
             return false
         end
 
