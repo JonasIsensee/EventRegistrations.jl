@@ -25,6 +25,7 @@ struct EmailConfig
     webdav_username::String
     webdav_password::String
     webdav_remote_path::String
+    redirect_to::String
 end
 
 struct AppConfig
@@ -65,6 +66,8 @@ function parse_email_config(config::Dict; templates_dir::String, dry_run::Bool)
     webdav_password = get(webdav_section, "password", "")
     webdav_remote_path = get(webdav_section, "remote_path", "")
 
+    redirect_to = get(smtp_section, "redirect_to", "")
+
     return EmailConfig(
         pop3_server, pop3_username, pop3_password, pop3_port,
         smtp_server, smtp_port, username, password,
@@ -84,6 +87,7 @@ function parse_email_config(config::Dict; templates_dir::String, dry_run::Bool)
         webdav_username,
         webdav_password,
         webdav_remote_path,
+        redirect_to,
     )
 end
 

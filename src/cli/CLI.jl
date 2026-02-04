@@ -80,6 +80,7 @@ include("sync_workflow.jl")
 include("payments.jl")
 include("exports.jl")
 include("email_queue.jl")
+include("config.jl")
 include("repl.jl")
 
 const HELP_TEXT = """
@@ -136,6 +137,11 @@ EMAIL MANAGEMENT:
   send-emails                    Send all pending emails via SMTP
     --id=<id>                    Send specific email by ID
     --event-id=<id>              Send only emails for specific event
+
+CONFIGURATION:
+  set-email-redirect <email>     Redirect ALL emails to test address (for testing)
+  get-email-redirect             Show current email redirect setting
+  clear-email-redirect           Remove email redirect (send to actual recipients)
 EXPORTS:
   export-payment-status [event-id] [output]  Payment status with color highlighting
     --format=<fmt>               Output: terminal, pdf, latex, csv, xlsx
@@ -342,6 +348,13 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
             id_val = get(options, :id, nothing)
             id_val isa AbstractString && (id_val = parse(Int, id_val))
             return cmd_send_emails(db; event_id=get(options, :event_id, nothing), id=id_val, credentials_path=credentials_path, db_path=db_path)
+        elseif command == "set-email-redirect"
+            isempty(positional) && (@error "email address required"; return 1)
+            return cmd_set_email_redirect(positional[1]; credentials_path=credentials_path)
+        elseif command == "get-email-redirect"
+            return cmd_get_email_redirect(; credentials_path=credentials_path)
+        elseif command == "clear-email-redirect"
+            return cmd_clear_email_redirect(; credentials_path=credentials_path)
         elseif command == "sync"
             return cmd_sync(db; db_path=db_path, events_dir=events_dir, emails_dir="emails", bank_dir="bank_transfers", credentials_path=credentials_path, event_id=get(options, :event_id, nothing), send_emails=get(options, :send_emails, false), export_details=get(options, :export_details, false), export_payments=get(options, :export_payments, false), export_combined=get(options, :export_combined, false))
         else
@@ -377,6 +390,17 @@ function run_cli(args::Vector{String})
         end
         if command == "download-emails"
             return cmd_download_emails(; options...)
+        end
+        # Configuration commands don't need a DB connection
+        if command == "set-email-redirect"
+            isempty(positional) && (@error "email address required"; return 1)
+            return cmd_set_email_redirect(positional[1]; credentials_path=credentials_path)
+        end
+        if command == "get-email-redirect"
+            return cmd_get_email_redirect(; credentials_path=credentials_path)
+        end
+        if command == "clear-email-redirect"
+            return cmd_clear_email_redirect(; credentials_path=credentials_path)
         end
         # Sync can create the DB; all other commands require it to exist
         if command == "sync"
