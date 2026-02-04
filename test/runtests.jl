@@ -158,6 +158,35 @@ function create_test_bank_csv()
     return csv_path
 end
 
+"""Create additional test registrations directly in the database"""
+function create_additional_test_registrations(db, event_id, count)
+    for i in 1:count
+        email = "testuser$(i)@example.de"
+        first_name = "Test$(i)"
+        last_name = "User$(i)"
+        fields = "{\"Stimmgruppe\": \"Violine\"}"
+        
+        # Insert a submission
+        DBInterface.execute(db, """
+            INSERT INTO submissions (event_id, email, first_name, last_name, fields, email_date)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, [event_id, email, first_name, last_name, fields])
+        
+        # Get the submission ID
+        submission_id = DBInterface.execute(db, "SELECT last_insert_rowid()") |> collect |> first |> first
+        
+        # Create a registration
+        ref_number = EventRegistrations.generate_reference_number(db, event_id)
+        DBInterface.execute(db, """
+            INSERT INTO registrations (event_id, email, reference_number, first_name, last_name, 
+                                      fields, latest_submission_id, registration_date, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'pending')
+        """, [event_id, email, ref_number, first_name, last_name, fields, submission_id])
+    end
+    println("  Created $count additional test registrations for $event_id")
+end
+
+
 """Setup event configuration for testing"""
 function setup_test_event_config(db)
     mkpath(TEST_EVENTS_DIR)
@@ -1165,6 +1194,9 @@ try
     @testset "17c. Soft Delete Registration" begin
         println("\n=== Test 17c: Soft Delete Registration ===")
 
+        # Create additional test registrations to ensure we have enough data
+        create_additional_test_registrations(db, "PWE_2026_01", 3)
+
         # Get some active registrations (not cancelled, not deleted)
         rows = DBInterface.execute(db,
             "SELECT id, reference_number, event_id FROM registrations WHERE event_id = ? AND deleted_at IS NULL AND status != 'cancelled' ORDER BY id LIMIT 3",
@@ -1258,6 +1290,9 @@ try
     @testset "17d. Soft Delete CLI Commands" begin
         println("\n=== Test 17d: Soft Delete CLI Commands ===")
 
+        # Create additional test registrations to ensure we have enough data
+        create_additional_test_registrations(db, "PWE_2026_01", 2)
+
         # Get an active registration
         rows = DBInterface.execute(db,
             "SELECT id, reference_number FROM registrations WHERE event_id = ? AND deleted_at IS NULL AND status != 'cancelled' ORDER BY id LIMIT 1",
@@ -1348,6 +1383,9 @@ try
 
     @testset "17e. Soft Delete Exclusion from Exports" begin
         println("\n=== Test 17e: Soft Delete Exclusion from Exports ===")
+
+        # Create additional test registrations to ensure we have enough data
+        create_additional_test_registrations(db, "PWE_2026_01", 2)
 
         # Get an active registration
         rows = DBInterface.execute(db,

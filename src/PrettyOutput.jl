@@ -451,7 +451,7 @@ function print_payment_table(data::PaymentTableData;
                        hl_remaining_negative, hl_remaining_positive],
         maximum_number_of_columns = -1,
         maximum_number_of_rows = -1,
-        vcrop_mode = :none
+        vertical_crop_mode = :none
     )
 
     # Print summary
@@ -725,7 +725,7 @@ function print_registration_table(data::RegistrationTableData;
         highlighters = [hl_paid, hl_partial, hl_unpaid, hl_noconfig, hl_remaining_positive],
         maximum_number_of_columns = -1,
         maximum_number_of_rows = -1,
-        vcrop_mode = :none
+        vertical_crop_mode = :none
     )
 
     # Print summary
