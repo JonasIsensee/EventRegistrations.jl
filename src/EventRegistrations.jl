@@ -190,7 +190,7 @@ using .Registrations: get_registration_by_reference, recalculate_costs!
 using .Registrations: get_registrations_for_edit, update_registration!
 using .Registrations: cancel_registration!, prompt_user_bool
 using .Registrations: delete_registration!, restore_registration!
-using .Registrations: get_deleted_registrations
+using .Registrations: get_deleted_registrations, get_registration_by_reference_including_deleted
 export process_email_folder!, get_registrations
 export RegistrationDetailTable, get_registration_detail_table
 export grant_subsidy!, get_subsidies, revoke_subsidy!
