@@ -69,45 +69,45 @@ function LineEdit.complete_line(c::EventRegCompletionProvider, s::LineEdit.Promp
     return completions, reg, true
 end
 
-"""
-    parse_repl_line(line::AbstractString) -> Vector{String}
+# """
+#     parse_repl_line(line::AbstractString) -> Vector{String}
 
-Parse a REPL input line into CLI arguments (split on whitespace, respecting quotes).
-"""
-function parse_repl_line(line::AbstractString)
-    line = strip(line)
-    isempty(line) && return String[]
-    args = String[]
-    current = ""
-    in_quotes = false
-    quote_char = '\0'
+# Parse a REPL input line into CLI arguments (split on whitespace, respecting quotes).
+# """
+# function parse_repl_line(line::AbstractString)
+#     line = strip(line)
+#     isempty(line) && return String[]
+#     args = String[]
+#     current = ""
+#     in_quotes = false
+#     quote_char = '\0'
 
-    i = firstindex(line)
-    while i <= ncodeunits(line)
-        c = line[i]
-        if in_quotes
-            if c == quote_char
-                in_quotes = false
-                quote_char = '\0'
-            else
-                current *= c
-            end
-        elseif c in ('"', '\'')
-            in_quotes = true
-            quote_char = c
-        elseif c in (' ', '\t')
-            if !isempty(current)
-                push!(args, current)
-                current = ""
-            end
-        else
-            current *= c
-        end
-        i = nextind(line, i)
-    end
-    !isempty(current) && push!(args, current)
-    return args
-end
+#     i = firstindex(line)
+#     while i <= ncodeunits(line)
+#         c = line[i]
+#         if in_quotes
+#             if c == quote_char
+#                 in_quotes = false
+#                 quote_char = '\0'
+#             else
+#                 current *= c
+#             end
+#         elseif c in ('"', '\'')
+#             in_quotes = true
+#             quote_char = c
+#         elseif c in (' ', '\t')
+#             if !isempty(current)
+#                 push!(args, current)
+#                 current = ""
+#             end
+#         else
+#             current *= c
+#         end
+#         i = nextind(line, i)
+#     end
+#     !isempty(current) && push!(args, current)
+#     return args
+# end
 
 """
     run_repl_linedit() -> Int
@@ -247,18 +247,18 @@ function run_repl_simple()
     return last_code
 end
 
-"""
-    run_repl() -> Int
+# """
+#     run_repl() -> Int
 
-Run interactive REPL mode. Uses LineEdit (TAB completion, history, arrow keys)
-when stdin is a TTY; falls back to simple readline otherwise.
-Returns exit code.
-"""
-function run_repl()
-    # Use LineEdit when stdin is a TTY (enables TAB completion, history, arrow keys)
-    if stdin isa Base.TTY
-        return run_repl_linedit()
-    else
-        return run_repl_simple()
-    end
-end
+# Run interactive REPL mode. Uses LineEdit (TAB completion, history, arrow keys)
+# when stdin is a TTY; falls back to simple readline otherwise.
+# Returns exit code.
+# """
+# function run_repl()
+#     # Use LineEdit when stdin is a TTY (enables TAB completion, history, arrow keys)
+#     if stdin isa Base.TTY
+#         return run_repl_linedit()
+#     else
+#         return run_repl_simple()
+#     end
+# end
