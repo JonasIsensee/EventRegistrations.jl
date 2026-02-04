@@ -138,6 +138,11 @@ function cmd_send_emails(db::DuckDB.DB;
     db_path::String="events.duckdb")
     ctx = load_app_config(; db_path, credentials_path, dry_run=false)
 
+    # Warn if email redirection is active
+    if !isempty(ctx.email.redirect_to)
+        @warn "EMAIL REDIRECTION ACTIVE: All emails will be sent to $(ctx.email.redirect_to) instead of actual recipients"
+    end
+
     if id !== nothing
         @info "Sending email" id=id
         success = send_queued_email!(ctx.email, db, id)

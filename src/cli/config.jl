@@ -9,6 +9,7 @@ All emails will be redirected to this address instead of actual recipients.
 function cmd_set_email_redirect(email::String; credentials_path::String="credentials.toml")
     # Validate email format with strict pattern to prevent SMTP injection
     # Allows only safe characters in local and domain parts
+    # Note: TLD must be at least 2 characters (excludes rare single-char TLDs)
     if !occursin(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email)
         @error "Invalid email address format" email=email
         return 1

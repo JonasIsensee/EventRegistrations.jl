@@ -478,7 +478,7 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
     # Check for email redirection
     actual_to = to
     if !isempty(cfg.redirect_to)
-        @info "Email redirection enabled - redirecting email" original_to=to redirect_to=cfg.redirect_to
+        @debug "Email redirection enabled - redirecting email" original_to=to redirect_to=cfg.redirect_to
         actual_to = cfg.redirect_to
     end
 
