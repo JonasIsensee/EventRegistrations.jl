@@ -7,6 +7,12 @@ Set email redirect address in credentials.toml for testing purposes.
 All emails will be redirected to this address instead of actual recipients.
 """
 function cmd_set_email_redirect(email::String; credentials_path::String="credentials.toml")
+    # First, explicitly reject dangerous characters that could enable SMTP header injection
+    if occursin(r"[\r\n\0]", email)
+        @error "Email address contains dangerous characters (newline or null byte)" email=email
+        return 1
+    end
+    
     # Validate email format with strict pattern to prevent SMTP injection
     # Allows only safe characters in local and domain parts
     # Note: TLD must be at least 2 characters (excludes rare single-char TLDs)
@@ -92,6 +98,7 @@ function cmd_get_email_redirect(; credentials_path::String="credentials.toml")
     # Check for redirect setting
     if haskey(config_dict, "smtp") && haskey(config_dict["smtp"], "redirect_to")
         redirect_to = config_dict["smtp"]["redirect_to"]
+        # Empty string is treated as "not set" (allows manual clearing in TOML)
         if !isempty(redirect_to)
             @info "Email redirect: ACTIVE" redirect_to=redirect_to
             @warn "ALL emails are being sent to $redirect_to instead of actual recipients"
