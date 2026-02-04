@@ -278,7 +278,8 @@ Commands that need no DB (init, download-emails) are handled by run_cli before o
 function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{String}, options::Dict{Symbol,Any};
     db_path::String="events.duckdb",
     events_dir::String="events",
-    credentials_path::String="credentials.toml")
+    credentials_path::String="credentials.toml",
+    from_repl::Bool=false)
     try
         if command == "init"
             return cmd_init(; db_path=db_path)
@@ -369,7 +370,7 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
                 return 1
             elseif subcommand == "init"
                 playground_name = length(positional) >= 2 ? positional[2] : nothing
-                return cmd_playground_init(; playground_name=playground_name, db_path=db_path, events_dir=events_dir, force=get(options, :force, false))
+                return cmd_playground_init(; playground_name=playground_name, db_path=db_path, events_dir=events_dir, force=get(options, :force, false), from_repl=from_repl)
             elseif subcommand == "receive-submissions"
                 count = length(positional) >= 2 ? parse(Int, positional[2]) : 3
                 return cmd_playground_receive_submissions(; count=count, event_id=get(options, :event_id, nothing), emails_dir="emails")
@@ -709,7 +710,7 @@ function run_repl(; db_path::String="events.duckdb")
                     continue
                 end
                 code = with_cli_logger() do
-                    dispatch_to_command(db, command, positional, options; db_path=db_path, events_dir="events", credentials_path="credentials.toml")
+                    dispatch_to_command(db, command, positional, options; db_path=db_path, events_dir="events", credentials_path="credentials.toml", from_repl=true)
                 end
                 if command == "init"
                     DBInterface.close!(db)

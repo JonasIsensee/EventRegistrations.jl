@@ -147,7 +147,23 @@ function cmd_playground_init(;
     playground_name::Union{String,Nothing}=nothing,
     db_path::String="events.duckdb",
     events_dir::String="events",
-    force::Bool=false)
+    force::Bool=false,
+    from_repl::Bool=false)
+    
+    # Prevent playground init from REPL mode due to DuckDB connection issues
+    if from_repl
+        @error """playground init cannot be run from REPL mode.
+        
+DuckDB does not support switching between different database connections reliably.
+Running 'playground init' from REPL would create a new database but the REPL
+would remain connected to the current database, causing confusion.
+
+Please exit the REPL (type 'exit' or press Ctrl-D) and run the command from the shell:
+  eventreg playground init [name]
+
+Then you can start a new REPL session in the playground directory if desired."""
+        return 1
+    end
     
     # Determine target directory
     target_dir = playground_name === nothing ? "." : playground_name
