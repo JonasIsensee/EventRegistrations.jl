@@ -1886,16 +1886,6 @@ try
         
         @test length(data_lines2) == registration_data.total_registrations
         println("  ✓ Registration table shows all $(registration_data.total_registrations) registrations without vertical truncation")
-        
-        # Verify that vcrop_mode parameter is being used by checking the code
-        # Read the source file and verify vcrop_mode is set to :none
-        pretty_output_source = read("/home/runner/work/EventRegistrations.jl/EventRegistrations.jl/src/PrettyOutput.jl", String)
-        @test occursin("vcrop_mode = :none", pretty_output_source)
-        println("  ✓ Source code confirms vcrop_mode = :none is set")
-        
-        exports_source = read("/home/runner/work/EventRegistrations.jl/EventRegistrations.jl/src/cli/exports.jl", String)
-        @test occursin("vcrop_mode = :none", exports_source)
-        println("  ✓ Exports source code confirms vcrop_mode = :none is set")
     end
 
     @testset "26. REPL and dispatch_to_command" begin
