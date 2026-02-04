@@ -81,6 +81,7 @@ include("payments.jl")
 include("exports.jl")
 include("email_queue.jl")
 include("config.jl")
+include("playground.jl")
 include("repl.jl")
 
 const HELP_TEXT = """
@@ -168,6 +169,12 @@ EXPORTS:
     --name=<pattern>             Filter by name (regex)
     --since=<date>               Only registrations since date (yyyy-mm-dd)
 
+PLAYGROUND (Testing & Development):
+  playground init [name]           Initialize playground environment
+    --force                        Initialize even if directory is not empty
+  playground receive-submissions [count]  Generate sample submission emails
+    --event-id=<id>              Use specific event ID for samples
+
 COMMON OPTIONS:
   --db-path=<path>              Database file (default: events.duckdb)
   --config-dir=<path>           Config directory (default: config)
@@ -214,6 +221,10 @@ EXAMPLES:
   eventreg export-combined PWE_2026_01                     # export specific event
   eventreg export-combined PWE_2026_01 custom_report.xlsx  # custom output file
   eventreg export-combined --upload                        # export and upload to WebDAV
+  eventreg playground init                                 # create playground in current dir
+  eventreg playground init mytest                          # create playground in ./mytest
+  eventreg playground receive-submissions                  # generate 3 sample emails
+  eventreg playground receive-submissions 10               # generate 10 sample emails
 
 REPL MODE:
   Run eventreg with no arguments to enter REPL mode. The database is connected
@@ -350,6 +361,23 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
             return cmd_send_emails(db; event_id=get(options, :event_id, nothing), id=id_val, credentials_path=credentials_path, db_path=db_path)
         elseif command == "sync"
             return cmd_sync(db; db_path=db_path, events_dir=events_dir, emails_dir="emails", bank_dir="bank_transfers", credentials_path=credentials_path, event_id=get(options, :event_id, nothing), send_emails=get(options, :send_emails, false), export_details=get(options, :export_details, false), export_payments=get(options, :export_payments, false), export_combined=get(options, :export_combined, false))
+        elseif command == "playground"
+            # Playground commands are subcommands
+            subcommand = length(positional) >= 1 ? positional[1] : nothing
+            if subcommand === nothing
+                @error "Playground subcommand required. Available: init, receive-submissions"
+                return 1
+            elseif subcommand == "init"
+                playground_name = length(positional) >= 2 ? positional[2] : nothing
+                return cmd_playground_init(; playground_name=playground_name, db_path=db_path, events_dir=events_dir, force=get(options, :force, false))
+            elseif subcommand == "receive-submissions"
+                count = length(positional) >= 2 ? parse(Int, positional[2]) : 3
+                return cmd_playground_receive_submissions(; count=count, event_id=get(options, :event_id, nothing), emails_dir="emails")
+            else
+                @error "Unknown playground subcommand" subcommand=subcommand
+                @info "Available playground commands: init, receive-submissions"
+                return 1
+            end
         else
             @error "Unknown command" command=command
             @info "Run 'eventreg --help' or type help for usage."
@@ -387,13 +415,23 @@ function run_cli(args::Vector{String})
         # Configuration commands don't need a DB connection
         if command == "set-email-redirect"
             isempty(positional) && (@error "email address required"; return 1)
-            return cmd_set_email_redirect(positional[1]; credentials_path=credentials_path)
+            return cmd_set_email_redirect(positional[1]; credentials_path)
         end
         if command == "get-email-redirect"
-            return cmd_get_email_redirect(; credentials_path=credentials_path)
+            return cmd_get_email_redirect(; credentials_path)
         end
         if command == "clear-email-redirect"
-            return cmd_clear_email_redirect(; credentials_path=credentials_path)
+            return cmd_clear_email_redirect(; credentials_path)
+        end
+        if command == "playground"
+            # playground init doesn't need a DB connection (it creates one)
+            # but receive-submissions needs to check if we're in a playground
+            subcommand = length(positional) >= 1 ? positional[1] : nothing
+            if subcommand == "init"
+                playground_name = length(positional) >= 2 ? positional[2] : nothing
+                return cmd_playground_init(; playground_name=playground_name, db_path=db_path, events_dir=events_dir, force=get(options, :force, false))
+            end
+            # For other playground subcommands, fall through to regular DB handling
         end
         # Sync can create the DB; all other commands require it to exist
         if command == "sync"
@@ -503,23 +541,23 @@ Returns a tuple of (completions, should_complete, prefix).
 function eventreg_complete(s::LineEdit.PromptState)
     input = String(take!(copy(LineEdit.buffer(s))))
     words = split(input, r"\s+"; keepempty=true)
-    
+
     # If input is empty or just whitespace, return all commands
     if isempty(strip(input)) || (length(words) == 1 && isempty(strip(words[1])))
         completions = REPL.Completion[REPL.Completion(cmd, cmd, "") for cmd in REPL_COMMANDS]
         return completions, true, ""
     end
-    
+
     last_word = isempty(words) ? "" : words[end]
     prev_word = length(words) >= 2 ? words[end-1] : ""
-    
+
     # Complete commands if we're at the start or after whitespace
     if length(words) == 1 && !startswith(last_word, "--")
         matches = filter(cmd -> startswith(cmd, last_word), REPL_COMMANDS)
         completions = REPL.Completion[REPL.Completion(cmd, cmd, "") for cmd in matches]
         return completions, true, last_word
     end
-    
+
     # Complete options
     if startswith(last_word, "--")
         # Check if this is an option that needs a value
@@ -541,7 +579,7 @@ function eventreg_complete(s::LineEdit.PromptState)
             return completions, true, last_word
         end
     end
-    
+
     # If we're after an option that takes a value, suggest values
     if prev_word == "--format" || startswith(prev_word, "--format=")
         matches = filter(fmt -> startswith(fmt, last_word), REPL_FORMAT_VALUES)
@@ -552,7 +590,7 @@ function eventreg_complete(s::LineEdit.PromptState)
         completions = REPL.Completion[REPL.Completion(flt, flt, "") for flt in matches]
         return completions, true, last_word
     end
-    
+
     return REPL.Completion[], false, ""
 end
 
@@ -595,18 +633,18 @@ function run_repl(; db_path::String="events.duckdb")
     db = init_database(db_path)
     try
         println(REPL_BANNER)
-        
+
         # Create a terminal and REPL for ReplMaker
         term = REPL.Terminals.TTYTerminal(get(ENV, "TERM", "dumb"), stdin, stdout, stderr)
         repl = REPL.LineEditREPL(term, false)
         if !isdefined(repl, :interface)
             repl.interface = REPL.setup_interface(repl)
         end
-        
+
         # Set up result storage for the REPL loop
         result_ref = Ref{Union{String, Nothing}}(nothing)
         should_exit = Ref{Bool}(false)
-        
+
         # Create a custom show function that captures the input
         function eventreg_respond(input, repl, prompt)
             if input === nothing || isempty(strip(input))
@@ -616,7 +654,7 @@ function run_repl(; db_path::String="events.duckdb")
             result_ref[] = input
             return nothing
         end
-        
+
         # Initialize ReplMaker with our parser and completion
         lang_mode = initrepl(
             eventreg_parser,
@@ -630,39 +668,39 @@ function run_repl(; db_path::String="events.duckdb")
             sticky = false,
             startup_text = false  # Don't print startup message
         )
-        
+
         # Override the on_done to capture input
         lang_mode.on_done = REPL.respond(eventreg_respond, repl, lang_mode)
-        
+
         # Main REPL loop - manually enter the mode and process input
         while !should_exit[]
             try
                 # Reset the result
                 result_ref[] = nothing
-                
+
                 # Create a state and transition to our prompt
                 state = LineEdit.init_state(term)
                 LineEdit.transition(state, lang_mode)
-                
+
                 # Run the interface - this handles all input including TAB, arrows, etc.
                 # The on_done callback will be triggered when Enter is pressed
                 LineEdit.run_interface(state)
-                
+
                 line = result_ref[]
-                
+
                 if line === nothing || should_exit[]
                     break
                 end
-                
+
                 line = strip(line)
                 if isempty(line)
                     continue
                 end
-                
+
                 if line in ("exit", "quit")
                     break
                 end
-                
+
                 args = parse_repl_line(line)
                 isempty(args) && continue
                 command, positional, options = parse_cli_args(args)
