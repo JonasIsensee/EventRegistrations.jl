@@ -1,3 +1,4 @@
+"""
 PrettyOutput module for EventRegistrations
 
 Provides beautiful colored table output for payment status and registration data.
