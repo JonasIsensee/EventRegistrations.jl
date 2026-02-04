@@ -105,7 +105,8 @@ function cmd_list_registrations(db::DuckDB.DB, event_id::Union{String,Nothing}=n
         filter::String="all",
         name::Union{String,Nothing}=nothing,
         email::Union{String,Nothing}=nothing,
-        since::Union{String,Nothing}=nothing)
+        since::Union{String,Nothing}=nothing,
+        pager::Bool=false)
     # Default to most recent event if not specified
     local_event_id = event_id
     if local_event_id === nothing
@@ -148,7 +149,7 @@ function cmd_list_registrations(db::DuckDB.DB, event_id::Union{String,Nothing}=n
     end
 
     # Print colored table
-    print_registration_table(table_data; filter=reg_filter)
+    print_registration_table(table_data; filter=reg_filter, pager=pager)
     return 0
 end
 
