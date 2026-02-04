@@ -1,4 +1,4 @@
-#!/usr/bin/env julia
+successfully downloaded text file (SHA: 75041a465af272a96cabd167e6860400f0fc2d57)#!/usr/bin/env julia
 
 """
 EventRegistrations Test Suite
