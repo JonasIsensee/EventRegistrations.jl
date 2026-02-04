@@ -169,7 +169,7 @@ function create_additional_test_registrations(db, event_id, count)
         last_name = "User$(i)"
         fields = "{\"Stimmgruppe\": \"Violine\"}"
         # Generate a unique file_hash for the submission
-        file_hash = bytes2hex(SHA.sha256("test_submission_$(timestamp_suffix)_$(i)"))
+        file_hash = bytes2hex(SHA.sha256("test_submission_$(event_id)_$(timestamp_suffix)_$(i)"))
         
         # Insert a submission
         DBInterface.execute(db, """
