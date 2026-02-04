@@ -160,8 +160,9 @@ end
 
 """Create additional test registrations directly in the database"""
 function create_additional_test_registrations(db, event_id, count)
+    timestamp_suffix = round(Int, time() * 1000)  # Millisecond timestamp for uniqueness
     for i in 1:count
-        email = "testuser$(i)@example.de"
+        email = "testuser$(i)_$(timestamp_suffix)@example.de"
         first_name = "Test$(i)"
         last_name = "User$(i)"
         fields = "{\"Stimmgruppe\": \"Violine\"}"
@@ -183,7 +184,7 @@ function create_additional_test_registrations(db, event_id, count)
             VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'pending')
         """, [event_id, email, ref_number, first_name, last_name, fields, submission_id])
     end
-    println("  Created $count additional test registrations for $event_id")
+    @info "Created $count additional test registrations for $event_id"
 end
 
 
