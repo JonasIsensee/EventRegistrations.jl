@@ -1852,9 +1852,6 @@ try
     @testset "25b. Table Display - No Vertical Truncation" begin
         println("\n=== Test 25b: Table Display - No Vertical Truncation ===")
 
-        # Create a large number of registrations to test vertical display
-        using EventRegistrations.PrettyOutput
-
         # Get payment table data for the event
         payment_data = EventRegistrations.PrettyOutput.get_payment_table_data(db, "PWE_2026_01")
         
