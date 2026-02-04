@@ -171,14 +171,14 @@ function create_additional_test_registrations(db, event_id, count)
         # Generate a unique file_hash for the submission
         file_hash = bytes2hex(SHA.sha256("test_submission_$(event_id)_$(timestamp_suffix)_$(i)"))
         
-        # Insert a submission
+        # Insert a submission (using sequence for id)
         DBInterface.execute(db, """
-            INSERT INTO submissions (file_hash, event_id, email, first_name, last_name, fields, email_date)
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        """, [file_hash, event_id, email, first_name, last_name, fields])
+            INSERT INTO submissions (id, file_hash, event_id, email, first_name, last_name, fields, email_date, email_from, email_subject, created_at)
+            VALUES (nextval('submission_id_seq'), ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP)
+        """, [file_hash, event_id, email, first_name, last_name, fields, "test@system.local", "Test Submission"])
         
-        # Get the submission ID
-        submission_id = DBInterface.execute(db, "SELECT last_insert_rowid()") |> collect |> first |> first
+        # Get the submission ID we just inserted (using currval after nextval)
+        submission_id = DBInterface.execute(db, "SELECT currval('submission_id_seq')") |> collect |> first |> first
         
         # Create a registration
         ref_number = EventRegistrations.generate_reference_number(db, event_id)
@@ -1925,8 +1925,8 @@ try
         
         # Count the number of rows in the output (excluding headers and summary)
         output_lines = split(output, '\n')
-        # Count lines that look like data rows (contain the reference pattern or data)
-        data_lines = filter(line -> occursin(r"PWE_\d+_\d+", line), output_lines)
+        # Count lines that look like data rows (contain full reference numbers with 3 underscore-separated parts)
+        data_lines = filter(line -> occursin(r"PWE_\d+_\d+_\d+", line), output_lines)
         
         # Verify that all registrations are shown (not truncated)
         # The number of data rows should match the number of registrations
@@ -1940,9 +1940,9 @@ try
         EventRegistrations.PrettyOutput.print_registration_table(registration_data; io=io_buffer2)
         output2 = String(take!(io_buffer2))
         
-        # Count data lines in registration output
+        # Count data lines in registration output (using full reference pattern)
         output_lines2 = split(output2, '\n')
-        data_lines2 = filter(line -> occursin(r"PWE_\d+_\d+", line), output_lines2)
+        data_lines2 = filter(line -> occursin(r"PWE_\d+_\d+_\d+", line), output_lines2)
         
         @test length(data_lines2) == registration_data.total_registrations
         println("  ✓ Registration table shows all $(registration_data.total_registrations) registrations without vertical truncation")
