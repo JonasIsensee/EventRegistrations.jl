@@ -1,0 +1,38 @@
+version: 1
+
+setup:
+  # Install juliaup and Julia v1.12
+  install:
+    - name: Install juliaup
+      run: |
+        curl -fsSL https://install.julialang.org | sh -s -- -y
+        echo "$HOME/.juliaup/bin" >> $GITHUB_PATH
+      shell: bash
+      
+    - name: Install Julia v1.12
+      run: |
+        $HOME/.juliaup/bin/juliaup add 1.12
+        $HOME/.juliaup/bin/juliaup default 1.12
+      shell: bash
+      
+    - name: Verify Julia installation
+      run: |
+        $HOME/.juliaup/bin/julia --version
+      shell: bash
+
+  # Firewall configuration to allow access to julialang.org
+  firewall:
+    allow:
+      - domain: julialang.org
+        ports: [80, 443]
+        protocol: tcp
+      - domain: "*.julialang.org"
+        ports: [80, 443]
+        protocol: tcp
+      - domain: pkg.julialang.org
+        ports: [80, 443]
+        protocol: tcp
+
+environment:
+  JULIA_VERSION: "1.12"
+  JULIAUP_BIN: "$HOME/.juliaup/bin"
