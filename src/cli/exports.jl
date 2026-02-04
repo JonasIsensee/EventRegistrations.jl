@@ -198,9 +198,6 @@ $("=" ^ length(title_str))"""
 end
 
 """
-Export full registration data. Caller must open db; run_cli opens it before calling.
-"""
-"""
 Export registrations report with optional filters and formats.
 Caller must open db; run_cli opens it before calling.
 """

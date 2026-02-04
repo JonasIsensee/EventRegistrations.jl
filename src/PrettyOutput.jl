@@ -716,7 +716,7 @@ Print a beautiful colored registration table to the terminal.
 - `filter::RegistrationFilter`: Optional filter to apply
 - `io::IO`: Output stream (default: stdout)
 - `pager::Bool`: If true, display output in a scrollable pager (default: false)
-- `truncate_email::Bool`: If true, truncate long email addresses (default: true)
+- `truncate_email`: If true, truncate long email addresses; if nothing, defaults to !pager (default: nothing)
 
 When `pager=true`, the table is displayed using `less` with support for:
 - Horizontal scrolling with arrow keys
@@ -730,7 +730,10 @@ function print_registration_table(data::RegistrationTableData;
                                    filter::RegistrationFilter=RegistrationFilter(),
                                    io::IO=stdout,
                                    pager::Bool=false,
-                                   truncate_email::Bool=!pager)
+                                   truncate_email::Union{Bool,Nothing}=nothing)
+    # Resolve truncate_email default based on pager setting
+    actual_truncate_email = truncate_email === nothing ? !pager : truncate_email
+    
     # Define the actual printing logic
     function _do_print(output_io::IO)
         rows_to_show = filter_registrations(data, filter)
@@ -747,7 +750,7 @@ function print_registration_table(data::RegistrationTableData;
             table_data[i, 1] = row.reference
             table_data[i, 2] = row.last_name * ", " * row.first_name
             # Truncate email only if requested
-            table_data[i, 3] = (truncate_email && length(row.email) > 30) ? row.email[1:27] * "..." : row.email
+            table_data[i, 3] = (actual_truncate_email && length(row.email) > 30) ? row.email[1:27] * "..." : row.email
             table_data[i, 4] = row.registration_date !== nothing ? Dates.format(row.registration_date, "yyyy-mm-dd") : "—"
             table_data[i, 5] = format_money(row.cost)
             table_data[i, 6] = row.status == STATUS_NO_CONFIG ? "—" : format_money(row.remaining)
