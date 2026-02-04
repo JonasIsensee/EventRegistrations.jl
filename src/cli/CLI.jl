@@ -12,10 +12,43 @@ using JSON
 using PrettyTables: pretty_table
 using REPL
 using REPL.LineEdit
-using ReplMaker
 
 with_cli_logger(f::Function; io::IO=stdout) = with_logger(ConsoleLogger(io)) do
     f()
+end
+
+"""
+Return a short one-line message for an exception, suitable for CLI/REPL output.
+Avoids stacktraces; use for user-facing error reporting.
+"""
+function cli_error_message(e)
+    if e isa InterruptException
+        return ""  # caller handles separately (exit 130)
+    end
+    msg = something(
+        try
+            sprint(showerror, e; context=:compact => true)
+        catch
+            string(e)
+        end,
+        string(e),
+    )
+    # First line only, strip trailing newline; cap length for readability
+    line = split(msg, '\n'; limit=2)[1]
+    line = strip(line)
+    return isempty(line) ? "command failed" : line
+end
+
+"""Print a short error to stderr (no stacktrace). Prefix with 'eventreg:' for CLI consistency."""
+function cli_print_error(e; prefix::String="eventreg: ")
+    msg = cli_error_message(e)
+    isempty(msg) && return
+    println(stderr, prefix, msg)
+end
+
+"""Print a one-line validation/usage error to stderr (no stacktrace)."""
+function cli_err(msg::AbstractString)
+    println(stderr, "eventreg: ", msg)
 end
 
 parse_subcommand_options(::Bool) = Dict{Symbol, Any}()
@@ -291,12 +324,12 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
         elseif command == "generate-field-config"
             return cmd_generate_field_config(db; event_id=get(options, :event_id, nothing), output=get(options, :output, nothing), events_dir=events_dir)
         elseif command == "create-event-config"
-            isempty(positional) && (@error "event-id required"; return 1)
+            isempty(positional) && (cli_err("event-id required"); return 1)
             return cmd_create_event_config(db, positional[1]; events_dir=events_dir)
         elseif command == "sync-config"
             return cmd_sync_config(db; events_dir=events_dir)
         elseif command == "recalculate-costs"
-            isempty(positional) && (@error "event-id required"; return 1)
+            isempty(positional) && (cli_err("event-id required"); return 1)
             return cmd_recalculate_costs(db, positional[1]; events_dir=events_dir, strict=get(options, :strict, false), dry_run=get(options, :dry_run, false))
         elseif command == "list-registrations"
             event_id = length(positional) >= 1 ? positional[1] : nothing
@@ -305,12 +338,12 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
             event_id = get(options, :event_id, length(positional) >= 1 ? positional[1] : nothing)
             return cmd_edit_registrations(db; event_id=event_id, name=get(options, :name, nothing), since=get(options, :since, nothing), spawn_editor=true)
         elseif command == "event-overview"
-            isempty(positional) && (@error "event-id required"; return 1)
+            isempty(positional) && (cli_err("event-id required"); return 1)
             return cmd_event_overview(db, positional[1])
         elseif command == "status"
             return cmd_status(db; db_path=db_path)
         elseif command == "import-bank-csv"
-            isempty(positional) && (@error "csv-file required"; return 1)
+            isempty(positional) && (cli_err("csv-file required"); return 1)
             return cmd_import_bank_csv(db, positional[1]; delimiter=get(options, :delimiter, ";"), decimal_comma=get(options, :decimal_comma, true))
         elseif command == "match-transfers"
             return cmd_match_transfers(db; event_id=get(options, :event_id, nothing))
@@ -319,19 +352,19 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
         elseif command == "review-near-misses"
             return cmd_review_near_misses(db; event_id=get(options, :event_id, nothing), nonstop=get(options, :nonstop, false))
         elseif command == "manual-match"
-            length(positional) < 2 && (@error "transfer-id and reference required"; return 1)
+            length(positional) < 2 && (cli_err("transfer-id and reference required"); return 1)
             return cmd_manual_match(db, parse(Int, positional[1]), positional[2])
         elseif command == "grant-subsidy"
-            length(positional) < 2 && (@error "identifier and amount required"; return 1)
+            length(positional) < 2 && (cli_err("identifier and amount required"); return 1)
             return cmd_grant_subsidy(db, positional[1], parse(Float64, positional[2]); reason=get(options, :reason, ""), granted_by=get(options, :granted_by, "cli"))
         elseif command == "delete-registration"
-            isempty(positional) && (@error "identifier (id or reference) required"; return 1)
+            isempty(positional) && (cli_err("identifier (id or reference) required"); return 1)
             return cmd_delete_registration(db, positional[1]; event_id=get(options, :event_id, nothing), yes=get(options, :yes, false))
         elseif command == "soft-delete-registration"
-            isempty(positional) && (@error "reference number required"; return 1)
+            isempty(positional) && (cli_err("reference number required"); return 1)
             return cmd_soft_delete_registration(db, positional[1])
         elseif command == "restore-registration"
-            isempty(positional) && (@error "reference number required"; return 1)
+            isempty(positional) && (cli_err("reference number required"); return 1)
             return cmd_restore_registration(db, positional[1])
         elseif command == "list-deleted-registrations"
             event_id = length(positional) >= 1 ? positional[1] : nothing
@@ -351,7 +384,7 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
         elseif command == "list-pending-emails"
             return cmd_list_pending_emails(db; event_id=get(options, :event_id, nothing), email_type=get(options, :email_type, nothing), verbose=get(options, :verbose, false))
         elseif command == "mark-email"
-            isempty(positional) && (@error "status required"; return 1)
+            isempty(positional) && (cli_err("status required"); return 1)
             status = positional[1]
             id_val = length(positional) >= 2 ? parse(Int, positional[2]) : get(options, :id, nothing)
             id_val isa AbstractString && (id_val = parse(Int, id_val))
@@ -366,7 +399,7 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
             # Playground commands are subcommands
             subcommand = length(positional) >= 1 ? positional[1] : nothing
             if subcommand === nothing
-                @error "Playground subcommand required. Available: init, receive-submissions"
+                cli_err("Playground subcommand required. Available: init, receive-submissions")
                 return 1
             elseif subcommand == "init"
                 playground_name = length(positional) >= 2 ? positional[2] : nothing
@@ -375,18 +408,19 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
                 count = length(positional) >= 2 ? parse(Int, positional[2]) : 3
                 return cmd_playground_receive_submissions(; count=count, event_id=get(options, :event_id, nothing), emails_dir="emails")
             else
-                @error "Unknown playground subcommand" subcommand=subcommand
-                @info "Available playground commands: init, receive-submissions"
+                cli_err("Unknown playground subcommand '$subcommand'. Available: init, receive-submissions")
                 return 1
             end
         else
-            @error "Unknown command" command=command
-            @info "Run 'eventreg --help' or type help for usage."
+            cli_err("Unknown command '$command'. Run 'eventreg --help' or type help for usage.")
             return 1
         end
     catch e
-        @error "Unhandled error" exception=(e, catch_backtrace())
-        return isa(e, InterruptException) ? 130 : 1
+        if e isa InterruptException
+            return 130
+        end
+        cli_print_error(e)
+        return 1
     end
 end
 
@@ -394,63 +428,69 @@ end
 Main CLI entry: open DB once (except for init/download-emails), then dispatch.
 """
 function run_cli(args::Vector{String})
-    return with_cli_logger() do
-        if isempty(args)
-            return run_repl()
-        end
-        if args[1] in ["--help", "-h", "help"]
-            @info HELP_TEXT
-            return 0
-        end
-        command, positional, options = parse_cli_args(args)
-        db_path = get(options, :db_path, "events.duckdb")
-        events_dir = get(options, :events_dir, "events")
-        credentials_path = get(options, :credentials_path, "credentials.toml")
-        # Commands that don't need a DB connection
-        if command == "init"
-            return cmd_init(; db_path=db_path)
-        end
-        if command == "download-emails"
-            return cmd_download_emails(; options...)
-        end
-        # Configuration commands don't need a DB connection
+    try
+        return with_cli_logger() do
+            if isempty(args)
+                return run_repl()
+            end
+            if args[1] in ["--help", "-h", "help"]
+                @info HELP_TEXT
+                return 0
+            end
+            command, positional, options = parse_cli_args(args)
+            db_path = get(options, :db_path, "events.duckdb")
+            events_dir = get(options, :events_dir, "events")
+            credentials_path = get(options, :credentials_path, "credentials.toml")
+            # Commands that don't need a DB connection
+            if command == "init"
+                return cmd_init(; db_path=db_path)
+            end
+            if command == "download-emails"
+                return cmd_download_emails(; options...)
+            end
+            # Configuration commands don't need a DB connection
         if command == "set-email-redirect"
-            isempty(positional) && (@error "email address required"; return 1)
+            isempty(positional) && (cli_err("email address required"); return 1)
             return cmd_set_email_redirect(positional[1]; credentials_path)
-        end
-        if command == "get-email-redirect"
-            return cmd_get_email_redirect(; credentials_path)
-        end
-        if command == "clear-email-redirect"
-            return cmd_clear_email_redirect(; credentials_path)
-        end
-        if command == "playground"
-            # playground init doesn't need a DB connection (it creates one)
-            # but receive-submissions needs to check if we're in a playground
-            subcommand = length(positional) >= 1 ? positional[1] : nothing
-            if subcommand == "init"
-                playground_name = length(positional) >= 2 ? positional[2] : nothing
-                return cmd_playground_init(; playground_name=playground_name, db_path=db_path, events_dir=events_dir, force=get(options, :force, false))
             end
-            # For other playground subcommands, fall through to regular DB handling
-        end
-        # Sync can create the DB; all other commands require it to exist
-        if command == "sync"
-            db = !isfile(db_path) ? init_project(db_path) : init_database(db_path)
-        else
-            if !isfile(db_path)
-                error("Database not found: $db_path\n\n" *
-                      "Run one of the following to create it:\n" *
-                      "  eventreg init        # Initialize new project\n" *
-                      "  eventreg sync        # Full sync (also creates DB if missing)")
+            if command == "get-email-redirect"
+                return cmd_get_email_redirect(; credentials_path)
             end
-            db = init_database(db_path)
+            if command == "clear-email-redirect"
+                return cmd_clear_email_redirect(; credentials_path)
+            end
+            if command == "playground"
+                # playground init doesn't need a DB connection (it creates one)
+                # but receive-submissions needs to check if we're in a playground
+                subcommand = length(positional) >= 1 ? positional[1] : nothing
+                if subcommand == "init"
+                    playground_name = length(positional) >= 2 ? positional[2] : nothing
+                    return cmd_playground_init(; playground_name=playground_name, db_path=db_path, events_dir=events_dir, force=get(options, :force, false))
+                end
+                # For other playground subcommands, fall through to regular DB handling
+            end
+            # Sync can create the DB; all other commands require it to exist
+            if command == "sync"
+                db = !isfile(db_path) ? init_project(db_path) : init_database(db_path)
+            else
+                if !isfile(db_path)
+                    cli_print_error(ErrorException("Database not found: $db_path. Run 'eventreg init' or 'eventreg sync' first."))
+                    return 1
+                end
+                db = init_database(db_path)
+            end
+            try
+                return dispatch_to_command(db, command, positional, options; db_path=db_path, events_dir=events_dir, credentials_path=credentials_path)
+            finally
+                DBInterface.close!(db)
+            end
         end
-        try
-            return dispatch_to_command(db, command, positional, options; db_path=db_path, events_dir=events_dir, credentials_path=credentials_path)
-        finally
-            DBInterface.close!(db)
+    catch e
+        if e isa InterruptException
+            return 130
         end
+        cli_print_error(e)
+        return 1
     end
 end
 
@@ -510,14 +550,17 @@ EventRegistrations REPL — database connected. Same commands as CLI (without th
   list-registrations, grant-subsidy <ref> <amount>, exit, etc. Type help for full usage.
 """
 
-# Available commands for completion
+# Available commands for completion (must match dispatch_to_command)
 const REPL_COMMANDS = [
-    "init", "sync", "process-emails", "generate-field-config", "create-event-config",
-    "sync-config", "recalculate-costs", "list-registrations", "edit-registrations",
-    "event-overview", "status", "import-bank-csv", "match-transfers", "list-unmatched",
-    "review-near-misses", "manual-match", "grant-subsidy", "delete-registration",
+    "init", "sync", "process-emails", "download-emails", "generate-field-config",
+    "create-event-config", "sync-config", "recalculate-costs", "list-registrations",
+    "edit-registrations", "event-overview", "status", "import-bank-csv", "match-transfers",
+    "list-unmatched", "review-near-misses", "manual-match", "grant-subsidy",
+    "delete-registration", "restore-registration", "list-deleted-registrations",
     "export-payment-status", "export-registrations", "export-combined",
-    "list-pending-emails", "mark-email", "send-emails", "help", "exit", "quit"
+    "list-pending-emails", "mark-email", "send-emails", "validate-config",
+    "set-email-redirect", "get-email-redirect", "clear-email-redirect",
+    "playground", "help", "exit", "quit"
 ]
 
 # Common options for completion
@@ -596,8 +639,8 @@ function eventreg_complete(s::LineEdit.PromptState)
 end
 
 """
-Check if input is complete (for multi-line support).
-Currently always returns true for single-line commands.
+Check if input is complete (for multi-line support). Currently always true.
+(Previously used by ReplMaker; kept for potential future use.)
 """
 function eventreg_is_complete(s::LineEdit.MIState)
     input = String(take!(copy(LineEdit.buffer(s))))
@@ -607,130 +650,122 @@ function eventreg_is_complete(s::LineEdit.MIState)
 end
 
 """
-Parser function for ReplMaker - just returns the input as-is since we parse it ourselves.
+Parser function - returns input as-is. (Previously used by ReplMaker; kept for compatibility.)
 """
 function eventreg_parser(input::String)
     return input
 end
 
 """
-Run the interactive REPL with enhanced features using ReplMaker:
-- TAB completion for commands and options
+Run the interactive REPL using LineEdit (no ReplMaker).
+- TAB completion for commands and options (EventRegCompletionProvider)
 - History navigation with arrow keys
-- Arrow key navigation for cursor movement
 - Ctrl-D to exit
 
-Resolves db_path (default events.duckdb in cwd), ensures the database exists,
-opens it once, then runs a read loop dispatching each line via dispatch_to_command.
-Type exit or quit, or Ctrl-D to quit. After 'init', the connection is closed
-and re-opened to use the new project.
+Uses the same pattern as run_repl_linedit in repl.jl: one Prompt, one run_interface,
+on_done parses and dispatches with a single DB connection. ReplMaker was removed
+because it is designed for "parse then eval as Julia"; we only parse CLI lines and
+dispatch to our own commands, so plain LineEdit is the right fit.
 """
 function run_repl(; db_path::String="events.duckdb")
     db_path = get(ENV, "EVENTREG_DB_PATH", db_path)
     if !isfile(db_path)
-        @error "Database not found: $db_path" hint="Run 'eventreg init' or 'eventreg sync' first (outside REPL)."
+        cli_err("Database not found: $db_path. Run 'eventreg init' or 'eventreg sync' first (outside REPL).")
         return 1
     end
-    db = init_database(db_path)
+    db_ref = Ref(init_database(db_path))
     try
         println(REPL_BANNER)
 
-        # Create a terminal and REPL for ReplMaker
         term = REPL.Terminals.TTYTerminal(get(ENV, "TERM", "dumb"), stdin, stdout, stderr)
-        repl = REPL.LineEditREPL(term, false)
-        if !isdefined(repl, :interface)
-            repl.interface = REPL.setup_interface(repl)
-        end
+        hascolor = REPL.Terminals.hascolor(term)
+        prefix = hascolor ? Base.text_colors[:blue] : ""
+        suffix = hascolor ? Base.text_colors[:normal] : ""
 
-        # Set up result storage for the REPL loop
-        result_ref = Ref{Union{String, Nothing}}(nothing)
-        should_exit = Ref{Bool}(false)
-
-        # Create a custom show function that captures the input
-        function eventreg_respond(input, repl, prompt)
-            if input === nothing || isempty(strip(input))
-                should_exit[] = true
-                return nothing
-            end
-            result_ref[] = input
-            return nothing
-        end
-
-        # Initialize ReplMaker with our parser and completion
-        lang_mode = initrepl(
-            eventreg_parser,
-            prompt_text = REPL_PROMPT,
-            prompt_color = :blue,
-            start_key = '>',  # This won't be used since we're in standalone mode
-            repl = repl,
-            mode_name = :eventreg,
-            valid_input_checker = eventreg_is_complete,
-            completion_provider = eventreg_complete,
-            sticky = false,
-            startup_text = false  # Don't print startup message
+        panel = LineEdit.Prompt(
+            REPL_PROMPT;
+            prompt_prefix = prefix,
+            prompt_suffix = suffix,
+            complete = EventRegCompletionProvider(),
+            on_enter = s -> true,
         )
 
-        # Override the on_done to capture input
-        lang_mode.on_done = REPL.respond(eventreg_respond, repl, lang_mode)
+        # History: same setup as run_repl_linedit so arrow-up/down work
+        hp = REPL.REPLHistoryProvider(Dict{Symbol, LineEdit.Prompt}(:eventreg => panel))
+        REPL.history_reset_state(hp)
+        panel.hist = hp
 
-        # Main REPL loop - manually enter the mode and process input
-        while !should_exit[]
+        search_prompt, skeymap = LineEdit.setup_prefix_keymap(hp, panel)
+        panel.keymap_dict = LineEdit.keymap(Dict{Any, Any}[
+            skeymap,
+            LineEdit.history_keymap,
+            LineEdit.default_keymap,
+            LineEdit.escape_defaults,
+        ])
+
+        exit_requested = Ref(false)
+
+        panel.on_done = (s, buf, ok) -> begin
+            if !ok
+                LineEdit.transition(s, :abort)
+                exit_requested[] = true
+                return
+            end
+            line = strip(String(take!(buf)))
+            LineEdit.reset_state(s)
+
+            isempty(line) && return
+
+            if lowercase(line) in ("exit", "quit", "q")
+                exit_requested[] = true
+                LineEdit.transition(s, :abort)
+                return
+            end
+
+            if line in ("help", "--help", "-h")
+                println(HELP_TEXT)
+                flush(stdout)
+                return
+            end
+
+            args = parse_repl_line(line)
+            isempty(args) && return
+            command, positional, options = parse_cli_args(args)
+            if command in ["--help", "-h", "help"]
+                println(HELP_TEXT)
+                flush(stdout)
+                return
+            end
+
             try
-                # Reset the result
-                result_ref[] = nothing
-
-                # Create a state and transition to our prompt
-                state = LineEdit.init_state(term)
-                LineEdit.transition(state, lang_mode)
-
-                # Run the interface - this handles all input including TAB, arrows, etc.
-                # The on_done callback will be triggered when Enter is pressed
-                LineEdit.run_interface(state)
-
-                line = result_ref[]
-
-                if line === nothing || should_exit[]
-                    break
+                with_cli_logger() do
+                    dispatch_to_command(db_ref[], command, positional, options; db_path=db_path, events_dir="events", credentials_path="credentials.toml", from_repl=true)
                 end
-
-                line = strip(line)
-                if isempty(line)
-                    continue
-                end
-
-                if line in ("exit", "quit")
-                    break
-                end
-
-                args = parse_repl_line(line)
-                isempty(args) && continue
-                command, positional, options = parse_cli_args(args)
-                if command in ["--help", "-h", "help"]
-                    @info HELP_TEXT
-                    continue
-                end
-                code = with_cli_logger() do
-                    dispatch_to_command(db, command, positional, options; db_path=db_path, events_dir="events", credentials_path="credentials.toml", from_repl=true)
-                end
+                flush(stdout)
+                flush(stderr)
                 if command == "init"
-                    DBInterface.close!(db)
-                    db = init_database(db_path)
+                    DBInterface.close!(db_ref[])
+                    db_ref[] = init_database(db_path)
                 end
             catch e
-                # Handle Ctrl-C or other interrupts
-                if isa(e, InterruptException)
-                    println()
-                    continue
-                elseif isa(e, EOFError)
-                    # Ctrl-D pressed
-                    break
-                else
+                if e isa InterruptException
                     rethrow(e)
                 end
+                cli_print_error(e)
+                flush(stderr)
             end
         end
+
+        try
+            LineEdit.run_interface(
+                term,
+                LineEdit.ModalInterface(LineEdit.TextInterface[panel, search_prompt])
+            )
+        catch e
+            e isa EOFError || rethrow()
+        end
     finally
-        DBInterface.close!(db)
+        DBInterface.close!(db_ref[])
     end
     return 0
 end
