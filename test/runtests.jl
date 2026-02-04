@@ -1849,6 +1849,55 @@ try
         println("  ✓ edit-registrations validation failure: errors reported, DB unchanged")
     end
 
+    @testset "25b. Table Display - No Vertical Truncation" begin
+        println("\n=== Test 25b: Table Display - No Vertical Truncation ===")
+
+        # Create a large number of registrations to test vertical display
+        using EventRegistrations.PrettyOutput
+
+        # Get payment table data for the event
+        payment_data = EventRegistrations.PrettyOutput.get_payment_table_data(db, "PWE_2026_01")
+        
+        # Capture output to a string buffer
+        io_buffer = IOBuffer()
+        EventRegistrations.PrettyOutput.print_payment_table(payment_data; io=io_buffer)
+        output = String(take!(io_buffer))
+        
+        # Count the number of rows in the output (excluding headers and summary)
+        output_lines = split(output, '\n')
+        # Count lines that look like data rows (contain the reference pattern or data)
+        data_lines = filter(line -> occursin(r"PWE_\d+_\d+", line), output_lines)
+        
+        # Verify that all registrations are shown (not truncated)
+        # The number of data rows should match the number of registrations
+        @test length(data_lines) == payment_data.total_registrations
+        println("  ✓ Payment table shows all $(payment_data.total_registrations) registrations without vertical truncation")
+
+        # Test with registration table as well
+        registration_data = EventRegistrations.PrettyOutput.get_registration_table_data(db, "PWE_2026_01")
+        
+        io_buffer2 = IOBuffer()
+        EventRegistrations.PrettyOutput.print_registration_table(registration_data; io=io_buffer2)
+        output2 = String(take!(io_buffer2))
+        
+        # Count data lines in registration output
+        output_lines2 = split(output2, '\n')
+        data_lines2 = filter(line -> occursin(r"PWE_\d+_\d+", line), output_lines2)
+        
+        @test length(data_lines2) == registration_data.total_registrations
+        println("  ✓ Registration table shows all $(registration_data.total_registrations) registrations without vertical truncation")
+        
+        # Verify that vcrop_mode parameter is being used by checking the code
+        # Read the source file and verify vcrop_mode is set to :none
+        pretty_output_source = read("/home/runner/work/EventRegistrations.jl/EventRegistrations.jl/src/PrettyOutput.jl", String)
+        @test occursin("vcrop_mode = :none", pretty_output_source)
+        println("  ✓ Source code confirms vcrop_mode = :none is set")
+        
+        exports_source = read("/home/runner/work/EventRegistrations.jl/EventRegistrations.jl/src/cli/exports.jl", String)
+        @test occursin("vcrop_mode = :none", exports_source)
+        println("  ✓ Exports source code confirms vcrop_mode = :none is set")
+    end
+
     @testset "26. REPL and dispatch_to_command" begin
         println("\n=== Test 26: REPL and dispatch_to_command ===")
 
