@@ -20,13 +20,48 @@ using EventRegistrations
 using DBInterface
 
 function main()
-    # Use testingfolder (has events.duckdb + registrations) or first argument
-    data_dir = length(ARGS) >= 1 ? ARGS[1] : joinpath(@__DIR__, "..", "testingfolder")
-    db_path = joinpath(data_dir, "events.duckdb")
+    # Use test/assets (copy to temp first) or first argument
+    if length(ARGS) >= 1
+        data_dir = ARGS[1]
+        db_path = joinpath(data_dir, "events.duckdb")
+    else
+        # Create a temporary directory with test assets
+        assets_dir = joinpath(@__DIR__, "..", "test", "assets")
+        if !isdir(assets_dir)
+            println("Assets directory not found: $assets_dir")
+            println("Pass a directory that has events.duckdb as an argument")
+            return 1
+        end
+        
+        data_dir = mktempdir()
+        println("Created temporary data directory: $data_dir")
+        
+        # Copy test assets to temp directory
+        cp(joinpath(assets_dir, "events"), joinpath(data_dir, "events"), force=true)
+        cp(joinpath(assets_dir, "emails"), joinpath(data_dir, "emails"), force=true)
+        cp(joinpath(assets_dir, "bank_transfers"), joinpath(data_dir, "bank_transfers"), force=true)
+        cp(joinpath(assets_dir, "templates"), joinpath(data_dir, "templates"), force=true)
+        if isfile(joinpath(assets_dir, "credentials.toml"))
+            cp(joinpath(assets_dir, "credentials.toml"), joinpath(data_dir, "credentials.toml"), force=true)
+        end
+        
+        db_path = joinpath(data_dir, "events.duckdb")
+        
+        # Initialize the database for this example
+        db = EventRegistrations.init_database(db_path)
+        try
+            # Setup event configuration
+            EventRegistrations.sync_event_configs_to_db!(db, joinpath(data_dir, "events"))
+            # Process some emails to have data
+            EventRegistrations.process_email_folder!(db, joinpath(data_dir, "emails"))
+        finally
+            DBInterface.close!(db)
+        end
+    end
 
     if !isfile(db_path)
         println("Database not found: $db_path")
-        println("Run from EventRegistrations.jl with testingfolder, or pass a directory that has events.duckdb")
+        println("Pass a directory that has events.duckdb as an argument")
         return 1
     end
 

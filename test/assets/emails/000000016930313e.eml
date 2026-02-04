@@ -1,0 +1,63 @@
+Return-Path: <jonas.isensee@stud.uni-goettingen.de>
+X-Spam-Checker-Version: SpamAssassin 3.4.2 (2018-09-13) on
+	alfa3063.alfahosting-server.de
+X-Spam-Level: 
+X-Spam-Status: No, score=-3.3 required=5.0 tests=BAYES_00,BODY_SINGLE_WORD,
+	DKIM_SIGNED,DKIM_VALID,DKIM_VALID_AU,RCVD_IN_DNSWL_BLOCKED,
+	RCVD_IN_RP_CERTIFIED,RCVD_IN_RP_RNBL,RCVD_IN_RP_SAFE,SPF_PASS,
+	URIBL_BLOCKED autolearn=ham autolearn_force=no version=3.4.2
+X-Spam-DCC: : 
+X-Original-To: pwe@unimusik-goettingen.de
+Delivered-To: confixx-du-13658@alfa3063.alfahosting-server.de
+Received-SPF: Pass (mailfrom) identity=mailfrom; client-ip=134.76.10.21; helo=mx-2023-1.gwdg.de; envelope-from=jonas.isensee@stud.uni-goettingen.de; receiver=<UNKNOWN> 
+Received: from mx-2023-1.gwdg.de (mx-2023-1.gwdg.de [134.76.10.21])
+	by alfa3063.alfahosting-server.de (Postfix) with ESMTPS id 69A6156E9211
+	for <pwe@unimusik-goettingen.de>; Wed,  3 Dec 2025 13:48:05 +0100 (CET)
+DKIM-Signature: v=1; a=rsa-sha256; q=dns/txt; c=relaxed/relaxed;
+	d=stud.uni-goettingen.de; s=2023-rsa; h=Content-Transfer-Encoding:
+	Content-Type:Subject:From:To:MIME-Version:Date:Message-ID:Sender:Reply-To:Cc:
+	Content-ID:Content-Description:Resent-Date:Resent-From:Resent-Sender:
+	Resent-To:Resent-Cc:Resent-Message-ID:In-Reply-To:References:List-Id:
+	List-Help:List-Unsubscribe:List-Subscribe:List-Post:List-Owner:List-Archive;
+	bh=xzvEGz6lGJyYSyDkxaHWhhknrB5kFVv4qX58H26BoRI=; b=H37LtHczbNOhYfxWCqsdyk4Kpc
+	+unUpt9Q1r1adxX1uC4uM+OMxsCduocYSa+VeAaNQc3SUUt/Px7tNL8pDtaDftaHP0UdXxzaxqtQc
+	jO2DA3uovXrr71Yq+6E/7+6/Q9kIDh8gW82qdwg4482bCx+3Ep1MncZ6+6YxOgPkcgfaCb7KjrfXH
+	fw6KGuqF3xDC8rzuqbzCZ5dSXRxkp1cqxWGdBikL/CV6nKc9m56lDC+69kcduzoUg3tdBbLIuivDM
+	I+Hsh7PKxGewuVBRv1szbENV+15CaehxceaeIoQI/p/vlATJBhRxB5RHzAXfPITcGknYRL5nqHLfl
+	yN1cFmYA==;
+Received: from xmailer.gwdg.de ([134.76.10.29]:41324)
+	by mailer.gwdg.de with esmtp (GWDG Mailer)
+	(envelope-from <jonas.isensee@stud.uni-goettingen.de>)
+	id 1vQmH6-008zqG-1u
+	for pwe@unimusik-goettingen.de;
+	Wed, 03 Dec 2025 13:48:05 +0100
+Received: from mbx19-fmz-07.um.gwdg.de ([10.108.142.66] helo=email.gwdg.de)
+	by mailer.gwdg.de with esmtps (TLS1.2:ECDHE-RSA-AES128-GCM-SHA256:128)
+	(GWDG Mailer)
+	(envelope-from <jonas.isensee@stud.uni-goettingen.de>)
+	id 1vQmH7-000PDu-08
+	for pwe@unimusik-goettingen.de;
+	Wed, 03 Dec 2025 13:48:05 +0100
+Received: from [10.18.177.150] (10.250.9.200) by MBX19-FMZ-07.um.gwdg.de
+ (10.108.142.66) with Microsoft SMTP Server (version=TLS1_2,
+ cipher=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256) id 15.2.2562.29; Wed, 3 Dec
+ 2025 13:48:04 +0100
+Message-ID: <38145bef-cf93-44d3-92bb-514a968f41c8@stud.uni-goettingen.de>
+Date: Wed, 3 Dec 2025 13:48:04 +0100
+MIME-Version: 1.0
+User-Agent: Mozilla Thunderbird
+Content-Language: en-US
+To: <pwe@unimusik-goettingen.de>
+From: Jonas Isensee <jonas.isensee@stud.uni-goettingen.de>
+Subject: test email
+Content-Type: text/plain; charset="UTF-8"; format=flowed
+Content-Transfer-Encoding: 7bit
+X-Originating-IP: [10.250.9.200]
+X-ClientProxiedBy: MBX19-FMZ-05.um.gwdg.de (10.108.142.64) To
+ MBX19-FMZ-07.um.gwdg.de (10.108.142.66)
+X-Virus-Scanned: (clean) by clamav
+X-Alfa-Virus: check-delete
+X-Alfa-Spam: check
+
+blahh
+

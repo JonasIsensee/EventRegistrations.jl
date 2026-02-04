@@ -1,0 +1,143 @@
+Return-Path: <no-reply@unimusik.clubdesk.com>
+X-Spam-Checker-Version: SpamAssassin 3.4.2 (2018-09-13) on
+	alfa3063.alfahosting-server.de
+X-Spam-Level: 
+X-Spam-Status: No, score=-4.3 required=5.0 tests=AWL,BAYES_00,DKIM_SIGNED,
+	DKIM_VALID,DKIM_VALID_EF,HTML_MESSAGE,RCVD_IN_DNSWL_BLOCKED,
+	RCVD_IN_RP_CERTIFIED,RCVD_IN_RP_RNBL,RCVD_IN_RP_SAFE,SPF_HELO_PASS,
+	SPF_PASS autolearn=ham autolearn_force=no version=3.4.2
+X-Spam-DCC: : 
+X-Original-To: no-reply@unimusik-goettingen.de
+Delivered-To: web261p35@alfa3063.alfahosting-server.de
+Received-SPF: Pass (mailfrom) identity=mailfrom; client-ip=5.148.169.160; helo=gate1.clubdesk.com; envelope-from=no-reply@unimusik.clubdesk.com; receiver=<UNKNOWN> 
+Received: from gate1.clubdesk.com (gate1.clubdesk.com [5.148.169.160])
+	by alfa3063.alfahosting-server.de (Postfix) with ESMTPS id 45F1A56E1E01
+	for <no-reply@unimusik-goettingen.de>; Fri, 12 Dec 2025 22:44:46 +0100 (CET)
+DKIM-Signature: a=rsa-sha256; b=hnnWSJppbop6W4qA627JnFsu0rf5G8xPfp8OOMDJ5ekQoJbQBmXMj1RMMjb9zj6vTnLAHr6kogMB2D46LWldr+OTLkufsS6osy3E0IwBpV8kvrNUxcQIII4drJhTwQqdswUppgyH8Z3ZlHb/bOJWBuyyp4XWXuKro30rJaGHt7h4LWIdfsl3KfZpaZ8lfRP2ar7F5+CBg3Wl2cinwydcCoL2C8hfSnhlB+nmCDjB35HJxZ9AH9Wu6ip5oOl5KcIoq/ksqXd9AFBG/ZF86JAmSb2n+W9SLvBhtL/cwT3pOruLvxeVNeWBEq2AVW0W3p0DPE9yJrPmz2YaZuLRlWohGg==; s=cd0; c=relaxed/relaxed; d=clubdesk.com; v=1; bh=zW5cW+YjxDRlGfYpxSLp1DIwxeGW4aqn+/dBnJQVxhk=; h=from:to:subject:date:message-id:mime-version:content-language;
+Received: from prod-www-1.prod_default (EHLO 0.0.0.0) ([10.20.0.5])
+          by 1e43cb5efc6e (JAMES SMTP Server ) with ESMTP ID 1131899686
+          for <no-reply@unimusik-goettingen.de>;
+          Fri, 12 Dec 2025 22:44:42 +0100 (CET)
+Date: Fri, 12 Dec 2025 22:44:42 +0100 (CET)
+From: no-reply@unimusik.clubdesk.com
+To: no-reply@unimusik-goettingen.de
+Message-ID: <2044367584.217104.1765575882170@4b2c236d719a>
+Subject: Anmeldung: PWE_2026_01
+MIME-Version: 1.0
+Content-Type: multipart/alternative; 
+	boundary="----=_Part_217102_461019007.1765575882161"
+X-ClubDesk-Cluster-ID: 1765575882161_591568
+X-Alfa-Virus: check-delete
+X-Alfa-Spam: check
+
+------=_Part_217102_461019007.1765575882161
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Vorname:=09Jonas:
+Nachname:=09Isensee:
+E-Mail:=09unimusik@jonasisensee.de:
+Stimmgruppe:=09Bass:
+=C3=9Cbernachtung Freitag (46=E2=82=AC inkl. Vollpension):=09Ja:
+=C3=9Cbernachtung Samstag (46=E2=82=AC ink. Vollpension):=09Ja:
+Unterbringung:=09Mehrbettzimmer:
+Belegungswunsch:=09:
+Essen:=09Vegetarisch:
+Lebensmittelunvertr=C3=A4glichkeiten / Allergien:=09:
+Abendessen Freitag (enhalten in =C3=9Cbernachtung Fr, sonst +10=E2=82=AC):=
+=09Ja:
+Fr=C3=BChst=C3=BCck Samstag (enhalten in =C3=9Cbernachtung Fr, sonst +8=E2=
+=82=AC):=09Ja:
+Mittagessen Samstag (enhalten in =C3=9Cbernachtung Fr, sonst +10=E2=82=AC):=
+=09Ja:
+Abendessen Samstag (enhalten in =C3=9Cbernachtung Sa, sonst +10=E2=82=AC):=
+=09Ja:
+Fr=C3=BChst=C3=BCck Sonntag (enhalten in =C3=9Cbernachtung Sa, sonst +8=E2=
+=82=AC):=09Ja:
+Mittag Sonntag (enhalten in =C3=9Cbernachtung Sa, sonst +10=E2=82=AC):=09Ja=
+:
+Sonstiges: Hier kannst du zum Beispiel Mitfahrgelegenheiten anbieten:=09Das=
+ ist eine Testanmeldung. Ich m=C3=B6chte nicht wirklich mitkommen.:
+
+
+------=_Part_217102_461019007.1765575882161
+Content-Type: multipart/related; 
+	boundary="----=_Part_217103_520614790.1765575882161"
+
+------=_Part_217103_520614790.1765575882161
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<html>
+<head>
+    <meta http-equiv=3D"content-type" content=3D"text/html; charset=3DUTF-8=
+">
+    <style type=3D"text/css" media=3D"screen">
+        table {
+            font-family: Arial, sans-serif;
+            font-size: 10pt;
+        }
+
+        td, th {
+            border: 1px solid #BBBBBB;
+            padding: 5px 15px 5px 5px;
+            vertical-align: top;
+        }
+
+        .caption {
+            text-align: center;
+            border: none;
+            color: #BBBBBB;
+            font-size: 8pt;
+        }
+
+        .label {
+            font-weight: bold;
+        }
+
+        th {
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+
+<table style=3D"border-collapse:collapse;">
+    <tr>
+        <th colspan=3D"2">Anmeldung: PWE_2026_01</th>
+    </tr>
+    <tr><td class=3D"label">Vorname</td><td>Jonas</td></tr><tr><td class=3D=
+"label">Nachname</td><td>Isensee</td></tr><tr><td class=3D"label">E-Mail</t=
+d><td>unimusik@jonasisensee.de</td></tr><tr><td class=3D"label">Stimmgruppe=
+</td><td>Bass</td></tr><tr><td class=3D"label">&Uuml;bernachtung Freitag (4=
+6&euro; inkl. Vollpension)</td><td>Ja</td></tr><tr><td class=3D"label">&Uum=
+l;bernachtung Samstag (46&euro; ink. Vollpension)</td><td>Ja</td></tr><tr><=
+td class=3D"label">Unterbringung</td><td>Mehrbettzimmer</td></tr><tr><td cl=
+ass=3D"label">Belegungswunsch</td><td></td></tr><tr><td class=3D"label">Ess=
+en</td><td>Vegetarisch</td></tr><tr><td class=3D"label">Lebensmittelunvertr=
+&auml;glichkeiten / Allergien</td><td></td></tr><tr><td class=3D"label">Abe=
+ndessen Freitag (enhalten in &Uuml;bernachtung Fr, sonst +10&euro;)</td><td=
+>Ja</td></tr><tr><td class=3D"label">Fr&uuml;hst&uuml;ck Samstag (enhalten =
+in &Uuml;bernachtung Fr, sonst +8&euro;)</td><td>Ja</td></tr><tr><td class=
+=3D"label">Mittagessen Samstag (enhalten in &Uuml;bernachtung Fr, sonst +10=
+&euro;)</td><td>Ja</td></tr><tr><td class=3D"label">Abendessen Samstag (enh=
+alten in &Uuml;bernachtung Sa, sonst +10&euro;)</td><td>Ja</td></tr><tr><td=
+ class=3D"label">Fr&uuml;hst&uuml;ck Sonntag (enhalten in &Uuml;bernachtung=
+ Sa, sonst +8&euro;)</td><td>Ja</td></tr><tr><td class=3D"label">Mittag Son=
+ntag (enhalten in &Uuml;bernachtung Sa, sonst +10&euro;)</td><td>Ja</td></t=
+r><tr><td class=3D"label">Sonstiges: Hier kannst du zum Beispiel Mitfahrgel=
+egenheiten anbieten</td><td>Das ist eine Testanmeldung. Ich m&ouml;chte nic=
+ht wirklich mitkommen.</td></tr>
+    <tr>
+        <td class=3D"caption" colspan=3D"2">unimusik.clubdesk.com</td>
+    </tr>
+</table>
+
+</body>
+</html>
+
+
+------=_Part_217103_520614790.1765575882161--
+
+------=_Part_217102_461019007.1765575882161--
+

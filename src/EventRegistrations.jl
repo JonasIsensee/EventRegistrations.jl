@@ -411,10 +411,29 @@ export main
 
 using PrecompileTools
 @setup_workload begin
-    cd(joinpath(@__DIR__,"..", "testingfolder"))
-    @compile_workload begin
-        # inside here, put a "toy example" of everything you want to be fast
-        run_cli(["sync", "--export-details=--format=csv", "--export-payments=--format=csv"])
+    # Create a temporary directory with test assets for precompilation
+    assets_dir = joinpath(@__DIR__, "..", "test", "assets")
+    if isdir(assets_dir)
+        precompile_dir = mktempdir()
+        try
+            # Copy test assets to temp directory
+            cp(joinpath(assets_dir, "events"), joinpath(precompile_dir, "events"), force=true)
+            cp(joinpath(assets_dir, "emails"), joinpath(precompile_dir, "emails"), force=true)
+            cp(joinpath(assets_dir, "bank_transfers"), joinpath(precompile_dir, "bank_transfers"), force=true)
+            cp(joinpath(assets_dir, "templates"), joinpath(precompile_dir, "templates"), force=true)
+            if isfile(joinpath(assets_dir, "credentials.toml"))
+                cp(joinpath(assets_dir, "credentials.toml"), joinpath(precompile_dir, "credentials.toml"), force=true)
+            end
+            
+            cd(precompile_dir)
+            @compile_workload begin
+                # inside here, put a "toy example" of everything you want to be fast
+                run_cli(["sync", "--export-details=--format=csv", "--export-payments=--format=csv"])
+            end
+        finally
+            # Clean up temp directory
+            rm(precompile_dir, recursive=true, force=true)
+        end
     end
 end
 
