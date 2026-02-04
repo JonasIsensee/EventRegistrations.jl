@@ -449,10 +449,29 @@ check_config_sync(db, event_id) → ConfigSyncStatus
 - Generates synthetic .eml files
 - Tests all major workflows end-to-end
 
-**Run Tests**:
+### ⚠️ IMPORTANT: Running Tests Locally
+
+**You have Julia installed locally!** Always run tests directly using Julia commands rather than attempting to trigger GitHub workflows:
+
+**Run Tests Locally** ✅:
 ```bash
+# Run the full test suite
 julia --project -e 'using Pkg; Pkg.test()'
+
+# Or run tests with more verbose output
+julia --project test/runtests.jl
 ```
+
+**DO NOT trigger GitHub workflows** ❌:
+- GitHub workflow dispatch attempts will fail
+- You cannot trigger workflows via API or `gh` commands
+- CI workflows run automatically on push/PR - no manual triggering needed
+
+**Why run locally?**
+- Immediate feedback (no waiting for CI queue)
+- Full control over test execution
+- Access to detailed error messages and stack traces
+- Can run specific test subsets or add debugging output
 
 **Key Test Scenarios**:
 1. Email parsing (ClubDesk HTML format)
