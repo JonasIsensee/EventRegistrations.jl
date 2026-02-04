@@ -7,16 +7,10 @@ Set email redirect address in credentials.toml for testing purposes.
 All emails will be redirected to this address instead of actual recipients.
 """
 function cmd_set_email_redirect(email::String; credentials_path::String="credentials.toml")
-    # Validate email format - must have local@domain.tld structure
-    # Also reject control characters and newlines to prevent SMTP injection
-    if !occursin(r"^[^@\s\r\n]+@[^@\s\r\n]+\.[^@\s\r\n]+$", email)
+    # Validate email format with strict pattern to prevent SMTP injection
+    # Allows only safe characters in local and domain parts
+    if !occursin(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email)
         @error "Invalid email address format" email=email
-        return 1
-    end
-    
-    # Additional check for control characters
-    if any(c -> isspace(c) || iscntrl(c), email)
-        @error "Email address contains invalid characters (spaces or control characters)" email=email
         return 1
     end
 
