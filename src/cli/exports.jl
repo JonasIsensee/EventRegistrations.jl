@@ -371,7 +371,7 @@ function print_registration_detail_table(table::RegistrationDetailTable; io::IO=
         alignment = alignments,
         maximum_number_of_columns = -1,
         maximum_number_of_rows = -1,
-        vcrop_mode = :none
+        vertical_crop_mode = :none
     )
 
     println(io)

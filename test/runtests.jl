@@ -14,6 +14,7 @@ using EventRegistrations
 using DBInterface
 using Dates
 using TOML
+using SHA
 
 # =============================================================================
 # TEST CONFIGURATION
@@ -157,6 +158,60 @@ function create_test_bank_csv()
 
     return csv_path
 end
+
+"""Create additional test registrations directly in the database"""
+function create_additional_test_registrations(db, event_id, count)
+    timestamp_suffix = round(Int, time() * 1000)  # Millisecond timestamp for uniqueness
+    created_ids = Int[]
+    for i in 1:count
+        email = "testuser$(i)_$(timestamp_suffix)@example.de"
+        first_name = "Test$(i)"
+        last_name = "User$(i)"
+        fields = "{\"Stimmgruppe\": \"Violine\"}"
+        # Generate a unique file_hash for the submission
+        file_hash = bytes2hex(SHA.sha256("test_submission_$(event_id)_$(timestamp_suffix)_$(i)"))
+        
+        # Insert a submission (using sequence for id)
+        DBInterface.execute(db, """
+            INSERT INTO submissions (id, file_hash, event_id, email, first_name, last_name, fields, email_date, email_from, email_subject, created_at)
+            VALUES (nextval('submission_id_seq'), ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP)
+        """, [file_hash, event_id, email, first_name, last_name, fields, "test@system.local", "Test Submission"])
+        
+        # Get the submission ID we just inserted (using currval after nextval)
+        submission_id = DBInterface.execute(db, "SELECT currval('submission_id_seq')") |> collect |> first |> first
+        
+        # Create a registration with temporary reference (using sequence for id)
+        DBInterface.execute(db, """
+            INSERT INTO registrations (id, event_id, email, reference_number, first_name, last_name,
+                                      fields, latest_submission_id, registration_date, status)
+            VALUES (nextval('registration_id_seq'), ?, ?, 'TEMP', ?, ?, ?, ?, CURRENT_TIMESTAMP, 'pending')
+        """, [event_id, email, first_name, last_name, fields, submission_id])
+        
+        # Get the registration ID we just inserted
+        reg_id = DBInterface.execute(db, "SELECT currval('registration_id_seq')") |> collect |> first |> first
+
+        # Generate and update the reference number
+        ref_number = EventRegistrations.ReferenceNumbers.generate_reference_number(event_id, reg_id)
+        DBInterface.execute(db, """
+            UPDATE registrations SET reference_number = ? WHERE id = ?
+        """, [ref_number, reg_id])
+
+        push!(created_ids, reg_id)
+    end
+    @info "Created $count additional test registrations for $event_id"
+    return created_ids
+end
+
+"""Delete test registrations by their IDs"""
+function cleanup_test_registrations(db, registration_ids)
+    for reg_id in registration_ids
+        DBInterface.execute(db, """
+            UPDATE registrations SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?
+        """, [reg_id])
+    end
+    @info "Cleaned up $(length(registration_ids)) test registrations"
+end
+
 
 """Setup event configuration for testing"""
 function setup_test_event_config(db)
@@ -1165,6 +1220,9 @@ try
     @testset "17c. Soft Delete Registration" begin
         println("\n=== Test 17c: Soft Delete Registration ===")
 
+        # Create additional test registrations to ensure we have enough data
+        test_reg_ids = create_additional_test_registrations(db, "PWE_2026_01", 3)
+
         # Get some active registrations (not cancelled, not deleted)
         rows = DBInterface.execute(db,
             "SELECT id, reference_number, event_id FROM registrations WHERE event_id = ? AND deleted_at IS NULL AND status != 'cancelled' ORDER BY id LIMIT 3",
@@ -1253,10 +1311,16 @@ try
         # Test 13: Error when trying to restore non-existent registration
         @test_throws Exception EventRegistrations.restore_registration!(db, "NONEXISTENT_REF_12345")
         println("  ✓ Error thrown when restoring non-existent registration")
+        
+        # Clean up test registrations
+        cleanup_test_registrations(db, test_reg_ids)
     end
 
     @testset "17d. Soft Delete CLI Commands" begin
         println("\n=== Test 17d: Soft Delete CLI Commands ===")
+
+        # Create additional test registrations to ensure we have enough data
+        test_reg_ids = create_additional_test_registrations(db, "PWE_2026_01", 2)
 
         # Get an active registration
         rows = DBInterface.execute(db,
@@ -1342,12 +1406,16 @@ try
         end
         println("  ✓ dispatch_to_command: list-deleted-registrations")
 
-        # Clean up: restore the registration
+        # Clean up: restore the registration and delete test registrations
         EventRegistrations.restore_registration!(db, reg_id)
+        cleanup_test_registrations(db, test_reg_ids)
     end
 
     @testset "17e. Soft Delete Exclusion from Exports" begin
         println("\n=== Test 17e: Soft Delete Exclusion from Exports ===")
+
+        # Create additional test registrations to ensure we have enough data
+        test_reg_ids = create_additional_test_registrations(db, "PWE_2026_01", 2)
 
         # Get an active registration
         rows = DBInterface.execute(db,
@@ -1357,9 +1425,18 @@ try
 
         reg_id, ref = rows[1][1], rows[1][2]
 
-        # Get initial counts
+        # Get initial counts BEFORE deletion
         payment_data_before = EventRegistrations.get_payment_table_data(db, "PWE_2026_01")
         count_before = payment_data_before.total_registrations
+
+        reg_data_before = EventRegistrations.get_registration_table_data(db, "PWE_2026_01")
+        reg_count_before = reg_data_before.total_registrations
+
+        detail_table_before = EventRegistrations.get_registration_detail_table(db, "PWE_2026_01"; events_dir=TEST_EVENTS_DIR)
+        detail_count_before = length(detail_table_before.rows)
+
+        overview_before = EventRegistrations.event_overview(db, "PWE_2026_01")
+        reg_count_overview_before = overview_before.registrations
 
         # Soft delete the registration
         EventRegistrations.delete_registration!(db, reg_id)
@@ -1373,9 +1450,6 @@ try
         println("  ✓ Payment table data excludes deleted registration")
 
         # Test 2: Registration table data excludes deleted registration
-        reg_data_before = EventRegistrations.get_registration_table_data(db, "PWE_2026_01")
-        reg_count_before = reg_data_before.total_registrations
-        
         reg_data_after = EventRegistrations.get_registration_table_data(db, "PWE_2026_01")
         reg_count_after = reg_data_after.total_registrations
         @test reg_count_after == reg_count_before - 1
@@ -1384,9 +1458,6 @@ try
         println("  ✓ Registration table data excludes deleted registration")
 
         # Test 3: Registration detail table excludes deleted registration
-        detail_table_before = EventRegistrations.get_registration_detail_table(db, "PWE_2026_01"; events_dir=TEST_EVENTS_DIR)
-        detail_count_before = length(detail_table_before.rows)
-        
         detail_table_after = EventRegistrations.get_registration_detail_table(db, "PWE_2026_01"; events_dir=TEST_EVENTS_DIR)
         detail_count_after = length(detail_table_after.rows)
         @test detail_count_after == detail_count_before - 1
@@ -1402,16 +1473,14 @@ try
         println("  ✓ Registration detail table excludes deleted registration")
 
         # Test 4: Event overview excludes deleted registration
-        overview_before = EventRegistrations.event_overview(db, "PWE_2026_01")
-        reg_count_overview_before = overview_before.registrations
-        
         overview_after = EventRegistrations.event_overview(db, "PWE_2026_01")
         reg_count_overview_after = overview_after.registrations
         @test reg_count_overview_after == reg_count_overview_before - 1
         println("  ✓ Event overview excludes deleted registration")
 
-        # Clean up: restore the registration
+        # Clean up: restore the registration and delete test registrations
         EventRegistrations.restore_registration!(db, reg_id)
+        cleanup_test_registrations(db, test_reg_ids)
     end
 
     @testset "18. Config File Generation and Sync" begin
@@ -1862,8 +1931,8 @@ try
         
         # Count the number of rows in the output (excluding headers and summary)
         output_lines = split(output, '\n')
-        # Count lines that look like data rows (contain the reference pattern or data)
-        data_lines = filter(line -> occursin(r"PWE_\d+_\d+", line), output_lines)
+        # Count lines that look like data rows (contain full reference numbers with 3 underscore-separated parts)
+        data_lines = filter(line -> occursin(r"PWE_\d+_\d+_\d+", line), output_lines)
         
         # Verify that all registrations are shown (not truncated)
         # The number of data rows should match the number of registrations
@@ -1877,9 +1946,9 @@ try
         EventRegistrations.PrettyOutput.print_registration_table(registration_data; io=io_buffer2)
         output2 = String(take!(io_buffer2))
         
-        # Count data lines in registration output
+        # Count data lines in registration output (using full reference pattern)
         output_lines2 = split(output2, '\n')
-        data_lines2 = filter(line -> occursin(r"PWE_\d+_\d+", line), output_lines2)
+        data_lines2 = filter(line -> occursin(r"PWE_\d+_\d+_\d+", line), output_lines2)
         
         @test length(data_lines2) == registration_data.total_registrations
         println("  ✓ Registration table shows all $(registration_data.total_registrations) registrations without vertical truncation")
