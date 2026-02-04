@@ -180,16 +180,22 @@ function create_additional_test_registrations(db, event_id, count)
         # Get the submission ID we just inserted (using currval after nextval)
         submission_id = DBInterface.execute(db, "SELECT currval('submission_id_seq')") |> collect |> first |> first
         
-        # Create a registration
-        ref_number = EventRegistrations.generate_reference_number(db, event_id)
+        # Create a registration with temporary reference (using sequence for id)
         DBInterface.execute(db, """
-            INSERT INTO registrations (event_id, email, reference_number, first_name, last_name, 
+            INSERT INTO registrations (id, event_id, email, reference_number, first_name, last_name,
                                       fields, latest_submission_id, registration_date, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'pending')
-        """, [event_id, email, ref_number, first_name, last_name, fields, submission_id])
+            VALUES (nextval('registration_id_seq'), ?, ?, 'TEMP', ?, ?, ?, ?, CURRENT_TIMESTAMP, 'pending')
+        """, [event_id, email, first_name, last_name, fields, submission_id])
         
-        # Get the registration ID
-        reg_id = DBInterface.execute(db, "SELECT last_insert_rowid()") |> collect |> first |> first
+        # Get the registration ID we just inserted
+        reg_id = DBInterface.execute(db, "SELECT currval('registration_id_seq')") |> collect |> first |> first
+
+        # Generate and update the reference number
+        ref_number = EventRegistrations.ReferenceNumbers.generate_reference_number(event_id, reg_id)
+        DBInterface.execute(db, """
+            UPDATE registrations SET reference_number = ? WHERE id = ?
+        """, [ref_number, reg_id])
+
         push!(created_ids, reg_id)
     end
     @info "Created $count additional test registrations for $event_id"
@@ -1419,9 +1425,18 @@ try
 
         reg_id, ref = rows[1][1], rows[1][2]
 
-        # Get initial counts
+        # Get initial counts BEFORE deletion
         payment_data_before = EventRegistrations.get_payment_table_data(db, "PWE_2026_01")
         count_before = payment_data_before.total_registrations
+
+        reg_data_before = EventRegistrations.get_registration_table_data(db, "PWE_2026_01")
+        reg_count_before = reg_data_before.total_registrations
+
+        detail_table_before = EventRegistrations.get_registration_detail_table(db, "PWE_2026_01"; events_dir=TEST_EVENTS_DIR)
+        detail_count_before = length(detail_table_before.rows)
+
+        overview_before = EventRegistrations.event_overview(db, "PWE_2026_01")
+        reg_count_overview_before = overview_before.registrations
 
         # Soft delete the registration
         EventRegistrations.delete_registration!(db, reg_id)
@@ -1435,9 +1450,6 @@ try
         println("  ✓ Payment table data excludes deleted registration")
 
         # Test 2: Registration table data excludes deleted registration
-        reg_data_before = EventRegistrations.get_registration_table_data(db, "PWE_2026_01")
-        reg_count_before = reg_data_before.total_registrations
-        
         reg_data_after = EventRegistrations.get_registration_table_data(db, "PWE_2026_01")
         reg_count_after = reg_data_after.total_registrations
         @test reg_count_after == reg_count_before - 1
@@ -1446,9 +1458,6 @@ try
         println("  ✓ Registration table data excludes deleted registration")
 
         # Test 3: Registration detail table excludes deleted registration
-        detail_table_before = EventRegistrations.get_registration_detail_table(db, "PWE_2026_01"; events_dir=TEST_EVENTS_DIR)
-        detail_count_before = length(detail_table_before.rows)
-        
         detail_table_after = EventRegistrations.get_registration_detail_table(db, "PWE_2026_01"; events_dir=TEST_EVENTS_DIR)
         detail_count_after = length(detail_table_after.rows)
         @test detail_count_after == detail_count_before - 1
@@ -1464,9 +1473,6 @@ try
         println("  ✓ Registration detail table excludes deleted registration")
 
         # Test 4: Event overview excludes deleted registration
-        overview_before = EventRegistrations.event_overview(db, "PWE_2026_01")
-        reg_count_overview_before = overview_before.registrations
-        
         overview_after = EventRegistrations.event_overview(db, "PWE_2026_01")
         reg_count_overview_after = overview_after.registrations
         @test reg_count_overview_after == reg_count_overview_before - 1
