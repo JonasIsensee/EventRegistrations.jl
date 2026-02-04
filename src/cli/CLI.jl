@@ -348,13 +348,6 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
             id_val = get(options, :id, nothing)
             id_val isa AbstractString && (id_val = parse(Int, id_val))
             return cmd_send_emails(db; event_id=get(options, :event_id, nothing), id=id_val, credentials_path=credentials_path, db_path=db_path)
-        elseif command == "set-email-redirect"
-            isempty(positional) && (@error "email address required"; return 1)
-            return cmd_set_email_redirect(positional[1]; credentials_path=credentials_path)
-        elseif command == "get-email-redirect"
-            return cmd_get_email_redirect(; credentials_path=credentials_path)
-        elseif command == "clear-email-redirect"
-            return cmd_clear_email_redirect(; credentials_path=credentials_path)
         elseif command == "sync"
             return cmd_sync(db; db_path=db_path, events_dir=events_dir, emails_dir="emails", bank_dir="bank_transfers", credentials_path=credentials_path, event_id=get(options, :event_id, nothing), send_emails=get(options, :send_emails, false), export_details=get(options, :export_details, false), export_payments=get(options, :export_payments, false), export_combined=get(options, :export_combined, false))
         else
