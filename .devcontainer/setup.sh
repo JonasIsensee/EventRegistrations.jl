@@ -12,8 +12,14 @@ fi
 
 # Add juliaup to PATH for future sessions
 if [ -d "$HOME/.juliaup/bin" ]; then
-    echo 'export PATH="$HOME/.juliaup/bin:$PATH"' >> ~/.bashrc
-    echo 'export PATH="$HOME/.juliaup/bin:$PATH"' >> ~/.zshrc 2>/dev/null || true
+    # Add to bashrc if not already present
+    if ! grep -q '.juliaup/bin' ~/.bashrc 2>/dev/null; then
+        echo 'export PATH="$HOME/.juliaup/bin:$PATH"' >> ~/.bashrc
+    fi
+    # Add to zshrc if it exists and not already present
+    if [ -f ~/.zshrc ] && ! grep -q '.juliaup/bin' ~/.zshrc 2>/dev/null; then
+        echo 'export PATH="$HOME/.juliaup/bin:$PATH"' >> ~/.zshrc
+    fi
     export PATH="$HOME/.juliaup/bin:$PATH"
 fi
 
