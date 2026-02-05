@@ -856,7 +856,7 @@ EventRegistrations.jl/
 **Development**:
 - PrecompileTools.jl (faster startup)
 - TableEdit.jl (interactive editing)
-- ReplMaker.jl (custom REPL)
+- REPL/LineEdit (custom REPL; no ReplMaker)
 
 ---
 
