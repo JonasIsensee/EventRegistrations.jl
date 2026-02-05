@@ -19,6 +19,7 @@ This document summarizes **tools and practices** for diagnosing and improving Ju
 ### 1.2 SnoopCompile.jl (diagnostics)
 
 - **Purpose**: Find *what* is being compiled and *why* latency is high (inference time, invalidations).
+- **Compatibility**: SnoopCompile 3.x supports Julia 1.12 (see [Project.toml](https://github.com/JuliaDebug/SnoopCompile.jl/blob/master/Project.toml) on master).
 - **Workflow** (recommended order):
   1. **Check invalidations** with `@snoopr` (see below).
   2. **Record inference** with `@snoopi_deep` on a representative workload.
@@ -92,9 +93,13 @@ filtermod(EventRegistrations, mtrigs)
 
 ## 2. What EventRegistrations.jl Does
 
-- **PrecompileTools**: Used in `src/EventRegistrations.jl`: `@setup_workload` + `@compile_workload` to precompile:
-  - **Always**: a minimal workload (in-memory DB, empty events dir, `list_events`, `get_registrations`) so the package loads even without any data directory.
-  - **When `playground/` is present** (e.g. dev or full repo): a fuller workload using playground data: sync event configs, `process_email_folder!` on `playground/emails/`, `recalculate_costs!` for `PWE_2026_01`, `get_payment_summary`, `get_payment_table_data`, `export_payment_csv`, `get_registration_table_data`, and `get_registration_detail_table`. That precompiles email parsing, cost calculation, and export paths without relying on `testingfolder`.
+- **PrecompileTools**: Used in `src/EventRegistrations.jl`: `@setup_workload` + `@compile_workload`. `test/assets/` (part of the repository) are copied to a temp dir and then a **realistic workload** is executed there:
+  - CLI: `run_cli(["sync", "--export-details=--format=csv", "--export-payments=--format=csv"])` on the copied assets.
+  - Library API (on the resulting `events.duckdb` + `events/` config):
+    - `init_database("events.duckdb")`, `list_events`, `get_registrations`, `get_payment_summary`;
+    - `get_payment_table_data` + `export_payment_csv`;
+    - `get_registration_table_data` + `get_registration_detail_table` (with `events_dir="events"`).
+  This avoids explicit `precompile(...)` statements and instead precompiles via running representative workloads.
 
 ---
 
@@ -124,7 +129,23 @@ These are the usual suspects for TTFX in a package like EventRegistrations.jl. U
 
 ---
 
-## 4. References
+## 4. Optional: TTFX diagnostics script
+
+- **Location**: `docs/ttfx_diagnostics.jl`
+- **Purpose**: Run `@snoopr` (invalidations) and `@snoopi_deep` (inference) on a minimal workload and print a short report.
+- **Requirements**: Add SnoopCompile to the project (or use a temporary env); SnoopCompile 3.x supports Julia 1.12.
+- **Usage**:
+  ```bash
+  julia --startup-file=no --project -e 'using Pkg; Pkg.add("SnoopCompile"); include("docs/ttfx_diagnostics.jl")'
+  ```
+  Or add SnoopCompile to the project, then:
+  ```bash
+  julia --startup-file=no --project -e 'include("docs/ttfx_diagnostics.jl")'
+  ```
+
+---
+
+## 5. References
 
 - PrecompileTools: <https://julialang.github.io/PrecompileTools.jl/stable/>
 - PrecompileTools invalidations: <https://julialang.github.io/PrecompileTools.jl/stable/invalidations/>
@@ -132,3 +153,11 @@ These are the usual suspects for TTFX in a package like EventRegistrations.jl. U
 - SnoopCompile invalidations (`@snoopr`): <https://timholy.github.io/SnoopCompile.jl/stable/snoopr/>
 - SnoopCompile inference analysis (`@snoopi_deep`): <https://timholy.github.io/SnoopCompile.jl/stable/snoopi_deep_analysis/>
 - Julia blog: Invalidations — <https://julialang.org/blog/2020/08/invalidations/>
+
+---
+
+## 6. Measuring load time
+
+- **First load (cold)**: Includes precompilation; run once after changing code or dependencies (e.g. `julia --startup-file=no --project -e 'using EventRegistrations'`).
+- **Subsequent loads (warm, TTFX)**: Time to `using EventRegistrations` after precompilation is already done. This is the latency users see on normal use.
+- Typical warm load is on the order of 1–2 seconds depending on machine; cold load is dominated by precompilation (tens of seconds) and is one-time per environment.
