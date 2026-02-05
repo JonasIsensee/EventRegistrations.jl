@@ -7,13 +7,12 @@ Caller must open db; run_cli opens it before calling.
 function cmd_import_bank_csv(db::DuckDB.DB, csv_file::String;
     delimiter::String=";",
     decimal_comma::Bool=true)
-    @info "Importing bank transfers" csv_file=csv_file delimiter=delimiter decimal_comma=decimal_comma
+    @verbose_info "Importing bank transfers" csv_file delimiter decimal_comma
     result = import_bank_csv!(db, csv_file; delimiter=first(delimiter), decimal_comma=decimal_comma)
-    summary = [
-        "New transfers: $(result.new)",
-        "Skipped (duplicates): $(result.skipped)",
-    ]
-    @info "✓ Bank transfer import complete!\n$(join(summary, "\n"))"
+    
+    if result.new > 0 || is_verbose()
+        @info "Imported transfers" new=result.new skipped=result.skipped
+    end
     return 0
 end
 
@@ -22,17 +21,15 @@ Match bank transfers to registrations.
 Caller must open db; run_cli opens it before calling.
 """
 function cmd_match_transfers(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing)
-    @info "Matching bank transfers to registrations..." event_id=event_id
+    @verbose_info "Matching bank transfers..." event_id
     result = match_transfers!(db; event_id=event_id)
-    summary = [
-        "Matched: $(result.matched)",
-        "Unmatched: $(length(result.unmatched))",
-    ]
+    
+    if result.matched > 0 || is_verbose()
+        @info "Matched transfers" matched=result.matched unmatched=length(result.unmatched)
+    end
+    
     if !isempty(result.unmatched)
-        push!(summary, "To manually match unmatched transfers:\n  eventreg list-unmatched\n  eventreg manual-match <transfer_id> <reference>")
-        @warn "⚠ Matching complete with unmatched transfers\n$(join(summary, "\n"))"
-    else
-        @info "✓ Matching complete!\n$(join(summary, "\n"))"
+        @verbose_info "Use 'eventreg list-unmatched' to see unmatched transfers"
     end
     return 0
 end
@@ -44,21 +41,19 @@ Caller must open db; run_cli opens it before calling.
 function cmd_list_unmatched(db::DuckDB.DB)
     unmatched = get_unmatched_transfers(db)
     if isempty(unmatched)
-        @info "✓ No unmatched transfers!"
+        @info "No unmatched transfers"
     else
-        rows = String[]
-        push!(rows, "Unmatched Transfers:")
-        push!(rows, "-" ^ 80)
+        println("Unmatched Transfers ($(length(unmatched))):")
+        println("-" ^ 80)
         for transfer in unmatched
             id, date, amount, sender, reference = transfer
-            push!(rows, "  ID: $id")
-            push!(rows, "  Date: $date")
-            push!(rows, "  Amount: $amount €")
-            push!(rows, "  Sender: $sender")
-            push!(rows, "  Reference: $reference")
-            push!(rows, "")
+            println("  ID: $id | Date: $date | Amount: €$amount")
+            println("  Sender: $sender")
+            if !isempty(reference)
+                println("  Reference: $reference")
+            end
+            println()
         end
-        @info join(rows, "\n")
     end
     return 0
 end
@@ -68,9 +63,9 @@ Manually match a transfer to a registration.
 Caller must open db; run_cli opens it before calling.
 """
 function cmd_manual_match(db::DuckDB.DB, transfer_id::Int, reference::String)
-    @info "Matching transfer to registration" transfer_id=transfer_id reference=reference
+    @verbose_info "Matching transfer" transfer_id reference
     manual_match!(db, transfer_id, reference)
-    @info "✓ Match created successfully!"
+    @info "Match created" transfer_id reference
     return 0
 end
 
@@ -81,9 +76,9 @@ Caller must open db; run_cli opens it before calling.
 function cmd_grant_subsidy(db::DuckDB.DB, identifier::String, amount::Float64;
     reason::String="",
     granted_by::String="cli")
-    @info "Granting subsidy" identifier=identifier amount=amount reason=reason
+    @verbose_info "Granting subsidy" identifier amount reason
     grant_subsidy!(db, identifier, amount; reason=reason, granted_by=granted_by)
-    @info "✓ Subsidy granted successfully!"
+    @info "Subsidy granted" identifier amount=amount
     return 0
 end
 

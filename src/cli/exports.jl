@@ -32,25 +32,25 @@ upload_export_to_webdav(ctx, "payment_status_PWE_2026_01.xlsx")
 function upload_export_to_webdav(ctx::AppConfig, local_file::String)
     # Check if file exists
     if !isfile(local_file)
-        @warn "Cannot upload: file not found" local_file=local_file
+        @warn "Cannot upload: file not found" local_file
         return
     end
 
     # Filter by file extension (only upload .xlsx, .csv, .pdf)
     ext = lowercase(splitext(local_file)[2])
     if ext ∉ [".xlsx", ".csv", ".pdf"]
-        @info "Skipping WebDAV upload for non-supported format" file=local_file extension=ext
+        @verbose_info "Skipping WebDAV upload" file=local_file extension=ext
         return
     end
 
     # Validate WebDAV credentials
     if isempty(ctx.email.webdav_url)
-        @info "WebDAV upload skipped: no URL configured"
+        @verbose_info "WebDAV not configured"
         return
     end
 
     if isempty(ctx.email.webdav_username) || isempty(ctx.email.webdav_password)
-        @warn "WebDAV upload skipped: incomplete credentials (missing username or password)"
+        @warn "WebDAV upload skipped: incomplete credentials"
         return
     end
 
@@ -75,12 +75,12 @@ function upload_export_to_webdav(ctx::AppConfig, local_file::String)
         )
 
         if result == 0
-            @info "✓ File uploaded to WebDAV" local_file=local_file remote_path=remote_path
+            @info "Uploaded to WebDAV" file=filename
         else
-            @warn "WebDAV upload failed (see earlier error messages)" local_file=local_file
+            @warn "WebDAV upload failed" file=local_file
         end
     catch e
-        @warn "WebDAV upload failed with exception" local_file=local_file exception=(e, catch_backtrace())
+        @warn "WebDAV upload failed" file=local_file exception=e
     end
 
     # Always return successfully (upload failures don't fail exports)
@@ -107,7 +107,7 @@ function cmd_export_payment_status(db::DuckDB.DB,
             @error "No events with registrations found"
             return 1
         end
-        @info "Using most recent event" event_id=local_event_id
+        @verbose_info "Using most recent event" event_id=local_event_id
     end
 
     payment_filter = if filter == "unpaid"
@@ -124,7 +124,7 @@ function cmd_export_payment_status(db::DuckDB.DB,
 
     table_data = get_payment_table_data(db, local_event_id)
     if table_data.total_registrations == 0
-        @info "No registrations found for event" event_id=local_event_id
+        @info "No registrations for event" event_id=local_event_id
         return 0
     end
 
@@ -133,8 +133,8 @@ function cmd_export_payment_status(db::DuckDB.DB,
         if table_data.event_name !== nothing
             title_str *= " - $(table_data.event_name)"
         end
-        @info """$title_str
-$("=" ^ length(title_str))"""
+        println(title_str)
+        println("=" ^ length(title_str))
         print_summary(table_data)
         return 0
     end
@@ -157,41 +157,41 @@ $("=" ^ length(title_str))"""
         print_payment_table(table_data; filter=payment_filter, pager=pager)
     elseif output_format == "pdf"
         output_path = actual_output === nothing ? "payment_status_$(local_event_id).pdf" : actual_output
-        @info "Generating PDF" output_path=output_path
+        @verbose_info "Generating PDF" output_path
         export_payment_pdf(table_data, output_path; filter=payment_filter)
-        @info "✓ PDF exported" output_path=output_path
+        @info "Exported PDF" output=output_path
         if upload
             ctx = load_app_config(; db_path, credentials_path)
             upload_export_to_webdav(ctx, output_path)
         end
     elseif output_format == "latex"
         output_path = actual_output === nothing ? "payment_status_$(local_event_id).tex" : actual_output
-        @info "Generating LaTeX" output_path=output_path
+        @verbose_info "Generating LaTeX" output_path
         latex_content = generate_latex_document(table_data; filter=payment_filter)
         open(output_path, "w") do f
             write(f, latex_content)
         end
-        @info "✓ LaTeX exported" output_path=output_path
+        @info "Exported LaTeX" output=output_path
     elseif output_format == "xlsx"
         output_path = actual_output === nothing ? "payment_status_$(local_event_id).xlsx" : actual_output
-        @info "Exporting XLSX" output_path=output_path
+        @verbose_info "Exporting XLSX" output_path
         export_payment_xlsx(table_data, output_path; filter=payment_filter)
-        @info "✓ XLSX exported" output_path=output_path
+        @info "Exported XLSX" output=output_path
         if upload
             ctx = load_app_config(; db_path, credentials_path)
             upload_export_to_webdav(ctx, output_path)
         end
     elseif output_format == "csv"
         output_path = actual_output === nothing ? "payment_status_$(local_event_id).csv" : actual_output
-        @info "Exporting CSV" output_path=output_path
+        @verbose_info "Exporting CSV" output_path
         export_payment_csv(table_data, output_path; filter=payment_filter)
-        @info "✓ CSV exported" output_path=output_path
+        @info "Exported CSV" output=output_path
         if upload
             ctx = load_app_config(; db_path, credentials_path)
             upload_export_to_webdav(ctx, output_path)
         end
     else
-        @error "Unknown format" format=output_format supported=["terminal", "pdf", "latex", "xlsx", "csv"]
+        @error "Unknown format" format=output_format
         return 1
     end
     return 0
