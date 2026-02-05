@@ -1962,7 +1962,16 @@ try
         @test args == ["list-registrations", "--filter=unpaid"]
         args3 = EventRegistrations.parse_repl_line("list-registrations --name=\"Müller\"")
         @test args3 == ["list-registrations", "--name=Müller"]
-        println("  ✓ parse_repl_line: quotes and --key=value")
+        # REPL input "playground" or "playground init" must parse and dispatch like CLI
+        args_play = EventRegistrations.parse_repl_line("playground init")
+        @test args_play == ["playground", "init"]
+        cmd, pos, opts = EventRegistrations.parse_cli_args(args_play)
+        @test cmd == "playground" && pos == ["init"]
+        args_bare = EventRegistrations.parse_repl_line("playground")
+        @test args_bare == ["playground"]
+        cmd_bare, pos_bare, _ = EventRegistrations.parse_cli_args(args_bare)
+        @test cmd_bare == "playground" && isempty(pos_bare)
+        println("  ✓ parse_repl_line: quotes and --key=value; playground command parsing")
 
         # dispatch_to_command with passed-in db: same behavior as CLI (no second connection)
         orig_dir = pwd()

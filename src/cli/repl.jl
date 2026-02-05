@@ -18,7 +18,7 @@ const REPL_COMMANDS = [
     "event-overview", "status", "import-bank-csv", "match-transfers", "list-unmatched",
     "manual-match", "grant-subsidy", "export-payment-status", "export-registrations",
     "export-combined", "list-pending-emails", "mark-email", "send-emails",
-    "validate-config",
+    "validate-config", "playground",
 ]
 
 # Common options for completion

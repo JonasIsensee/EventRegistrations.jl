@@ -443,7 +443,7 @@ function print_payment_table(data::PaymentTableData;
     println(io, COLOR_HEADER("=" ^ length(title_str)))
     println(io)
 
-    # Print table with PrettyTables 3.x API
+    # Print table with PrettyTables (PT 3.x: no crop/vcrop_mode kwargs to _text__print_table)
     pretty_table(io, table_data;
         column_labels = ["Reference", "Name", "Cost", "Paid", "Subsidy", "Remaining", "Status"],
         alignment = [:l, :l, :r, :r, :r, :r, :l],
@@ -718,7 +718,7 @@ function print_registration_table(data::RegistrationTableData;
     println(io, COLOR_HEADER("=" ^ length(title_str)))
     println(io)
 
-    # Print table with PrettyTables
+    # Print table with PrettyTables (PT 3.x: no crop/vcrop_mode kwargs to _text__print_table)
     pretty_table(io, table_data;
         column_labels = ["Reference", "Name", "Email", "Registered", "Cost", "Remaining", "Status"],
         alignment = [:l, :l, :l, :l, :r, :r, :l],
