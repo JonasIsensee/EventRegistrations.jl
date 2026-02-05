@@ -155,7 +155,7 @@ eventreg sync --send-emails --export-combined --export-payments
 
 **Runnable examples:**
 ```bash
-# From a directory that has events.duckdb (e.g. demo_pwe or testingfolder):
+# From a directory that has events.duckdb (e.g. demo_pwe):
 cd /path/to/EventRegistrations.jl
 ./bin/eventreg edit-registrations --event-id=PWE_2026_01
 # Or filter by name:
@@ -165,7 +165,7 @@ cd /path/to/EventRegistrations.jl
 ```bash
 # Non-interactive example (edits file in code, then applies):
 julia --project=. examples/edit_registrations_example.jl
-# Or with a data dir: julia --project=. examples/edit_registrations_example.jl testingfolder
+# Or with a data dir: julia --project=. examples/edit_registrations_example.jl /path/to/data
 ```
 
 All export commands support `--format=terminal|csv|xlsx|pdf|latex`, `--filter=all|unpaid|paid|problems`, and `--upload` for WebDAV.
