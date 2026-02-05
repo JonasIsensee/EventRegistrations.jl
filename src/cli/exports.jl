@@ -98,7 +98,8 @@ function cmd_export_payment_status(db::DuckDB.DB,
     summary_only::Bool=false,
     upload::Bool=false,
     credentials_path::String="credentials.toml",
-    db_path::String="events.duckdb")
+    db_path::String="events.duckdb",
+    pager::Bool=false)
     local_event_id = event_id
     if local_event_id === nothing
         local_event_id = get_most_recent_event(db)
@@ -153,7 +154,7 @@ $("=" ^ length(title_str))"""
     end
 
     if output_format == "terminal" || (actual_output === nothing && output_format == "terminal")
-        print_payment_table(table_data; filter=payment_filter)
+        print_payment_table(table_data; filter=payment_filter, pager=pager)
     elseif output_format == "pdf"
         output_path = actual_output === nothing ? "payment_status_$(local_event_id).pdf" : actual_output
         @info "Generating PDF" output_path=output_path
@@ -197,7 +198,8 @@ $("=" ^ length(title_str))"""
 end
 
 """
-Export full registration data. Caller must open db; run_cli opens it before calling.
+Export registrations report with optional filters and formats.
+Caller must open db; run_cli opens it before calling.
 """
 function cmd_export_registrations(db::DuckDB.DB,
     event_id::Union{String,Nothing}=nothing,
@@ -208,7 +210,8 @@ function cmd_export_registrations(db::DuckDB.DB,
     events_dir::String="events",
     upload::Bool=false,
     credentials_path::String="credentials.toml",
-    db_path::String="events.duckdb")
+    db_path::String="events.duckdb",
+    pager::Bool=false)
     local_event_id = event_id
     if local_event_id === nothing
         local_event_id = get_most_recent_event(db)
@@ -279,7 +282,7 @@ function cmd_export_registrations(db::DuckDB.DB,
     end
 
     if output_format == "terminal" || (actual_output === nothing && output_format == "terminal")
-        print_registration_table(table_data; filter=reg_filter)
+        print_registration_table(table_data; filter=reg_filter, pager=pager)
     elseif output_format == "pdf"
         output_path = actual_output === nothing ? "registrations_$(local_event_id).pdf" : actual_output
         @info "Generating PDF" output_path=output_path

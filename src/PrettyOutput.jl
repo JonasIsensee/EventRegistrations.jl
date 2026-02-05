@@ -375,88 +375,140 @@ function format_money(value::Nothing; kwargs...)
 end
 
 """
+    _with_pager(f::Function, pager::Bool)
+
+Internal helper function to optionally pipe output through a pager.
+
+If `pager=true`, runs the function `f` with output redirected to `less -RS`,
+which supports color codes (R) and horizontal scrolling (S).
+Otherwise, runs `f` normally.
+"""
+function _with_pager(f::Function, pager::Bool)
+    if pager
+        # Use less with -R for color support and -S for horizontal scrolling
+        # The -X flag prevents clearing the screen on exit
+        # The -F flag exits if content fits on one screen
+        try
+            cmd = pipeline(`less -RSX`)
+            open(cmd, "w") do io
+                f(io)
+            end
+        catch e
+            # If pager fails, fall back to normal output
+            @warn "Failed to open pager, using normal output" exception=e
+            f(stdout)
+        end
+    else
+        f(stdout)
+    end
+end
+
+"""
 Print a beautiful colored payment table to the terminal.
+
+# Arguments
+- `data::PaymentTableData`: The payment data to display
+- `filter::PaymentFilter`: Optional filter to apply
+- `io::IO`: Output stream (default: stdout)
+- `pager::Bool`: If true, display output in a scrollable pager (default: false)
+
+When `pager=true`, the table is displayed using `less` with support for:
+- Horizontal scrolling with arrow keys
+- Vertical scrolling
+- Color preservation
+- Press 'q' to quit the pager
 """
 function print_payment_table(data::PaymentTableData;
                              filter::PaymentFilter=PaymentFilter(),
-                             io::IO=stdout)
-    rows_to_show = filter_payments(data, filter)
+                             io::IO=stdout,
+                             pager::Bool=false)
+    # Define the actual printing logic
+    function _do_print(output_io::IO)
+        rows_to_show = filter_payments(data, filter)
 
-    if isempty(rows_to_show)
-        println(io, "No registrations match the filter criteria.")
-        return
+        if isempty(rows_to_show)
+            println(output_io, "No registrations match the filter criteria.")
+            return
+        end
+
+        # Build table data
+        table_data = Matrix{Any}(undef, length(rows_to_show), 7)
+
+        for (i, row) in enumerate(rows_to_show)
+            table_data[i, 1] = row.reference
+            table_data[i, 2] = row.name
+            table_data[i, 3] = format_money(row.cost)
+            table_data[i, 4] = format_money(row.paid)
+            table_data[i, 5] = row.subsidy > 0 ? format_money(row.subsidy) : "—"
+            table_data[i, 6] = row.status == STATUS_NO_CONFIG ? "—" : format_money(row.remaining)
+            table_data[i, 7] = status_display(row.status)
+        end
+
+        # Create highlighters for colored status column
+        hl_paid = TextHighlighter(
+            (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_PAID,
+            COLOR_PAID
+        )
+        hl_overpaid = TextHighlighter(
+            (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_OVERPAID,
+            COLOR_OVERPAID
+        )
+        hl_partial = TextHighlighter(
+            (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_PARTIAL,
+            COLOR_PARTIAL
+        )
+        hl_unpaid = TextHighlighter(
+            (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_UNPAID,
+            COLOR_UNPAID
+        )
+        hl_noconfig = TextHighlighter(
+            (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_NO_CONFIG,
+            COLOR_NO_CONFIG
+        )
+
+        # Highlight remaining column based on value
+        hl_remaining_negative = TextHighlighter(
+            (tbl, i, j) -> j == 6 && rows_to_show[i].remaining < 0,
+            COLOR_NEGATIVE
+        )
+        hl_remaining_positive = TextHighlighter(
+            (tbl, i, j) -> j == 6 && rows_to_show[i].remaining > 0 && rows_to_show[i].status != STATUS_NO_CONFIG,
+            COLOR_UNPAID
+        )
+
+        # Print title
+        title_str = "Payment Status: $(data.event_id)"
+        if data.event_name !== nothing
+            title_str *= " - $(data.event_name)"
+        end
+
+        println(output_io)
+        println(output_io, COLOR_HEADER(title_str))
+        println(output_io, COLOR_HEADER("=" ^ length(title_str)))
+        println(output_io)
+
+        # Print table with PrettyTables 3.x API
+        pretty_table(output_io, table_data;
+            column_labels = ["Reference", "Name", "Cost", "Paid", "Subsidy", "Remaining", "Status"],
+            alignment = [:l, :l, :r, :r, :r, :r, :l],
+            highlighters = [hl_paid, hl_overpaid, hl_partial, hl_unpaid, hl_noconfig,
+                           hl_remaining_negative, hl_remaining_positive],
+            maximum_number_of_columns = -1,
+            maximum_number_of_rows = -1,
+            vertical_crop_mode = :none
+        )
+
+        # Print summary
+        println(output_io)
+        print_summary(data; io=output_io)
     end
 
-    # Build table data
-    table_data = Matrix{Any}(undef, length(rows_to_show), 7)
-
-    for (i, row) in enumerate(rows_to_show)
-        table_data[i, 1] = row.reference
-        table_data[i, 2] = row.name
-        table_data[i, 3] = format_money(row.cost)
-        table_data[i, 4] = format_money(row.paid)
-        table_data[i, 5] = row.subsidy > 0 ? format_money(row.subsidy) : "—"
-        table_data[i, 6] = row.status == STATUS_NO_CONFIG ? "—" : format_money(row.remaining)
-        table_data[i, 7] = status_display(row.status)
+    # Use pager if requested and io is stdout
+    if pager && io === stdout
+        _with_pager(_do_print, true)
+    else
+        _do_print(io)
     end
-
-    # Create highlighters for colored status column
-    hl_paid = TextHighlighter(
-        (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_PAID,
-        COLOR_PAID
-    )
-    hl_overpaid = TextHighlighter(
-        (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_OVERPAID,
-        COLOR_OVERPAID
-    )
-    hl_partial = TextHighlighter(
-        (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_PARTIAL,
-        COLOR_PARTIAL
-    )
-    hl_unpaid = TextHighlighter(
-        (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_UNPAID,
-        COLOR_UNPAID
-    )
-    hl_noconfig = TextHighlighter(
-        (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_NO_CONFIG,
-        COLOR_NO_CONFIG
-    )
-
-    # Highlight remaining column based on value
-    hl_remaining_negative = TextHighlighter(
-        (tbl, i, j) -> j == 6 && rows_to_show[i].remaining < 0,
-        COLOR_NEGATIVE
-    )
-    hl_remaining_positive = TextHighlighter(
-        (tbl, i, j) -> j == 6 && rows_to_show[i].remaining > 0 && rows_to_show[i].status != STATUS_NO_CONFIG,
-        COLOR_UNPAID
-    )
-
-    # Print title
-    title_str = "Payment Status: $(data.event_id)"
-    if data.event_name !== nothing
-        title_str *= " - $(data.event_name)"
-    end
-
-    println(io)
-    println(io, COLOR_HEADER(title_str))
-    println(io, COLOR_HEADER("=" ^ length(title_str)))
-    println(io)
-
-    # Print table with PrettyTables (PT 3.x: no crop/vcrop_mode kwargs to _text__print_table)
-    pretty_table(io, table_data;
-        column_labels = ["Reference", "Name", "Cost", "Paid", "Subsidy", "Remaining", "Status"],
-        alignment = [:l, :l, :r, :r, :r, :r, :l],
-        highlighters = [hl_paid, hl_overpaid, hl_partial, hl_unpaid, hl_noconfig,
-                       hl_remaining_negative, hl_remaining_positive],
-        maximum_number_of_columns = -1,
-        maximum_number_of_rows = -1,
-        vertical_crop_mode = :none
-    )
-
-    # Print summary
-    println(io)
-    print_summary(data; io=io)
 end
 
 """
@@ -659,78 +711,109 @@ end
 
 """
 Print a beautiful colored registration table to the terminal.
+
+# Arguments
+- `data::RegistrationTableData`: The registration data to display
+- `filter::RegistrationFilter`: Optional filter to apply
+- `io::IO`: Output stream (default: stdout)
+- `pager::Bool`: If true, display output in a scrollable pager (default: false)
+- `truncate_email`: If true, truncate long email addresses; if nothing, defaults to !pager (default: nothing)
+
+When `pager=true`, the table is displayed using `less` with support for:
+- Horizontal scrolling with arrow keys
+- Vertical scrolling
+- Color preservation
+- Press 'q' to quit the pager
+
+When using the pager, `truncate_email` defaults to false to show full email addresses.
 """
 function print_registration_table(data::RegistrationTableData;
                                    filter::RegistrationFilter=RegistrationFilter(),
-                                   io::IO=stdout)
-    rows_to_show = filter_registrations(data, filter)
+                                   io::IO=stdout,
+                                   pager::Bool=false,
+                                   truncate_email::Union{Bool,Nothing}=nothing)
+    # Resolve truncate_email default based on pager setting
+    actual_truncate_email = truncate_email === nothing ? !pager : truncate_email
 
-    if isempty(rows_to_show)
-        println(io, "No registrations match the filter criteria.")
-        return
+    # Define the actual printing logic
+    function _do_print(output_io::IO)
+        rows_to_show = filter_registrations(data, filter)
+
+        if isempty(rows_to_show)
+            println(output_io, "No registrations match the filter criteria.")
+            return
+        end
+
+        # Build table data
+        table_data = Matrix{Any}(undef, length(rows_to_show), 7)
+
+        for (i, row) in enumerate(rows_to_show)
+            table_data[i, 1] = row.reference
+            table_data[i, 2] = row.last_name * ", " * row.first_name
+            # Truncate email only if requested
+            table_data[i, 3] = (actual_truncate_email && length(row.email) > 30) ? row.email[1:27] * "..." : row.email
+            table_data[i, 4] = row.registration_date !== nothing ? Dates.format(row.registration_date, "yyyy-mm-dd") : "—"
+            table_data[i, 5] = format_money(row.cost)
+            table_data[i, 6] = row.status == STATUS_NO_CONFIG ? "—" : format_money(row.remaining)
+            table_data[i, 7] = status_display(row.status)
+        end
+
+        # Create highlighters for colored status column
+        hl_paid = TextHighlighter(
+            (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_PAID,
+            COLOR_PAID
+        )
+        hl_partial = TextHighlighter(
+            (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_PARTIAL,
+            COLOR_PARTIAL
+        )
+        hl_unpaid = TextHighlighter(
+            (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_UNPAID,
+            COLOR_UNPAID
+        )
+        hl_noconfig = TextHighlighter(
+            (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_NO_CONFIG,
+            COLOR_NO_CONFIG
+        )
+
+        # Highlight remaining column based on value
+        hl_remaining_positive = TextHighlighter(
+            (tbl, i, j) -> j == 6 && rows_to_show[i].remaining > 0 && rows_to_show[i].status != STATUS_NO_CONFIG,
+            COLOR_UNPAID
+        )
+
+        # Print title
+        title_str = "Registrations: $(data.event_id)"
+        if data.event_name !== nothing
+            title_str *= " - $(data.event_name)"
+        end
+
+        println(output_io)
+        println(output_io, COLOR_HEADER(title_str))
+        println(output_io, COLOR_HEADER("=" ^ length(title_str)))
+        println(output_io)
+
+        # Print table with PrettyTables
+        pretty_table(output_io, table_data;
+            column_labels = ["Reference", "Name", "Email", "Registered", "Cost", "Remaining", "Status"],
+            alignment = [:l, :l, :l, :l, :r, :r, :l],
+            highlighters = [hl_paid, hl_partial, hl_unpaid, hl_noconfig, hl_remaining_positive],
+            maximum_number_of_columns = -1,
+            maximum_number_of_rows = -1,
+            vertical_crop_mode = :none,
+        )
+
+        # Print summary
+        println(output_io)
+        print_registration_summary(data; io=output_io)
     end
 
-    # Build table data
-    table_data = Matrix{Any}(undef, length(rows_to_show), 7)
-
-    for (i, row) in enumerate(rows_to_show)
-        table_data[i, 1] = row.reference
-        table_data[i, 2] = row.last_name * ", " * row.first_name
-        table_data[i, 3] = length(row.email) > 30 ? row.email[1:27] * "..." : row.email
-        table_data[i, 4] = row.registration_date !== nothing ? Dates.format(row.registration_date, "yyyy-mm-dd") : "—"
-        table_data[i, 5] = format_money(row.cost)
-        table_data[i, 6] = row.status == STATUS_NO_CONFIG ? "—" : format_money(row.remaining)
-        table_data[i, 7] = status_display(row.status)
+    # Use pager if requested and io is stdout
+    if pager && io === stdout
+        _with_pager(_do_print, true)
+    else
+        _do_print(io)
     end
-
-    # Create highlighters for colored status column
-    hl_paid = TextHighlighter(
-        (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_PAID,
-        COLOR_PAID
-    )
-    hl_partial = TextHighlighter(
-        (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_PARTIAL,
-        COLOR_PARTIAL
-    )
-    hl_unpaid = TextHighlighter(
-        (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_UNPAID,
-        COLOR_UNPAID
-    )
-    hl_noconfig = TextHighlighter(
-        (tbl, i, j) -> j == 7 && rows_to_show[i].status == STATUS_NO_CONFIG,
-        COLOR_NO_CONFIG
-    )
-
-    # Highlight remaining column based on value
-    hl_remaining_positive = TextHighlighter(
-        (tbl, i, j) -> j == 6 && rows_to_show[i].remaining > 0 && rows_to_show[i].status != STATUS_NO_CONFIG,
-        COLOR_UNPAID
-    )
-
-    # Print title
-    title_str = "Registrations: $(data.event_id)"
-    if data.event_name !== nothing
-        title_str *= " - $(data.event_name)"
-    end
-
-    println(io)
-    println(io, COLOR_HEADER(title_str))
-    println(io, COLOR_HEADER("=" ^ length(title_str)))
-    println(io)
-
-    # Print table with PrettyTables (PT 3.x: no crop/vcrop_mode kwargs to _text__print_table)
-    pretty_table(io, table_data;
-        column_labels = ["Reference", "Name", "Email", "Registered", "Cost", "Remaining", "Status"],
-        alignment = [:l, :l, :l, :l, :r, :r, :l],
-        highlighters = [hl_paid, hl_partial, hl_unpaid, hl_noconfig, hl_remaining_positive],
-        maximum_number_of_columns = -1,
-        maximum_number_of_rows = -1,
-        vertical_crop_mode = :none
-    )
-
-    # Print summary
-    println(io)
-    print_registration_summary(data; io=io)
 end
 
 """

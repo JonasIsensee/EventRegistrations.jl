@@ -180,11 +180,13 @@ EXPORTS:
     --format=<fmt>               Output: terminal, pdf, latex, csv, xlsx
     --filter=<filter>            Filter: all, unpaid, problems, paid, no-config
     --summary-only               Show only totals, not individual rows
+    --pager                      Display output in scrollable pager (terminal only)
     --upload                     Upload exported file to WebDAV (requires credentials.toml)
   export-registrations [event-id] [output]   Export/print registration data
     --format=<fmt>               Output: terminal, pdf, latex, csv, xlsx
     --filter=<filter>            Filter: all, unpaid, problems, paid
     --details                    Include all registration fields (terminal/csv/xlsx)
+    --pager                      Display output in scrollable pager (terminal only)
     --upload                     Upload exported file to WebDAV (requires credentials.toml)
     # Column order via config/events/<event>.toml [export.registration_details]
   export-combined [event-id] [output]        Export combined multi-sheet XLSX workbook
@@ -196,6 +198,7 @@ EXPORTS:
     --name=<pattern>             Filter by name (regex pattern)
     --email=<pattern>            Filter by email (regex pattern)
     --since=<date>               Only registrations since date (yyyy-mm-dd)
+    --pager                      Display output in scrollable pager
   edit-registrations [event-id]   Edit registrations in external editor
     --event-id=<id>              Event to edit
     --name=<pattern>             Filter by name (regex)
@@ -233,6 +236,7 @@ EXAMPLES:
   eventreg list-registrations --filter=unpaid              # list unpaid registrations
   eventreg list-registrations --name="Müller"              # filter by name
   eventreg list-registrations --since=2025-01-01           # registrations since date
+  eventreg list-registrations --pager                      # scrollable pager with full emails
   eventreg list-pending-emails                             # list pending emails
   eventreg list-pending-emails -v                          # with full content
   eventreg send-emails                                     # send all pending
@@ -243,11 +247,13 @@ EXAMPLES:
   eventreg mark-email discarded --all --event-id=PWE_2026_01  # discard for specific event
   eventreg export-payment-status                           # colored terminal output
   eventreg export-payment-status --filter=unpaid           # show only unpaid
+  eventreg export-payment-status --pager                   # scrollable pager view
   eventreg export-payment-status --summary-only            # show only totals
   eventreg export-payment-status PWE_2026_01 report.pdf    # export to PDF
   eventreg export-payment-status --format=latex            # generate LaTeX
   eventreg export-payment-status --format=csv --upload     # export CSV and upload to WebDAV
   eventreg export-registrations report.pdf                 # export registrations to PDF
+  eventreg export-registrations --pager                    # scrollable pager view
   eventreg export-registrations --format=xlsx --upload     # export XLSX and upload
   eventreg export-combined                                 # export most recent event
   eventreg export-combined PWE_2026_01                     # export specific event
@@ -332,7 +338,7 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
             return cmd_recalculate_costs(db, positional[1]; events_dir=events_dir, strict=get(options, :strict, false), dry_run=get(options, :dry_run, false))
         elseif command == "list-registrations"
             event_id = length(positional) >= 1 ? positional[1] : nothing
-            return cmd_list_registrations(db, event_id; filter=get(options, :filter, "all"), name=get(options, :name, nothing), email=get(options, :email, nothing), since=get(options, :since, nothing))
+            return cmd_list_registrations(db, event_id; filter=get(options, :filter, "all"), name=get(options, :name, nothing), email=get(options, :email, nothing), since=get(options, :since, nothing), pager=get(options, :pager, false))
         elseif command == "edit-registrations"
             event_id = get(options, :event_id, length(positional) >= 1 ? positional[1] : nothing)
             return cmd_edit_registrations(db; event_id=event_id, name=get(options, :name, nothing), since=get(options, :since, nothing), spawn_editor=true)
@@ -371,11 +377,11 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
         elseif command == "export-payment-status"
             event_id = length(positional) >= 1 ? positional[1] : nothing
             output = length(positional) >= 2 ? positional[2] : get(options, :output, nothing)
-            return cmd_export_payment_status(db, event_id, output; format=get(options, :format, "terminal"), filter=get(options, :filter, "all"), summary_only=get(options, :summary_only, false), upload=get(options, :upload, false), credentials_path=credentials_path, db_path=db_path)
+            return cmd_export_payment_status(db, event_id, output; format=get(options, :format, "terminal"), filter=get(options, :filter, "all"), summary_only=get(options, :summary_only, false), upload=get(options, :upload, false), credentials_path=credentials_path, db_path=db_path, pager=get(options, :pager, false))
         elseif command == "export-registrations"
             event_id = length(positional) >= 1 ? positional[1] : nothing
             output = length(positional) >= 2 ? positional[2] : get(options, :output, nothing)
-            return cmd_export_registrations(db, event_id, output; format=get(options, :format, "terminal"), filter=get(options, :filter, "all"), details=get(options, :details, false), events_dir=events_dir, upload=get(options, :upload, false), credentials_path=credentials_path, db_path=db_path)
+            return cmd_export_registrations(db, event_id, output; format=get(options, :format, "terminal"), filter=get(options, :filter, "all"), details=get(options, :details, false), events_dir=events_dir, upload=get(options, :upload, false), credentials_path=credentials_path, db_path=db_path, pager=get(options, :pager, false))
         elseif command == "export-combined"
             event_id = length(positional) >= 1 ? positional[1] : nothing
             output = length(positional) >= 2 ? positional[2] : get(options, :output, nothing)
