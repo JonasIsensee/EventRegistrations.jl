@@ -494,7 +494,8 @@ function print_payment_table(data::PaymentTableData;
             highlighters = [hl_paid, hl_overpaid, hl_partial, hl_unpaid, hl_noconfig,
                            hl_remaining_negative, hl_remaining_positive],
             maximum_number_of_columns = -1,
-            maximum_number_of_rows = -1
+            maximum_number_of_rows = -1,
+            vertical_crop_mode = :none
         )
 
         # Print summary
@@ -733,7 +734,7 @@ function print_registration_table(data::RegistrationTableData;
                                    truncate_email::Union{Bool,Nothing}=nothing)
     # Resolve truncate_email default based on pager setting
     actual_truncate_email = truncate_email === nothing ? !pager : truncate_email
-    
+
     # Define the actual printing logic
     function _do_print(output_io::IO)
         rows_to_show = filter_registrations(data, filter)
@@ -798,7 +799,8 @@ function print_registration_table(data::RegistrationTableData;
             alignment = [:l, :l, :l, :l, :r, :r, :l],
             highlighters = [hl_paid, hl_partial, hl_unpaid, hl_noconfig, hl_remaining_positive],
             maximum_number_of_columns = -1,
-            maximum_number_of_rows = -1
+            maximum_number_of_rows = -1,
+            vertical_crop_mode = :none,
         )
 
         # Print summary
