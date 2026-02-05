@@ -411,10 +411,34 @@ export main
 
 using PrecompileTools
 @setup_workload begin
-    cd(joinpath(@__DIR__,"..", "testingfolder"))
+    # Base: minimal workload so package loads even without playground.
+    temp_dir = mktempdir()
+    events_dir = joinpath(temp_dir, "events")
+    mkpath(events_dir)
+    # When present, use playground data to precompile more paths (emails, costs, exports).
+    play_dir = joinpath(@__DIR__, "..", "playground")
+    has_playground = isdir(play_dir)
+    play_events = has_playground ? joinpath(play_dir, "events") : ""
+    play_emails = has_playground ? joinpath(play_dir, "emails") : ""
     @compile_workload begin
-        # inside here, put a "toy example" of everything you want to be fast
-        run_cli(["sync", "--export-details=--format=csv", "--export-payments=--format=csv"])
+        db = init_database(":memory:")
+        sync_event_configs_to_db!(db, events_dir)
+        list_events(db)
+        get_registrations(db, "dummy")
+        if has_playground && isdir(play_emails) && isdir(play_events)
+            sync_event_configs_to_db!(db, play_events)
+            process_email_folder!(db, play_emails; events_dir=play_events)
+            recalculate_costs!(db, "PWE_2026_01"; events_dir=play_events)
+            list_events(db)
+            get_registrations(db, "PWE_2026_01")
+            get_payment_summary(db, "PWE_2026_01")
+            payment_data = get_payment_table_data(db, "PWE_2026_01")
+            out_csv = joinpath(temp_dir, "payment_status.csv")
+            export_payment_csv(payment_data, out_csv)
+            get_registration_table_data(db, "PWE_2026_01")
+            get_registration_detail_table(db, "PWE_2026_01"; events_dir=play_events)
+        end
+        DBInterface.close!(db)
     end
 end
 

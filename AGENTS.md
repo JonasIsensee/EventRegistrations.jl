@@ -854,7 +854,7 @@ EventRegistrations.jl/
 - Crayons.jl (colored output)
 
 **Development**:
-- PrecompileTools.jl (faster startup)
+- PrecompileTools.jl (faster startup). See **docs/PRECOMPILE_TTFX.md** for precompile/TTFX diagnostics, SnoopCompile workflow, and worst-offender improvement options.
 - TableEdit.jl (interactive editing)
 - REPL/LineEdit (custom REPL; no ReplMaker)
 
