@@ -6,10 +6,11 @@ Does not take a db handle; creates and closes the database. In REPL mode,
 running init will close the current connection and re-open after re-initializing.
 """
 function cmd_init(; db_path::String="events.duckdb")
-    @info "Initializing EventRegistrations project..." db_path=db_path
+    @verbose_info "Initializing EventRegistrations project..." db_path
 
     db = init_project(db_path)
     DBInterface.close!(db)
+    @info "Project initialized" db_path
     return 0
 end
 
@@ -42,7 +43,7 @@ Sync event config files to database.
 """
 function cmd_sync_config(db::DuckDB.DB; events_dir::String="events")
     updated = sync_event_configs_to_db!(db, events_dir)
-    @info "Synced event configs to database" updated=length(updated)
+    @info "Synced configs" updated=length(updated)
     return 0
 end
 
@@ -64,6 +65,38 @@ Caller must open db; run_cli opens it before calling.
 """
 function cmd_status(db::DuckDB.DB; db_path::String="events.duckdb")
     events_dir = "events"
+    
+    # Concise output by default
+    if !is_verbose()
+        result = DBInterface.execute(db, "SELECT COUNT(*) FROM registrations WHERE deleted_at IS NULL")
+        registration_count = first(collect(result))[1]
+        
+        result = DBInterface.execute(db, """
+            SELECT e.event_id, COUNT(r.id) as reg_count
+            FROM events e
+            LEFT JOIN registrations r ON r.event_id = e.event_id AND r.deleted_at IS NULL
+            GROUP BY e.event_id
+            ORDER BY e.event_id
+        """)
+        events = collect(result)
+        
+        @info "EventRegistrations Status"
+        @info "Database: $db_path ($(round(stat(db_path).size / 1024 / 1024, digits=2)) MB)"
+        @info "Total registrations: $registration_count"
+        
+        if !isempty(events)
+            println("Events:")
+            for row in events
+                eid, reg_count = row
+                println("  - $eid: $reg_count registrations")
+            end
+        end
+        
+        @info "Use --verbose for detailed information"
+        return 0
+    end
+    
+    # Verbose output
     header = [
         "EventRegistrations System Status",
         "=" ^ 80,

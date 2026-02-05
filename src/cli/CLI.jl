@@ -105,6 +105,7 @@ function parse_subcommand_options(args_str::String)
     return options
 end
 
+include("Verbosity.jl")
 include("project.jl")
 include("emails.jl")
 include("registrations.jl")
@@ -318,6 +319,9 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
     events_dir::String="events",
     credentials_path::String="credentials.toml",
     from_repl::Bool=false)
+    # Set global verbosity flag based on command-line options
+    set_verbose!(get(options, :verbose, false))
+    
     try
         if command == "init"
             return cmd_init(; db_path=db_path)

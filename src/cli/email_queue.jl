@@ -7,29 +7,26 @@ function cmd_list_pending_emails(db::DuckDB.DB;
     event_id::Union{String,Nothing}=nothing,
     email_type::Union{String,Nothing}=nothing,
     verbose::Bool=false)
+    # Use passed verbose flag if specified, otherwise use global setting
+    show_verbose = verbose || is_verbose()
+    
     pending = get_pending_emails(db; event_id=event_id, email_type=email_type)
 
     if isempty(pending)
-        @info "✓ No pending emails in queue."
+        @info "No pending emails"
         return 0
     end
 
-    @info """📧 Pending Emails ($(length(pending))):
-$("=" ^ 80)"""
+    @info "Pending emails: $(length(pending))"
 
     for email in pending
         details = [
-            "  ID: $(email.id)",
-            "  To: $(email.email_to)",
-            "  Name: $(email.first_name) $(email.last_name)",
-            "  Event: $(email.event_id)",
-            "  Reference: $(email.reference_number)",
-            "  Reason: $(email.reason)",
-            "  Remaining: €$(email.remaining)",
-            "  Queued: $(email.queued_at)",
+            "  ID: $(email.id) | To: $(email.email_to)",
+            "  Name: $(email.first_name) $(email.last_name) | Event: $(email.event_id)",
+            "  Ref: $(email.reference_number) | Reason: $(email.reason) | Remaining: €$(email.remaining)",
         ]
 
-        if verbose
+        if show_verbose
             push!(details, "  Subject: $(email.subject)")
             push!(details, "  --- Email Body ---")
             append!(details, ["  │ $line" for line in split(email.body_text, '\n')])
@@ -37,15 +34,12 @@ $("=" ^ 80)"""
         end
 
         push!(details, "-" ^ 80)
-        @info join(details, "\n")
+        println(join(details, "\n"))
     end
 
-    @info """Commands:
-eventreg send-emails                 # Send all pending
-eventreg send-emails --id=<id>       # Send specific email
-eventreg mark-email sent <id>        # Mark as sent (without sending)
-eventreg mark-email discarded <id>   # Discard single email
-eventreg mark-email discarded --all  # Discard all pending emails"""
+    if !show_verbose
+        @info "Use -v or --verbose to see email content"
+    end
 
     return 0
 end
@@ -77,14 +71,9 @@ eventreg mark-email $status --all       # Mark all pending emails"""
     if all
         pending = get_pending_emails(db; event_id=event_id, email_type=email_type)
         if isempty(pending)
-            @info "✓ No pending emails to mark as $status."
+            @info "No pending emails to mark"
             return 0
         end
-
-        event_msg = event_id !== nothing ? " for event $event_id" : ""
-        action = status == "sent" ? "mark as sent" : "discard"
-        type_msg = email_type !== nothing ? " of type $email_type" : ""
-        @warn "⚠ About to $action $(length(pending)) pending email(s)$event_msg$type_msg"
 
         marked_count = 0
         for email in pending
@@ -92,8 +81,7 @@ eventreg mark-email $status --all       # Mark all pending emails"""
             marked_count += 1
         end
 
-        action_past = status == "sent" ? "marked as sent" : "discarded"
-        @info "✓ $marked_count email(s) $action_past"
+        @info "Marked emails" count=marked_count status=status
         return 0
     else
         result = DBInterface.execute(db, """
@@ -122,8 +110,7 @@ eventreg mark-email $status --all       # Mark all pending emails"""
 
         mark_email!(db, id, status; processed_by="cli")
 
-        action = status == "sent" ? "marked as sent" : "discarded"
-        @info "✓ Email to $first_name $last_name <$email_to> $action"
+        @info "Marked email" id=id status=status name="$first_name $last_name"
         return 0
     end
 end
@@ -140,14 +127,14 @@ function cmd_send_emails(db::DuckDB.DB;
 
     # Warn if email redirection is active
     if !isempty(ctx.email.redirect_to)
-        @warn "EMAIL REDIRECTION ACTIVE: All emails will be sent to $(ctx.email.redirect_to) instead of actual recipients"
+        @warn "EMAIL REDIRECTION ACTIVE" redirect_to=ctx.email.redirect_to
     end
 
     if id !== nothing
-        @info "Sending email" id=id
+        @verbose_info "Sending email" id=id
         success = send_queued_email!(ctx.email, db, id)
         if success
-            @info "✓ Email sent successfully" id=id
+            @info "Email sent" id=id
         else
             @error "Failed to send email" id=id
             return 1
@@ -155,32 +142,26 @@ function cmd_send_emails(db::DuckDB.DB;
     else
         pending = get_pending_emails(db; event_id)
         if isempty(pending)
-            @info "✓ No pending emails to send."
+            @info "No pending emails"
             return 0
         end
 
-        @info "Sending pending emails" count=length(pending) event_id=event_id
+        @verbose_info "Sending pending emails" count=length(pending)
         sent_count = 0
         error_count = 0
         for email in pending
-            @info "  Sending to $(email.email_to) ($(email.first_name) $(email.last_name))..."
+            @verbose_info "Sending to $(email.email_to)..."
             success = send_queued_email!(ctx.email, db, email.id)
             sent_count += success
             error_count += !success
         end
 
-        summary = [
-            "✓ Email sending complete!",
-            "Sent: $(sent_count)",
-        ]
-
         if error_count > 0
-            push!(summary, "⚠ Errors: $(error_count)")
-            @warn join(summary, "\n")
+            @warn "Email sending errors" sent=sent_count errors=error_count
             return 1
+        else
+            @info "Sent emails" sent=sent_count
         end
-
-        @info join(summary, "\n")
     end
 
     return 0
