@@ -33,7 +33,7 @@ result = upload_via_webdav(
     "share/payment_status.xlsx";
     server_url = "https://owncloud.example.com/remote.php/webdav",
     username = "user",
-    password = "secret"
+    password = "your-password"
 )
 ```
 

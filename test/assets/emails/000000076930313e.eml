@@ -1,26 +1,26 @@
-Return-Path: <no-reply@unimusik.clubdesk.com>
+Return-Path: <no-reply@form-service.example.com>
 X-Spam-Checker-Version: SpamAssassin 3.4.2 (2018-09-13) on
-	alfa3063.alfahosting-server.de
+	mailhost.example.com
 X-Spam-Level: 
 X-Spam-Status: No, score=-4.5 required=5.0 tests=AWL,BAYES_00,DKIM_SIGNED,
 	DKIM_VALID,DKIM_VALID_EF,HTML_MESSAGE,RCVD_IN_DNSWL_BLOCKED,
 	RCVD_IN_RP_CERTIFIED,RCVD_IN_RP_RNBL,RCVD_IN_RP_SAFE,SPF_HELO_PASS,
 	SPF_PASS autolearn=ham autolearn_force=no version=3.4.2
 X-Spam-DCC: : 
-X-Original-To: pwe@unimusik-goettingen.de
-Delivered-To: confixx-du-13658@alfa3063.alfahosting-server.de
-Received-SPF: Pass (mailfrom) identity=mailfrom; client-ip=5.148.169.160; helo=gate1.clubdesk.com; envelope-from=no-reply@unimusik.clubdesk.com; receiver=<UNKNOWN> 
-Received: from gate1.clubdesk.com (gate1.clubdesk.com [5.148.169.160])
-	by alfa3063.alfahosting-server.de (Postfix) with ESMTPS id D1E4B56E8D6D
-	for <pwe@unimusik-goettingen.de>; Thu,  4 Dec 2025 11:25:13 +0100 (CET)
+X-Original-To: events@example.com
+Delivered-To: inbox@mailhost.example.com
+Received-SPF: Pass (mailfrom) identity=mailfrom; client-ip=5.148.169.160; helo=gate.form-service.example.com; envelope-from=no-reply@form-service.example.com; receiver=<UNKNOWN> 
+Received: from gate.form-service.example.com (gate.form-service.example.com [5.148.169.160])
+	by mailhost.example.com (Postfix) with ESMTPS id D1E4B56E8D6D
+	for <events@example.com>; Thu,  4 Dec 2025 11:25:13 +0100 (CET)
 DKIM-Signature: a=rsa-sha256; b=WEp9iHEPfwJPRG9izE32+g9G8dpXUQCOR7Jtlu/5h9BLLXMjqc04xipa+ZleXvmNyUvDCKQXU6qi0Ql7XIqfEOQGlPnMHUpbsO3LJTwGXbLG0Kiq0EtSZmj9VfLqHrApp0rpEWL8aH9hCnlUoCAKcQRhFESZ+6S25bAF92XKgpuH88k56BfW2BOoLD2MaCriudMbOMPNTqMuQeWVFebLwgD6WGlZlgmOEEdn9LJQM8rny7b9l6VY54/u0wJq6OvbVh03/pZiFJAaXD5e+oK4FLbBS8fHJSaV1OhbI/uFEEP/hEFSubaODBUdhG7V6Gz4j+nkXoRlvpSWZ99vcmYHoA==; s=cd0; c=relaxed/relaxed; d=clubdesk.com; v=1; bh=GeX9wLYYADAfTC/LiX8s1kgldp2PRabh1oGZ6RnxDMg=; h=from:to:subject:date:message-id:mime-version:content-language;
 Received: from prod-www-1.prod_default (EHLO 0.0.0.0) ([10.20.0.5])
           by 1e43cb5efc6e (JAMES SMTP Server ) with ESMTP ID -1786626182
-          for <pwe@unimusik-goettingen.de>;
+          for <events@example.com>;
           Thu, 04 Dec 2025 11:24:53 +0100 (CET)
 Date: Thu, 4 Dec 2025 11:24:53 +0100 (CET)
-From: no-reply@unimusik.clubdesk.com
-To: pwe@unimusik-goettingen.de
+From: no-reply@form-service.example.com
+To: events@example.com
 Message-ID: <751880027.458.1764843893705@4b2c236d719a>
 Subject: Anmeldung: PWE_2026_01
 MIME-Version: 1.0
@@ -36,7 +36,7 @@ Content-Transfer-Encoding: quoted-printable
 
 Vorname:=09Peter:
 Nachname:=09Schmidt:
-E-Mail:=09peter@jonasisensee.de:
+E-Mail:=09user1@example.local:
 Stimmgruppe:=09Bariton:
 Essen:=09Vegan:
 Lebensmittelunvertr=C3=A4glichkeiten / Allergien:=09:
@@ -95,9 +95,9 @@ Content-Transfer-Encoding: 7bit
     <tr>
         <th colspan="2">Anmeldung: PWE_2026_01</th>
     </tr>
-    <tr><td class="label">Vorname</td><td>Peter</td></tr><tr><td class="label">Nachname</td><td>Schmidt</td></tr><tr><td class="label">E-Mail</td><td>peter@jonasisensee.de</td></tr><tr><td class="label">Stimmgruppe</td><td>Bariton</td></tr><tr><td class="label">Essen</td><td>Vegan</td></tr><tr><td class="label">Lebensmittelunvertr&auml;glichkeiten / Allergien</td><td></td></tr><tr><td class="label">&Uuml;bernachtung Freitag</td><td>Ja</td></tr><tr><td class="label">&Uuml;bernachtung Samstag</td><td>Ja</td></tr><tr><td class="label">Busfahrt Hinweg (10&euro;)</td><td>Ja</td></tr><tr><td class="label">Busfahrt R&uuml;ckweg (10&euro;)</td><td>Ja</td></tr><tr><td class="label">Wie m&ouml;chte ich &uuml;bernachten?</td><td>Einzelzimmer (+10 &euro; pro Nacht)</td></tr><tr><td class="label">Belegungswunsch f&uuml;r das Zimmer</td><td></td></tr><tr><td class="label">Sonstiges:</td><td>Ich habe im Lotto gewonnen.</td></tr>
+    <tr><td class="label">Vorname</td><td>TestFirst1</td></tr><tr><td class="label">Nachname</td><td>TestLast1</td></tr><tr><td class="label">E-Mail</td><td>user1@example.local</td></tr><tr><td class="label">Stimmgruppe</td><td>Bariton</td></tr><tr><td class="label">Essen</td><td>Vegan</td></tr><tr><td class="label">Lebensmittelunvertr&auml;glichkeiten / Allergien</td><td></td></tr><tr><td class="label">&Uuml;bernachtung Freitag</td><td>Ja</td></tr><tr><td class="label">&Uuml;bernachtung Samstag</td><td>Ja</td></tr><tr><td class="label">Busfahrt Hinweg (10&euro;)</td><td>Ja</td></tr><tr><td class="label">Busfahrt R&uuml;ckweg (10&euro;)</td><td>Ja</td></tr><tr><td class="label">Wie m&ouml;chte ich &uuml;bernachten?</td><td>Einzelzimmer (+10 &euro; pro Nacht)</td></tr><tr><td class="label">Belegungswunsch f&uuml;r das Zimmer</td><td></td></tr><tr><td class="label">Sonstiges:</td><td>Ich habe im Lotto gewonnen.</td></tr>
     <tr>
-        <td class="caption" colspan="2">unimusik.clubdesk.com</td>
+        <td class="caption" colspan="2">form-service.example.com</td>
     </tr>
 </table>
 

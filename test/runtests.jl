@@ -39,7 +39,7 @@ function create_test_emails()
 
     # Email 1: Basic registration
     email1 = """
-From: noreply@clubdesk.com
+From: noreply@form-service.example.com
 To: recipient@example.com
 Subject: Neue Anmeldung: PWE_2026_01
 Date: Mon, 15 Jan 2024 10:30:00 +0100
@@ -53,7 +53,7 @@ Content-Type: text/html; charset=UTF-8
     <tr><th colspan="2">Anmeldung: PWE_2026_01</th></tr>
     <tr><td class="label">Vorname</td><td>Jonas</td></tr>
     <tr><td class="label">Nachname</td><td>Testmann</td></tr>
-    <tr><td class="label">E-Mail</td><td>jonas@example.de</td></tr>
+    <tr><td class="label">E-Mail</td><td>jonas@example.com</td></tr>
     <tr><td class="label">Stimmgruppe</td><td>Kontrabass</td></tr>
     <tr><td class="label">Übernachtung Freitag</td><td>Ja</td></tr>
     <tr><td class="label">Übernachtung Samstag</td><td>Ja</td></tr>
@@ -66,7 +66,7 @@ Content-Type: text/html; charset=UTF-8
 
     # Email 2: Different person
     email2 = """
-From: noreply@clubdesk.com
+From: noreply@form-service.example.com
 To: recipient@example.com
 Subject: Neue Anmeldung: PWE_2026_01
 Date: Tue, 16 Jan 2024 14:22:00 +0100
@@ -79,8 +79,8 @@ Content-Type: text/html; charset=UTF-8
 <table style="border-collapse:collapse;">
     <tr><th colspan="2">Anmeldung: PWE_2026_01</th></tr>
     <tr><td class="label">Vorname</td><td>Maria</td></tr>
-    <tr><td class="label">Nachname</td><td>Müller</td></tr>
-    <tr><td class="label">E-Mail</td><td>maria@example.de</td></tr>
+    <tr><td class="label">Nachname</td><td>Musterfrau</td></tr>
+    <tr><td class="label">E-Mail</td><td>maria@example.com</td></tr>
     <tr><td class="label">Stimmgruppe</td><td>Violine 1</td></tr>
     <tr><td class="label">Übernachtung Freitag</td><td>Nein</td></tr>
     <tr><td class="label">Übernachtung Samstag</td><td>Ja</td></tr>
@@ -92,7 +92,7 @@ Content-Type: text/html; charset=UTF-8
 
     # Email 3: Resubmission (same email as email1)
     email3 = """
-From: noreply@clubdesk.com
+From: noreply@form-service.example.com
 To: recipient@example.com
 Subject: Neue Anmeldung: PWE_2026_01
 Date: Wed, 17 Jan 2024 09:15:00 +0100
@@ -106,7 +106,7 @@ Content-Type: text/html; charset=UTF-8
     <tr><th colspan="2">Anmeldung: PWE_2026_01</th></tr>
     <tr><td class="label">Vorname</td><td>Jonas</td></tr>
     <tr><td class="label">Nachname</td><td>Testmann</td></tr>
-    <tr><td class="label">E-Mail</td><td>jonas@example.de</td></tr>
+    <tr><td class="label">E-Mail</td><td>jonas@example.com</td></tr>
     <tr><td class="label">Stimmgruppe</td><td>Kontrabass</td></tr>
     <tr><td class="label">Übernachtung Freitag</td><td>Ja</td></tr>
     <tr><td class="label">Übernachtung Samstag</td><td>Nein</td></tr>
@@ -119,7 +119,7 @@ Content-Type: text/html; charset=UTF-8
 
     # Email 4: Different event
     email4 = """
-From: noreply@clubdesk.com
+From: noreply@form-service.example.com
 To: recipient@example.com
 Subject: Neue Anmeldung: Sommerkonzert_2024
 Date: Thu, 18 Jan 2024 11:00:00 +0100
@@ -131,9 +131,9 @@ Content-Type: text/html; charset=UTF-8
 <body>
 <table style="border-collapse:collapse;">
     <tr><th colspan="2">Anmeldung: Sommerkonzert_2024</th></tr>
-    <tr><td class="label">Vorname</td><td>Peter</td></tr>
-    <tr><td class="label">Nachname</td><td>Schmidt</td></tr>
-    <tr><td class="label">E-Mail</td><td>peter@example.de</td></tr>
+    <tr><td class="label">Vorname</td><td>Max</td></tr>
+    <tr><td class="label">Nachname</td><td>Mustermann</td></tr>
+    <tr><td class="label">E-Mail</td><td>max@example.com</td></tr>
     <tr><td class="label">Instrument</td><td>Trompete</td></tr>
 </table>
 </body>
@@ -149,8 +149,8 @@ function create_test_bank_csv()
     mkpath(TEST_BANK_DIR)
 
     csv_content = """Buchungstag;Valuta;Auftraggeber;Empfänger;Verwendungszweck;Betrag;IBAN
-15.01.2024;15.01.2024;Jonas Testmann;Unimusik e.V.;PWE26-000001;75,00;DE12345678901234567890
-16.01.2024;16.01.2024;Maria Müller;Unimusik e.V.;PWE26-000002;25,00;DE09876543210987654321
+15.01.2024;15.01.2024;Jonas Testmann;Example e.V.;PWE26-000001;75,00;DE12345678901234567890
+16.01.2024;16.01.2024;Maria Musterfrau;Example e.V.;PWE26-000002;25,00;DE09876543210987654321
 """
 
     csv_path = joinpath(TEST_BANK_DIR, "transfers.csv")
@@ -164,7 +164,7 @@ function create_additional_test_registrations(db, event_id, count)
     timestamp_suffix = round(Int, time() * 1000)  # Millisecond timestamp for uniqueness
     created_ids = Int[]
     for i in 1:count
-        email = "testuser$(i)_$(timestamp_suffix)@example.de"
+        email = "testuser$(i)_$(timestamp_suffix)@example.com"
         first_name = "Test$(i)"
         last_name = "User$(i)"
         fields = "{\"Stimmgruppe\": \"Violine\"}"
@@ -315,22 +315,22 @@ try
 
         # Check submission history for Jonas (should have multiple submissions because email3 is a resubmission)
         submissions = DBInterface.execute(db,
-            "SELECT COUNT(*) FROM submissions WHERE email = 'jonas@example.de'") |> collect
+            "SELECT COUNT(*) FROM submissions WHERE email = 'jonas@example.com'") |> collect
         submission_count = submissions[1][1]
 
-        # With our test data, jonas@example.de appears in email1 and email3 (resubmission)
+        # With our test data, jonas@example.com appears in email1 and email3 (resubmission)
         @test submission_count >= 1  # At least one submission
 
         # Check that there's only one registration despite multiple submissions
         result = DBInterface.execute(db,
-            "SELECT COUNT(*) FROM registrations WHERE email = 'jonas@example.de'") |> collect
+            "SELECT COUNT(*) FROM registrations WHERE email = 'jonas@example.com'") |> collect
         reg_count = result[1][1]
         @test reg_count >= 1  # At least one registration record
 
         # If we have a registration, verify reference number
         if reg_count > 0
             ref_result = DBInterface.execute(db,
-                "SELECT reference_number FROM registrations WHERE email = 'jonas@example.de'") |> collect
+                "SELECT reference_number FROM registrations WHERE email = 'jonas@example.com'") |> collect
 
             if !isempty(ref_result)
                 ref_num = ref_result[1][1]
@@ -355,7 +355,7 @@ try
         # Check Jonas's cost (2 nights initially, then resubmitted to 1 night + no bus)
         result = DBInterface.execute(db,
             "SELECT computed_cost, fields FROM registrations WHERE email = ?",
-            ["jonas@example.de"]) |> collect
+            ["jonas@example.com"]) |> collect
 
         @test !isempty(result)
         cost = result[1][1]
@@ -620,8 +620,8 @@ try
         @test "jonas" in names || "testmann" in names
 
         # Test with German umlauts
-        names = extract_name_candidates("Überweisung für Müller")
-        @test "müller" in names
+        names = extract_name_candidates("Überweisung für Musterfrau")
+        @test "musterfrau" in names
 
         # Test filtering common words
         names = extract_name_candidates("Zahlung von Peter für das Event")
@@ -750,7 +750,7 @@ try
             DBInterface.execute(db, "DELETE FROM bank_transfers")
 
             # Test 2: Only first name match with SAME cost - should NOT match
-            # This prevents "Amelie Schmidt" matching "Amelie Mueller"
+            # This prevents "Person A" matching "Person B" when only first name matches
             DBInterface.execute(db, """
                 INSERT INTO bank_transfers (id, transfer_hash, transfer_date, amount,
                     sender_name, reference_text, source_file, imported_at)
@@ -1134,7 +1134,7 @@ try
         # Get Jonas's reference
         result = DBInterface.execute(db,
             "SELECT reference_number FROM registrations WHERE email = ?",
-            ["jonas@example.de"]) |> collect
+            ["jonas@example.com"]) |> collect
 
         if !isempty(result)
             ref_num = result[1][1]
@@ -1861,6 +1861,14 @@ try
         stats = process_email_folder!(db, TEST_EMAILS_DIR)
         @test stats.processed >= 1
 
+        # Clear child rows that reference registrations so UPDATE registrations does not hit
+        # DuckDB FK limitation (UPDATE can trigger "still referenced" when parent row is referenced).
+        DBInterface.execute(db, "DELETE FROM financial_transactions")
+        DBInterface.execute(db, "DELETE FROM payment_matches")
+        DBInterface.execute(db, "DELETE FROM confirmation_emails")
+        DBInterface.execute(db, "DELETE FROM email_queue")
+        DBInterface.execute(db, "DELETE FROM subsidies")
+
         # Happy path: cmd_edit_registrations with spawn_editor=false returns (path, finish_and_apply)
         result = EventRegistrations.cmd_edit_registrations(db; event_id="PWE_2026_01", spawn_editor=false)
         @test result isa Tuple
@@ -1880,16 +1888,16 @@ try
         @test first_data_idx <= length(lines)
         parts = split(lines[first_data_idx], '\t')
         @test length(parts) >= 3
-        parts[3] = "edited@example.de"
+        parts[3] = "edited@example.com"
         lines[first_data_idx] = join(parts, '\t')
         write(path, join(lines, '\n'))
         code, n = finish_and_apply(db)
         @test code == 0
         @test n >= 1
-        r = DBInterface.execute(db, "SELECT id, email FROM registrations WHERE email = ?", ["edited@example.de"]) |> collect
+        r = DBInterface.execute(db, "SELECT id, email FROM registrations WHERE email = ?", ["edited@example.com"]) |> collect
         @test !isempty(r)
         reg_id_edited = r[1][1]
-        @test r[1][2] == "edited@example.de"
+        @test r[1][2] == "edited@example.com"
         println("  ✓ edit-registrations happy path: DB updated after edit")
 
         # Validation failure: corrupt file, finish_and_apply returns error, no changes applied
@@ -1914,7 +1922,7 @@ try
         @test n2 == 0
         r2 = DBInterface.execute(db, "SELECT email FROM registrations WHERE id = ?", [reg_id_edited]) |> collect
         @test !isempty(r2)
-        @test r2[1][1] == "edited@example.de"
+        @test r2[1][1] == "edited@example.com"
         println("  ✓ edit-registrations validation failure: errors reported, DB unchanged")
     end
 
@@ -1960,8 +1968,8 @@ try
         # parse_repl_line: split on spaces, respect quotes, preserve --key=value
         args = EventRegistrations.parse_repl_line("list-registrations --filter=unpaid")
         @test args == ["list-registrations", "--filter=unpaid"]
-        args3 = EventRegistrations.parse_repl_line("list-registrations --name=\"Müller\"")
-        @test args3 == ["list-registrations", "--name=Müller"]
+        args3 = EventRegistrations.parse_repl_line("list-registrations --name=\"Mustermann\"")
+        @test args3 == ["list-registrations", "--name=Mustermann"]
         # REPL input "playground" or "playground init" must parse and dispatch like CLI
         args_play = EventRegistrations.parse_repl_line("playground init")
         @test args_play == ["playground", "init"]

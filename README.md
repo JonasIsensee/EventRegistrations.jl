@@ -159,7 +159,7 @@ eventreg sync --send-emails --export-combined --export-payments
 cd /path/to/EventRegistrations.jl
 ./bin/eventreg edit-registrations --event-id=PWE_2026_01
 # Or filter by name:
-./bin/eventreg edit-registrations --event-id=PWE_2026_01 --name=Müller
+./bin/eventreg edit-registrations --event-id=PWE_2026_01 --name=Mustermann
 # Editor opens; edit email/name, save and close; CLI reports success and DB is updated.
 ```
 ```bash

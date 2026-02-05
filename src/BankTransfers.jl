@@ -307,7 +307,7 @@ function check_name_match(sender_name::AbstractString, reference_text::AbstractS
     end
 
     # STRICT MATCHING: Require BOTH first AND last name to match reasonably well
-    # This prevents matching "Amelie Schmidt" with "Amelie Mueller" just based on first name
+    # This prevents matching "Person A" with "Person B" when only first name matches
     if first_name_score >= 0.8 && last_name_score >= 0.8
         return (true, (first_name_score + last_name_score) / 2)
     end

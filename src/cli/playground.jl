@@ -8,7 +8,7 @@ function generate_sample_emails(event_id::String="PWE_2026_01")
     samples = Tuple{String, String}[]
     
     # Sample 1: Full registration with all options
-    email1 = """From: no-reply@clubdesk.com
+    email1 = """From: no-reply@form-service.example.com
 To: recipient@example.com
 Subject: Anmeldung: $event_id
 Date: $(Dates.format(Dates.now() - Dates.Day(3), "e, dd u yyyy HH:MM:SS +0100"))
@@ -28,9 +28,9 @@ Content-Type: text/html; charset=UTF-8
 <body>
 <table style="border-collapse:collapse;">
     <tr><th colspan="2">Anmeldung: $event_id</th></tr>
-    <tr><td class="label">Vorname</td><td>Anna</td></tr>
-    <tr><td class="label">Nachname</td><td>Schmidt</td></tr>
-    <tr><td class="label">E-Mail</td><td>anna.schmidt@example.de</td></tr>
+    <tr><td class="label">Vorname</td><td>Sample1</td></tr>
+    <tr><td class="label">Nachname</td><td>SampleLast1</td></tr>
+    <tr><td class="label">E-Mail</td><td>sample1@example.com</td></tr>
     <tr><td class="label">Stimmgruppe</td><td>Violine 1</td></tr>
     <tr><td class="label">Essen</td><td>Alles</td></tr>
     <tr><td class="label">Lebensmittelunvertr&auml;glichkeiten / Allergien</td><td></td></tr>
@@ -48,7 +48,7 @@ Content-Type: text/html; charset=UTF-8
     push!(samples, ("registration_001.eml", email1))
     
     # Sample 2: Registration with different options
-    email2 = """From: no-reply@clubdesk.com
+    email2 = """From: no-reply@form-service.example.com
 To: recipient@example.com
 Subject: Anmeldung: $event_id
 Date: $(Dates.format(Dates.now() - Dates.Day(2), "e, dd u yyyy HH:MM:SS +0100"))
@@ -68,9 +68,9 @@ Content-Type: text/html; charset=UTF-8
 <body>
 <table style="border-collapse:collapse;">
     <tr><th colspan="2">Anmeldung: $event_id</th></tr>
-    <tr><td class="label">Vorname</td><td>Max</td></tr>
-    <tr><td class="label">Nachname</td><td>M&uuml;ller</td></tr>
-    <tr><td class="label">E-Mail</td><td>max.mueller@example.de</td></tr>
+    <tr><td class="label">Vorname</td><td>Sample2</td></tr>
+    <tr><td class="label">Nachname</td><td>SampleLast2</td></tr>
+    <tr><td class="label">E-Mail</td><td>sample2@example.com</td></tr>
     <tr><td class="label">Stimmgruppe</td><td>Kontrabass</td></tr>
     <tr><td class="label">Essen</td><td>Vegetarisch</td></tr>
     <tr><td class="label">Lebensmittelunvertr&auml;glichkeiten / Allergien</td><td>Laktose</td></tr>
@@ -88,7 +88,7 @@ Content-Type: text/html; charset=UTF-8
     push!(samples, ("registration_002.eml", email2))
     
     # Sample 3: Minimal registration
-    email3 = """From: no-reply@clubdesk.com
+    email3 = """From: no-reply@form-service.example.com
 To: recipient@example.com
 Subject: Anmeldung: $event_id
 Date: $(Dates.format(Dates.now() - Dates.Day(1), "e, dd u yyyy HH:MM:SS +0100"))
@@ -108,9 +108,9 @@ Content-Type: text/html; charset=UTF-8
 <body>
 <table style="border-collapse:collapse;">
     <tr><th colspan="2">Anmeldung: $event_id</th></tr>
-    <tr><td class="label">Vorname</td><td>Lisa</td></tr>
-    <tr><td class="label">Nachname</td><td>Weber</td></tr>
-    <tr><td class="label">E-Mail</td><td>lisa.weber@example.de</td></tr>
+    <tr><td class="label">Vorname</td><td>Sample3</td></tr>
+    <tr><td class="label">Nachname</td><td>SampleLast3</td></tr>
+    <tr><td class="label">E-Mail</td><td>sample3@example.com</td></tr>
     <tr><td class="label">Stimmgruppe</td><td>Viola</td></tr>
     <tr><td class="label">Essen</td><td>Alles</td></tr>
     <tr><td class="label">Lebensmittelunvertr&auml;glichkeiten / Allergien</td><td></td></tr>
@@ -300,8 +300,8 @@ function cmd_playground_receive_submissions(;
     
     # If count is more than base samples, create variations
     samples = Tuple{String, String}[]
-    names = ["Anna Schmidt", "Max Müller", "Lisa Weber", "Tim Fischer", "Sarah Klein", 
-             "Jonas Berg", "Emma Schneider", "Paul Hoffmann", "Laura Bauer", "Felix Koch"]
+    names = ["Sample1 SampleLast1", "Sample2 SampleLast2", "Sample3 SampleLast3", "Sample4 SampleLast4", "Sample5 SampleLast5",
+             "Sample6 SampleLast6", "Sample7 SampleLast7", "Sample8 SampleLast8", "Sample9 SampleLast9", "Sample10 SampleLast10"]
     instruments = ["Violine 1", "Violine 2", "Viola", "Cello", "Kontrabass", "Flöte", "Oboe", "Klarinette"]
     
     for i in 1:count
@@ -314,7 +314,7 @@ function cmd_playground_receive_submissions(;
             first_name = name_parts[1]
             last_name = name_parts[2]
             instrument = instruments[mod1(i, length(instruments))]
-            email_addr = lowercase("$(first_name).$(last_name)@example.de")
+            email_addr = lowercase("$(first_name).$(last_name)@example.com")
             
             # Vary the options
             fri_night = mod(i, 2) == 0 ? "Ja" : "Nein"
@@ -323,7 +323,7 @@ function cmd_playground_receive_submissions(;
             bus_back = mod(i, 3) == 0 ? "Ja" : "Nein"
             room_type = mod(i, 2) == 0 ? "Mehrbettzimmer" : "Einzelzimmer (+10 &euro; pro Nacht)"
             
-            email_content = """From: no-reply@clubdesk.com
+            email_content = """From: no-reply@form-service.example.com
 To: recipient@example.com
 Subject: Anmeldung: $event_id
 Date: $(Dates.format(Dates.now() - Dates.Day(count - i + 1), "e, dd u yyyy HH:MM:SS +0100"))

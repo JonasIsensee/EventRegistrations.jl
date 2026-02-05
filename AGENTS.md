@@ -575,11 +575,11 @@ DBInterface.close!(db)
 
 ```bash
 # Interactive editing with $EDITOR
-eventreg edit-registrations --event-id=PWE_2026_01 --name=Müller
+eventreg edit-registrations --event-id=PWE_2026_01 --name=Mustermann
 
 # Editor opens with tab-delimited data:
 # id  reference_number  email           first_name  last_name
-# 42  ABC-1234-XY       old@email.com   Max         Müller
+# 42  ABC-1234-XY       sample@example.com   Max         Mustermann
 
 # Edit, save, close → changes applied in transaction
 ```
@@ -911,7 +911,7 @@ Based on the architecture, here's where to extend functionality:
 eventreg export-payment-status PWE_2026_01 --format=terminal
 
 # Find someone by name
-eventreg list-registrations PWE_2026_01 --name=Schmidt
+eventreg list-registrations PWE_2026_01 --name=Mustermann
 
 # Grant subsidy via CLI (use library for batch)
 eventreg grant-subsidy <id> 50.0

@@ -235,7 +235,7 @@ EXAMPLES:
   eventreg import-bank-csv bank_transfers/january.csv
   eventreg match-transfers --event-id=PWE_2026_01
   eventreg list-registrations --filter=unpaid              # list unpaid registrations
-  eventreg list-registrations --name="Müller"              # filter by name
+  eventreg list-registrations --name="Mustermann"         # filter by name
   eventreg list-registrations --since=2025-01-01           # registrations since date
   eventreg list-registrations --pager                      # scrollable pager with full emails
   eventreg list-pending-emails                             # list pending emails

@@ -50,7 +50,7 @@ Ensure your credentials file (credentials.toml) contains:
 [email]
 server = "mail.example.com"
 username = "user@example.com"
-password = "yourpassword"
+password = "your-password"
 port = 995  # optional, defaults to 995"""
         return 1
     end
