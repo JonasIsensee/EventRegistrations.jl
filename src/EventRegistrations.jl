@@ -411,28 +411,56 @@ export main
 
 using PrecompileTools
 @setup_workload begin
-    # Create a temporary directory with test assets for precompilation
+    # Minimal workload: always precompile DB + list_events + get_registrations and
+    # pretty-printing to captured IO (PrettyTables, Crayons) so first use is fast.
+    @compile_workload begin
+        db = init_database(":memory:")
+        try
+            list_events(db)
+            get_registrations(db, "dummy")
+            io = IOBuffer()
+            print_payment_table(get_payment_table_data(db, "PWE_2026_01"); io = io)
+            print_registration_table(get_registration_table_data(db, "PWE_2026_01"); io = io)
+        finally
+            DBInterface.close!(db)
+        end
+    end
+
+    # Full workload when test assets exist: sync + explicit table print to IO
     assets_dir = joinpath(@__DIR__, "..", "test", "assets")
     if isdir(assets_dir)
         precompile_dir = mktempdir()
         try
-            # Copy test assets to temp directory
-            cp(joinpath(assets_dir, "events"), joinpath(precompile_dir, "events"), force=true)
-            cp(joinpath(assets_dir, "emails"), joinpath(precompile_dir, "emails"), force=true)
-            cp(joinpath(assets_dir, "bank_transfers"), joinpath(precompile_dir, "bank_transfers"), force=true)
-            cp(joinpath(assets_dir, "templates"), joinpath(precompile_dir, "templates"), force=true)
+            cp(joinpath(assets_dir, "events"), joinpath(precompile_dir, "events"), force = true)
+            cp(joinpath(assets_dir, "emails"), joinpath(precompile_dir, "emails"), force = true)
+            cp(joinpath(assets_dir, "bank_transfers"), joinpath(precompile_dir, "bank_transfers"), force = true)
+            cp(joinpath(assets_dir, "templates"), joinpath(precompile_dir, "templates"), force = true)
             if isfile(joinpath(assets_dir, "credentials.toml"))
-                cp(joinpath(assets_dir, "credentials.toml"), joinpath(precompile_dir, "credentials.toml"), force=true)
+                cp(joinpath(assets_dir, "credentials.toml"), joinpath(precompile_dir, "credentials.toml"), force = true)
             end
-            
             cd(precompile_dir)
             @compile_workload begin
-                # inside here, put a "toy example" of everything you want to be fast
                 run_cli(["sync", "--export-details=--format=csv", "--export-payments=--format=csv"])
+                # Warm pretty-printing to captured IO (terminal tables, highlighters, Crayons)
+                db = init_database("events.duckdb")
+                try
+                    events = list_events(db)
+                    if !isempty(events)
+                        eid = events[1][1]
+                        buf = IOBuffer()
+                        print_payment_table(get_payment_table_data(db, eid); io = buf)
+                        print_registration_table(get_registration_table_data(db, eid); io = buf)
+                        detail = get_registration_detail_table(db, eid)
+                        if !isempty(detail.rows)
+                            print_registration_detail_table(detail; io = buf)
+                        end
+                    end
+                finally
+                    DBInterface.close!(db)
+                end
             end
         finally
-            # Clean up temp directory
-            rm(precompile_dir, recursive=true, force=true)
+            rm(precompile_dir, recursive = true, force = true)
         end
     end
 end
