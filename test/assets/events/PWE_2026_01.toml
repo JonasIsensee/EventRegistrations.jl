@@ -26,7 +26,7 @@ busfahrt_hinweg_10 = "Busfahrt Hinweg (10€)"
 # Values: Ja, Nein
 busfahrt_rueckweg_10 = "Busfahrt Rückweg (10€)"
 
-# Values: dieechtemaria@jonasisensee.de, hannah@jonasisensee.de, mariamueller@jonasisensee.de, ...
+# Values: user1@example.local, user2@example.local, user3@example.local, ...
 email = "E-Mail"
 
 # Values: Alles, Vegan, Vegetarisch
@@ -35,7 +35,7 @@ essen = "Essen"
 # Values: , Erdnüsse, Keine Nüsse
 lebensmittelunvertra = "Lebensmittelunverträglichkeiten / Allergien"
 
-# Values: Arendt, Isensee, Müller, ...
+# Values: Sample1, Sample2, Sample3, ...
 nachname = "Nachname"
 
 # Values: , Ich habe im Lotto gewonnen., Ich möchte mit dem Flugzeug zurück fliegen
@@ -44,7 +44,7 @@ sonstiges = "Sonstiges"
 # Values: Alt, Bariton, Kontrabass, ...
 stimme = "Stimmgruppe"
 
-# Values: Hannah, Jonas, Maria, ...
+# Values: First1, First2, First3, ...
 vorname = "Vorname"
 
 # Values: Einzelzimmer (+10 € pro Nacht), Mehrbettzimmer

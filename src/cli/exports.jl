@@ -32,25 +32,25 @@ upload_export_to_webdav(ctx, "payment_status_PWE_2026_01.xlsx")
 function upload_export_to_webdav(ctx::AppConfig, local_file::String)
     # Check if file exists
     if !isfile(local_file)
-        @warn "Cannot upload: file not found" local_file=local_file
+        @warn "Cannot upload: file not found" local_file
         return
     end
 
     # Filter by file extension (only upload .xlsx, .csv, .pdf)
     ext = lowercase(splitext(local_file)[2])
     if ext ∉ [".xlsx", ".csv", ".pdf"]
-        @info "Skipping WebDAV upload for non-supported format" file=local_file extension=ext
+        @verbose_info "Skipping WebDAV upload" file=local_file extension=ext
         return
     end
 
     # Validate WebDAV credentials
     if isempty(ctx.email.webdav_url)
-        @info "WebDAV upload skipped: no URL configured"
+        @verbose_info "WebDAV not configured"
         return
     end
 
     if isempty(ctx.email.webdav_username) || isempty(ctx.email.webdav_password)
-        @warn "WebDAV upload skipped: incomplete credentials (missing username or password)"
+        @warn "WebDAV upload skipped: incomplete credentials"
         return
     end
 
@@ -75,12 +75,12 @@ function upload_export_to_webdav(ctx::AppConfig, local_file::String)
         )
 
         if result == 0
-            @info "✓ File uploaded to WebDAV" local_file=local_file remote_path=remote_path
+            @info "Uploaded to WebDAV: $(filename)"
         else
-            @warn "WebDAV upload failed (see earlier error messages)" local_file=local_file
+            @warn "WebDAV upload failed: $(local_file)"
         end
     catch e
-        @warn "WebDAV upload failed with exception" local_file=local_file exception=(e, catch_backtrace())
+        @warn "WebDAV upload failed: $(local_file) - $(e)"
     end
 
     # Always return successfully (upload failures don't fail exports)
@@ -107,7 +107,7 @@ function cmd_export_payment_status(db::DuckDB.DB,
             @error "No events with registrations found"
             return 1
         end
-        @info "Using most recent event" event_id=local_event_id
+        @verbose_info "Using most recent event" event_id=local_event_id
     end
 
     payment_filter = if filter == "unpaid"
@@ -124,7 +124,7 @@ function cmd_export_payment_status(db::DuckDB.DB,
 
     table_data = get_payment_table_data(db, local_event_id)
     if table_data.total_registrations == 0
-        @info "No registrations found for event" event_id=local_event_id
+        @info "No registrations for event: $(local_event_id)"
         return 0
     end
 
@@ -133,8 +133,8 @@ function cmd_export_payment_status(db::DuckDB.DB,
         if table_data.event_name !== nothing
             title_str *= " - $(table_data.event_name)"
         end
-        @info """$title_str
-$("=" ^ length(title_str))"""
+        println(title_str)
+        println("=" ^ length(title_str))
         print_summary(table_data)
         return 0
     end
@@ -157,41 +157,41 @@ $("=" ^ length(title_str))"""
         print_payment_table(table_data; filter=payment_filter, pager=pager)
     elseif output_format == "pdf"
         output_path = actual_output === nothing ? "payment_status_$(local_event_id).pdf" : actual_output
-        @info "Generating PDF" output_path=output_path
+        @verbose_info "Generating PDF" output_path
         export_payment_pdf(table_data, output_path; filter=payment_filter)
-        @info "✓ PDF exported" output_path=output_path
+        @info "Exported PDF: $(output_path)"
         if upload
             ctx = load_app_config(; db_path, credentials_path)
             upload_export_to_webdav(ctx, output_path)
         end
     elseif output_format == "latex"
         output_path = actual_output === nothing ? "payment_status_$(local_event_id).tex" : actual_output
-        @info "Generating LaTeX" output_path=output_path
+        @verbose_info "Generating LaTeX" output_path
         latex_content = generate_latex_document(table_data; filter=payment_filter)
         open(output_path, "w") do f
             write(f, latex_content)
         end
-        @info "✓ LaTeX exported" output_path=output_path
+        @info "Exported LaTeX: $(output_path)"
     elseif output_format == "xlsx"
         output_path = actual_output === nothing ? "payment_status_$(local_event_id).xlsx" : actual_output
-        @info "Exporting XLSX" output_path=output_path
+        @verbose_info "Exporting XLSX" output_path
         export_payment_xlsx(table_data, output_path; filter=payment_filter)
-        @info "✓ XLSX exported" output_path=output_path
+        @info "Exported XLSX: $(output_path)"
         if upload
             ctx = load_app_config(; db_path, credentials_path)
             upload_export_to_webdav(ctx, output_path)
         end
     elseif output_format == "csv"
         output_path = actual_output === nothing ? "payment_status_$(local_event_id).csv" : actual_output
-        @info "Exporting CSV" output_path=output_path
+        @verbose_info "Exporting CSV" output_path
         export_payment_csv(table_data, output_path; filter=payment_filter)
-        @info "✓ CSV exported" output_path=output_path
+        @info "Exported CSV: $(output_path)"
         if upload
             ctx = load_app_config(; db_path, credentials_path)
             upload_export_to_webdav(ctx, output_path)
         end
     else
-        @error "Unknown format" format=output_format supported=["terminal", "pdf", "latex", "xlsx", "csv"]
+        @error "Unknown format" format=output_format
         return 1
     end
     return 0
@@ -219,7 +219,7 @@ function cmd_export_registrations(db::DuckDB.DB,
             @error "No events with registrations found"
             return 1
         end
-        @info "Using most recent event" event_id=local_event_id
+        @info "Using most recent event: $(local_event_id)"
     end
 
     reg_filter = if filter == "unpaid"
@@ -249,7 +249,7 @@ function cmd_export_registrations(db::DuckDB.DB,
     if details
         detail_table = get_registration_detail_table(db, local_event_id; events_dir)
         if isempty(detail_table.rows)
-            @info "No registrations found for event" event_id=local_event_id
+            @info "No registrations found for event: $(local_event_id)"
             return 0
         end
         if output_format == "terminal"
@@ -277,7 +277,7 @@ function cmd_export_registrations(db::DuckDB.DB,
 
     table_data = get_registration_table_data(db, local_event_id)
     if table_data.total_registrations == 0
-        @info "No registrations found for event" event_id=local_event_id
+        @info "No registrations found for event: $(local_event_id)"
         return 0
     end
 
@@ -285,35 +285,35 @@ function cmd_export_registrations(db::DuckDB.DB,
         print_registration_table(table_data; filter=reg_filter, pager=pager)
     elseif output_format == "pdf"
         output_path = actual_output === nothing ? "registrations_$(local_event_id).pdf" : actual_output
-        @info "Generating PDF" output_path=output_path
+        @info "Generating PDF: $(output_path)"
         export_registration_pdf(table_data, output_path; filter=reg_filter)
-        @info "✓ PDF exported" output_path=output_path
+        @info "PDF exported: $(output_path)"
         if upload
             ctx = load_app_config(; db_path, credentials_path)
             upload_export_to_webdav(ctx, output_path)
         end
     elseif output_format == "latex"
         output_path = actual_output === nothing ? "registrations_$(local_event_id).tex" : actual_output
-        @info "Generating LaTeX" output_path=output_path
+        @info "Generating LaTeX: $(output_path)"
         latex_content = generate_registration_latex_document(table_data; filter=reg_filter)
         open(output_path, "w") do f
             write(f, latex_content)
         end
-        @info "✓ LaTeX exported" output_path=output_path
+        @info "LaTeX exported: $(output_path)"
     elseif output_format == "xlsx"
         output_path = actual_output === nothing ? "registrations_$(local_event_id).xlsx" : actual_output
-        @info "Exporting XLSX" output_path=output_path
+        @info "Exporting XLSX: $(output_path)"
         export_registration_xlsx(table_data, output_path; filter=reg_filter)
-        @info "✓ XLSX exported" output_path=output_path
+        @info "XLSX exported: $(output_path)"
         if upload
             ctx = load_app_config(; db_path, credentials_path)
             upload_export_to_webdav(ctx, output_path)
         end
     elseif output_format == "csv"
         output_path = actual_output === nothing ? "registrations_$(local_event_id).csv" : actual_output
-        @info "Exporting CSV" output_path=output_path
+        @info "Exporting CSV: $(output_path)"
         export_registration_csv(table_data, output_path; filter=reg_filter)
-        @info "✓ CSV exported" output_path=output_path
+        @info "CSV exported: $(output_path)"
         if upload
             ctx = load_app_config(; db_path, credentials_path)
             upload_export_to_webdav(ctx, output_path)
@@ -392,7 +392,7 @@ function export_registration_detail_csv(table::RegistrationDetailTable, output_p
         end
     end
 
-    @info "✓ Registration details exported" output_path=output_path
+    @info "Registration details exported: $(output_path)"
     return output_path
 end
 
@@ -588,7 +588,7 @@ function export_combined_xlsx(db::DuckDB.DB, event_id::String, output_path::Stri
     ]
 
     export_tables(ExportConfig(output_path=output_path, sheets=sheets))
-    @info "✓ Combined XLSX exported" output_path=output_path registration_rows=length(reg_rows) payment_rows=pay_count transfers=transfers_count
+    @info "Combined XLSX exported: $(output_path) ($(length(reg_rows)) registrations, $(pay_count) payments, $(transfers_count) transfers)"
     return 0
 end
 
@@ -609,7 +609,7 @@ function cmd_export_combined(db::DuckDB.DB,
             @error "No events with registrations found"
             return 1
         end
-        @info "Using most recent event" event_id=local_event_id
+        @info "Using most recent event: $(local_event_id)"
     end
 
     cfg = Config.load_event_config(local_event_id, events_dir)
@@ -621,11 +621,11 @@ function cmd_export_combined(db::DuckDB.DB,
         "combined_export_$(local_event_id).xlsx"
     end
 
-    @info "Exporting combined workbook" event_id=local_event_id output_path=output_path
+    @info "Exporting combined workbook: $(local_event_id) → $(output_path)"
     result = export_combined_xlsx(db, local_event_id, output_path; events_dir)
 
     if result == 0
-        @info "✓ Combined export complete" output_path=output_path
+        @info "Combined export complete: $(output_path)"
         if upload
             ctx = load_app_config(; db_path, credentials_path)
             upload_export_to_webdav(ctx, output_path)
@@ -694,6 +694,6 @@ function export_registration_detail_xlsx(table::RegistrationDetailTable, output_
     )
 
     export_tables(ExportConfig(output_path=output_path, sheets=[sheet]))
-    @info "✓ Registration details exported" output_path=output_path
+    @info "Registration details exported: $(output_path)"
     return output_path
 end

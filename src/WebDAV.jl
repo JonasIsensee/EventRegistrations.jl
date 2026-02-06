@@ -33,7 +33,7 @@ result = upload_via_webdav(
     "share/payment_status.xlsx";
     server_url = "https://owncloud.example.com/remote.php/webdav",
     username = "user",
-    password = "secret"
+    password = "your-password"
 )
 ```
 
@@ -74,7 +74,7 @@ function upload_via_webdav(
         # Read file content
         content = read(local_path)
 
-        @info "Uploading to WebDAV" local_file=local_path remote_path=remote_path size_bytes=length(content) full_url
+        @info "Uploading to WebDAV: $(local_path) → $(remote_path) ($(length(content)) bytes)"
 
         # Perform HTTP PUT request
         response = HTTP.put(
@@ -88,7 +88,7 @@ function upload_via_webdav(
 
         # Check response status
         if 200 <= response.status < 300
-            @info "✓ WebDAV upload successful" url=full_url status=response.status
+            @info "WebDAV upload successful: $(full_url)"
             return 0
         else
             @error "WebDAV upload failed with HTTP error" url=full_url status=response.status

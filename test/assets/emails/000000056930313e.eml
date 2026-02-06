@@ -1,26 +1,26 @@
-Return-Path: <no-reply@unimusik.clubdesk.com>
+Return-Path: <no-reply@form-service.example.com>
 X-Spam-Checker-Version: SpamAssassin 3.4.2 (2018-09-13) on
-	alfa3063.alfahosting-server.de
+	mailhost.example.com
 X-Spam-Level: 
 X-Spam-Status: No, score=-5.1 required=5.0 tests=AWL,BAYES_00,DKIM_SIGNED,
 	DKIM_VALID,DKIM_VALID_EF,HTML_MESSAGE,RCVD_IN_DNSWL_MED,
 	RCVD_IN_RP_CERTIFIED,RCVD_IN_RP_RNBL,RCVD_IN_RP_SAFE,SPF_HELO_PASS,
 	SPF_PASS,URIBL_BLOCKED autolearn=ham autolearn_force=no version=3.4.2
 X-Spam-DCC: : 
-X-Original-To: pwe@unimusik-goettingen.de
-Delivered-To: confixx-du-13658@alfa3063.alfahosting-server.de
-Received-SPF: Pass (mailfrom) identity=mailfrom; client-ip=5.148.169.160; helo=gate1.clubdesk.com; envelope-from=no-reply@unimusik.clubdesk.com; receiver=<UNKNOWN> 
-Received: from gate1.clubdesk.com (gate1.clubdesk.com [5.148.169.160])
-	by alfa3063.alfahosting-server.de (Postfix) with ESMTPS id 195D256EF09E
-	for <pwe@unimusik-goettingen.de>; Thu,  4 Dec 2025 10:25:13 +0100 (CET)
+X-Original-To: events@example.com
+Delivered-To: inbox@mailhost.example.com
+Received-SPF: Pass (mailfrom) identity=mailfrom; client-ip=5.148.169.160; helo=gate.form-service.example.com; envelope-from=no-reply@form-service.example.com; receiver=<UNKNOWN> 
+Received: from gate.form-service.example.com (gate.form-service.example.com [5.148.169.160])
+	by mailhost.example.com (Postfix) with ESMTPS id 195D256EF09E
+	for <events@example.com>; Thu,  4 Dec 2025 10:25:13 +0100 (CET)
 DKIM-Signature: a=rsa-sha256; b=YUaczhOQKrODO93OzoGWeNAFYv0wZrcumcefni9YBlG4kNhWahAAQ4GzyBMFonSaLS+lY94iPWBPGdQSPumfMxXc5Ant9+t8jt9in+G+gfXHLxFtzFH06jdK1C8mq4AvbDUYbBx+5R2LijuMTKMUPU2iSsW4L++P0/B8NkqWlH4SNduJA/geL+oyG/LxfD+AGl/zmwK4TEQzABLhX82asIFmFgci0Ei5tfPWixuXTwFCjQzmLR3cqiPfZXH8rhPuxsVLG152T5Vhc5nk9Lpa6ex/JVKBUIIuV6GmpR6VRwoJA5bwNLhr/Ef6KDVFFcSYr42pEaNahV4qm8BGaVMS9w==; s=cd0; c=relaxed/relaxed; d=clubdesk.com; v=1; bh=kwhIouOl6hzXI48mFJCvuTJvkSV9LdKDaPTRjVAX+Sc=; h=from:to:subject:date:message-id:mime-version:content-language;
 Received: from prod-www-1.prod_default (EHLO 0.0.0.0) ([10.20.0.5])
           by 1e43cb5efc6e (JAMES SMTP Server ) with ESMTP ID 1719919166
-          for <pwe@unimusik-goettingen.de>;
+          for <events@example.com>;
           Thu, 04 Dec 2025 10:24:57 +0100 (CET)
 Date: Thu, 4 Dec 2025 10:24:57 +0100 (CET)
-From: no-reply@unimusik.clubdesk.com
-To: pwe@unimusik-goettingen.de
+From: no-reply@form-service.example.com
+To: events@example.com
 Message-ID: <1428859658.845.1764840297486@4b2c236d719a>
 Subject: Anmeldung: PWE_2026_01
 MIME-Version: 1.0
@@ -36,7 +36,7 @@ Content-Transfer-Encoding: quoted-printable
 
 Vorname:=09Torsten:
 Nachname:=09Schreiber:
-E-Mail:=09torsten@jonasisensee.de:
+E-Mail:=09user-d@example.local:
 Stimmgruppe:=09Bariton:
 Essen:=09Alles:
 Lebensmittelunvertr=C3=A4glichkeiten / Allergien:=09Erdn=C3=BCsse:
@@ -45,7 +45,7 @@ Lebensmittelunvertr=C3=A4glichkeiten / Allergien:=09Erdn=C3=BCsse:
 Busfahrt Hinweg (10=E2=82=AC):=09Nein:
 Busfahrt R=C3=BCckweg (10=E2=82=AC):=09Nein:
 Wie m=C3=B6chte ich =C3=BCbernachten?:=09Mehrbettzimmer:
-Belegungswunsch f=C3=BCr das Zimmer:=09Ich w=C3=BCrde mir aber mit Maria ei=
+Belegungswunsch f=C3=BCr das Zimmer:=09Ich w=C3=BCrde mir aber mit Person A ei=
 n Zimmer teilen:
 Sonstiges::=09:
 
@@ -95,9 +95,9 @@ Content-Transfer-Encoding: 7bit
     <tr>
         <th colspan="2">Anmeldung: PWE_2026_01</th>
     </tr>
-    <tr><td class="label">Vorname</td><td>Torsten</td></tr><tr><td class="label">Nachname</td><td>Schreiber</td></tr><tr><td class="label">E-Mail</td><td>torsten@jonasisensee.de</td></tr><tr><td class="label">Stimmgruppe</td><td>Bariton</td></tr><tr><td class="label">Essen</td><td>Alles</td></tr><tr><td class="label">Lebensmittelunvertr&auml;glichkeiten / Allergien</td><td>Erdn&uuml;sse</td></tr><tr><td class="label">&Uuml;bernachtung Freitag</td><td>Ja</td></tr><tr><td class="label">&Uuml;bernachtung Samstag</td><td>Ja</td></tr><tr><td class="label">Busfahrt Hinweg (10&euro;)</td><td>Nein</td></tr><tr><td class="label">Busfahrt R&uuml;ckweg (10&euro;)</td><td>Nein</td></tr><tr><td class="label">Wie m&ouml;chte ich &uuml;bernachten?</td><td>Mehrbettzimmer</td></tr><tr><td class="label">Belegungswunsch f&uuml;r das Zimmer</td><td>Ich w&uuml;rde mir aber mit Maria ein Zimmer teilen</td></tr><tr><td class="label">Sonstiges:</td><td></td></tr>
+    <tr><td class="label">Vorname</td><td>TestFirst7</td></tr><tr><td class="label">Nachname</td><td>TestLast7</td></tr><tr><td class="label">E-Mail</td><td>user-d@example.local</td></tr><tr><td class="label">Stimmgruppe</td><td>Bariton</td></tr><tr><td class="label">Essen</td><td>Alles</td></tr><tr><td class="label">Lebensmittelunvertr&auml;glichkeiten / Allergien</td><td>Erdn&uuml;sse</td></tr><tr><td class="label">&Uuml;bernachtung Freitag</td><td>Ja</td></tr><tr><td class="label">&Uuml;bernachtung Samstag</td><td>Ja</td></tr><tr><td class="label">Busfahrt Hinweg (10&euro;)</td><td>Nein</td></tr><tr><td class="label">Busfahrt R&uuml;ckweg (10&euro;)</td><td>Nein</td></tr><tr><td class="label">Wie m&ouml;chte ich &uuml;bernachten?</td><td>Mehrbettzimmer</td></tr><tr><td class="label">Belegungswunsch f&uuml;r das Zimmer</td><td>Ich w&uuml;rde mir aber mit Person A ein Zimmer teilen</td></tr><tr><td class="label">Sonstiges:</td><td></td></tr>
     <tr>
-        <td class="caption" colspan="2">unimusik.clubdesk.com</td>
+        <td class="caption" colspan="2">form-service.example.com</td>
     </tr>
 </table>
 

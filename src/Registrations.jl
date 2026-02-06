@@ -183,7 +183,7 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString; events_d
         config_path = joinpath(events_dir, "$(submission.event_id).toml")
         generate_event_config_template(submission.event_id, config_path; db)
         cfg = load_event_config(submission.event_id, events_dir)
-        @info "Auto-created event configuration" event_id=submission.event_id path=config_path
+        @info "Auto-created event config: $(submission.event_id) → $(config_path)"
         @assert !isnothing(cfg) "Automatic config creation failed"
     end
     # Calculate cost (returns nothing if no cost config exists)
@@ -231,9 +231,9 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString; events_d
         is_new = true
         if computed_cost === nothing
             no_cost_config = true
-            @warn "New registration - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
+            @warn "New registration (no cost config): $(submission.event_id) $(submission.email) ref=$(ref_number)"
         else
-            @info "New registration" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
+            @info "New registration: $(submission.event_id) $(submission.email) ref=$(ref_number) cost=$(computed_cost)"
         end
     else
         # Update existing registration (keep reference number!)
@@ -259,9 +259,9 @@ function process_single_email!(db::DuckDB.DB, filepath::AbstractString; events_d
         is_update = true
         if computed_cost === nothing
             no_cost_config = true
-            @warn "Updated registration (resubmission) - NO COST CONFIG" event=submission.event_id email=submission.email reference=ref_number
+            @warn "Updated registration (no cost config): $(submission.event_id) $(submission.email) ref=$(ref_number)"
         else
-            @info "Updated registration (resubmission)" event=submission.event_id email=submission.email reference=ref_number cost=computed_cost
+            @info "Updated registration: $(submission.event_id) $(submission.email) ref=$(ref_number) cost=$(computed_cost)"
         end
     end
 
@@ -560,7 +560,7 @@ function grant_subsidy!(db::DuckDB.DB, registration_id::Integer,
         reference_id=subsidy_id, reference_table="subsidies",
         recorded_by=granted_by, notes=reason)
 
-    @info "Granted subsidy" registration_id=registration_id amount=amount reason=reason
+    @info "Granted subsidy: registration_id=$(registration_id) amount=$(amount) reason=\"$(reason)\""
 end
 
 """
@@ -604,7 +604,7 @@ Revoke (delete) a specific subsidy by its ID.
 """
 function revoke_subsidy!(db::DuckDB.DB, subsidy_id::Integer)
     DBInterface.execute(db, "DELETE FROM subsidies WHERE id = ?", [subsidy_id])
-    @info "Revoked subsidy" subsidy_id=subsidy_id
+    @info "Revoked subsidy: $(subsidy_id)"
 end
 
 """
@@ -620,7 +620,7 @@ function cancel_registration!(db::DuckDB.DB, registration_id::Integer)
         """, [now(), registration_id])
         # DuckDB execute returns a result; check that a row was updated if needed
     end
-    @info "Cancelled registration" registration_id=registration_id
+    @info "Cancelled registration: $(registration_id)"
 end
 
 """
@@ -740,7 +740,7 @@ function recalculate_costs!(db::DuckDB.DB, event_id::AbstractString;
         end
     end
 
-    @info "Recalculated costs for event" event_id=event_id count=length(registrations) warnings=length(all_warnings)
+    @info "Recalculated costs: $(event_id) ($(length(registrations)) registrations, $(length(all_warnings)) warnings)"
 
     return (success=true, updated=length(updates), warnings=length(all_warnings), details=updates)
 end
@@ -754,7 +754,7 @@ function delete_registration!(db::DuckDB.DB, registration_id::Integer)
             UPDATE registrations SET deleted_at = ? WHERE id = ?
         """, [now(), registration_id])
     end
-    @info "Marked registration as deleted" registration_id=registration_id
+    @info "Marked registration as deleted: $(registration_id)"
 end
 
 """
@@ -777,7 +777,7 @@ function restore_registration!(db::DuckDB.DB, registration_id::Integer)
             UPDATE registrations SET deleted_at = NULL WHERE id = ?
         """, [registration_id])
     end
-    @info "Restored registration" registration_id=registration_id
+    @info "Restored registration: $(registration_id)"
 end
 
 """

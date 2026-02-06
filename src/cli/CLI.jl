@@ -105,6 +105,7 @@ function parse_subcommand_options(args_str::String)
     return options
 end
 
+include("Verbosity.jl")
 include("project.jl")
 include("emails.jl")
 include("registrations.jl")
@@ -234,7 +235,7 @@ EXAMPLES:
   eventreg import-bank-csv bank_transfers/january.csv
   eventreg match-transfers --event-id=PWE_2026_01
   eventreg list-registrations --filter=unpaid              # list unpaid registrations
-  eventreg list-registrations --name="Müller"              # filter by name
+  eventreg list-registrations --name="Mustermann"         # filter by name
   eventreg list-registrations --since=2025-01-01           # registrations since date
   eventreg list-registrations --pager                      # scrollable pager with full emails
   eventreg list-pending-emails                             # list pending emails
@@ -318,6 +319,9 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
     events_dir::String="events",
     credentials_path::String="credentials.toml",
     from_repl::Bool=false)
+    # Set global verbosity flag based on command-line options
+    set_verbose!(get(options, :verbose, false))
+    
     try
         if command == "init"
             return cmd_init(; db_path=db_path)

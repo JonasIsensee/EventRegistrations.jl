@@ -93,13 +93,30 @@ filtermod(EventRegistrations, mtrigs)
 
 ## 2. What EventRegistrations.jl Does
 
-- **PrecompileTools**: Used in `src/EventRegistrations.jl`: `@setup_workload` + `@compile_workload`. `test/assets/` (part of the repository) are copied to a temp dir and then a **realistic workload** is executed there:
-  - CLI: `run_cli(["sync", "--export-details=--format=csv", "--export-payments=--format=csv"])` on the copied assets.
-  - Library API (on the resulting `events.duckdb` + `events/` config):
-    - `init_database("events.duckdb")`, `list_events`, `get_registrations`, `get_payment_summary`;
-    - `get_payment_table_data` + `export_payment_csv`;
-    - `get_registration_table_data` + `get_registration_detail_table` (with `events_dir="events"`).
-  This avoids explicit `precompile(...)` statements and instead precompiles via running representative workloads.
+- **PrecompileTools**: Used in `src/EventRegistrations.jl`: `@setup_workload` + `@compile_workload` to precompile:
+  - **Always**: A minimal workload so the package loads fast even without any data directory:
+    - `init_database(":memory:")`, `list_events(db)`, `get_registrations(db, "dummy")`
+    - **Pretty-print to captured IO**: `get_payment_table_data`, `print_payment_table(..., io=IOBuffer())`, `get_registration_table_data`, `print_registration_table(..., io=IOBuffer())`. This warms PrettyTables, Crayons, and terminal table code paths so the first `list-registrations` or `export-payment-status` to terminal is fast.
+  - **When `test/assets/` exists** (e.g. dev or full repo): A fuller workload:
+    - `run_cli(["sync", "--export-details=--format=csv", "--export-payments=--format=csv"])`
+    - Then explicit **pretty-printing to IOBuffer**: payment table, registration table, and registration detail table (when rows exist). This precompiles the same terminal-output paths with real data and highlighters.
+
+### 2.1 Automated analysis script
+
+- **`scripts/analyze_precompile.jl`** runs a cost and inference report in one go:
+  1. **Invalidations**: `@snoopr` while loading EventRegistrations; prints unique invalidation count and sample trees.
+  2. **Inference cost**: `@snoopi_deep` on a representative workload (in-memory DB, list_events, get_registrations, get_payment_table_data, print_payment_table to IO, get_registration_table_data, print_registration_table to IO). Reports total inference time, top nodes by inclusive time, inference trigger count, triggers in this package, and `suggest()` hints.
+  3. **Optional JET**: If JET is loaded, runs a quick type-stability check on `get_payment_table_data`.
+
+**How to run (from package root):**
+
+```bash
+# One-off: add SnoopCompile to the main project, then run
+julia --project -e 'using Pkg; Pkg.add("SnoopCompile"); Pkg.add("SnoopCompileCore")'
+julia --startup-file=no --project -e 'include("scripts/analyze_precompile.jl")'
+```
+
+Use the script output to prioritize: fix invalidations first, then reduce inference triggers in EventRegistrations (type annotations, `show` methods, homogenize varargs), then add more `@compile_workload` calls only for hot paths that remain.
 
 ---
 
@@ -119,12 +136,17 @@ These are the usual suspects for TTFX in a package like EventRegistrations.jl. U
 | **REPL / LineEdit (CLI)** | First `run_cli` / REPL usage compiles REPL and option parsing. | Hard to precompile all branches; keep one or two CLI invocations in `@compile_workload` (e.g. `status`, `list-registrations`) if they are the main entry points. |
 | **Method invalidations** | New methods (e.g. extending Base or DBInterface) can invalidate previously compiled code. | Run `@snoopr using EventRegistrations` and fix or narrow method definitions; prefer concrete types and inferrable code; consider `@recompile_invalidations` only for known, unavoidable invalidations. |
 
-### 3.1 Quick checklist for “first session” improvements
+### 3.1 Type stability and inference
 
-1. Run **`@snoopr`** when loading EventRegistrations; if invalidation count is high, inspect `invalidation_trees` and fix the worst offenders (type stability, avoid type piracy).
-2. Run **`@snoopi_deep`** on a small but representative workload (e.g. init DB + list_events + get_registrations + one export or one cost calculation).
+- **Improve inferrability** where `suggest(itrig)` or JET point to your code: add type annotations, avoid `Dict{String,Any}` in hot paths (use typed structs or `@nospecialize`), homogenize varargs, and add `show(io, ::MIME"text/plain", x::YourType)` for custom types that appear in tables or REPL output.
+- **Pretty-printing**: Printing to a captured `IOBuffer` in `@compile_workload` (as done for payment/registration tables) fixes first-terminal-table latency by forcing compilation of PrettyTables, Crayons, and your table/highlighter code. Add similar warmup for any other `pretty_table` or custom `show` paths on the critical path.
+
+### 3.2 Quick checklist for “first session” improvements
+
+1. Run **`scripts/analyze_precompile.jl`** (or **`@snoopr`** when loading EventRegistrations); if invalidation count is high, inspect `invalidation_trees` and fix the worst offenders (type stability, avoid type piracy).
+2. Run **`@snoopi_deep`** on a small but representative workload (same as in the script: DB + list_events + get_registrations + table data + print to IO).
 3. **Filter by module**: `filtermod(EventRegistrations, mtrigs)` and fix inference in this package first; then consider key dependencies (DuckDB, Config, PrettyOutput).
-4. **Precompile**: Ensure `@compile_workload` covers the same workload you measured; add more calls only if they show up as large inference nodes and are on the critical path.
+4. **Precompile**: Ensure `@compile_workload` covers the same workload you measured; add more calls (e.g. pretty-print to IO) only if they show up as large inference nodes and are on the critical path.
 5. **Heavy optional features** (PDF, LaTeX, WebDAV, email send): Either add minimal “warmup” calls to `@compile_workload` or accept their cost on first use.
 
 ---

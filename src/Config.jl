@@ -90,7 +90,7 @@ function generate_field_config(db::DuckDB.DB, output_path::AbstractString;
     content = join(lines, "\n")
     write(output_path, content)
 
-    @info "Generated field config" path=output_path fields=length(fields)
+    @info "Generated field config: $(output_path) ($(length(fields)) fields)"
     return fields
 end
 
@@ -689,7 +689,7 @@ function generate_event_config_template(event_id::AbstractString,
     content = join(lines, "\n") * "\n"
     write(output_path, content)
 
-    @info "Generated unified event config" path=output_path event_id=event_id fields=length(actual_fields)
+    @info "Generated event config: $(output_path) ($(event_id), $(length(actual_fields)) fields)"
 
     return actual_fields
 end

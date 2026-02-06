@@ -129,7 +129,7 @@ function import_bank_csv!(db::DuckDB.DB, csv_path::AbstractString;
         new_count += 1
     end  # End for loop
 
-    @info "Imported bank transfers" new=new_count skipped=skip_count file=filename
+    @info "Imported bank transfers: new=$(new_count) skipped=$(skip_count) file=$(filename)"
 
     return (new=new_count, skipped=skip_count)
 end
@@ -307,7 +307,7 @@ function check_name_match(sender_name::AbstractString, reference_text::AbstractS
     end
 
     # STRICT MATCHING: Require BOTH first AND last name to match reasonably well
-    # This prevents matching "Amelie Schmidt" with "Amelie Mueller" just based on first name
+    # This prevents matching "Person A" with "Person B" when only first name matches
     if first_name_score >= 0.8 && last_name_score >= 0.8
         return (true, (first_name_score + last_name_score) / 2)
     end
@@ -541,7 +541,7 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
                                         )
                                     end
 
-                                    @info "Detected off-by-one typo" typed=ref_candidate actual=nearby_ref name="$(first_name) $(last_name)"
+                                    @info "Detected off-by-one typo: typed=$(ref_candidate) actual=$(nearby_ref) name=\"$(first_name) $(last_name)\""
                                 end
                             end
                         end
@@ -586,7 +586,7 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
 
             matched += 1
             match_found = true
-            @info "Matched transfer" reference=best_match.reference amount=amount confidence=best_match.confidence type=best_match.match_type
+            @info "Matched transfer: ref=$(best_match.reference) amount=$(amount) confidence=$(best_match.confidence) type=$(best_match.match_type)"
         end
 
         # Strategy 4: Name + amount matching (only if no reference match found)
@@ -674,7 +674,7 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
 
                 matched += 1
                 match_found = true
-                @info "Matched transfer by full name" sender=sender_name registration="$(best_name_match.first_name) $(best_name_match.last_name)" confidence=best_name_match.confidence
+                @info "Matched transfer by name: $(sender_name) → $(best_name_match.first_name) $(best_name_match.last_name) ($(round(best_name_match.confidence * 100))%)"
             end
         end
 
@@ -688,7 +688,7 @@ function match_transfers!(db::DuckDB.DB; event_id::Union{String,Nothing}=nothing
             ))
         end
     end  # End for loop
-    @info "Transfer matching complete" matched=matched unmatched=length(unmatched_list)
+    @info "Transfer matching: matched=$(matched) unmatched=$(length(unmatched_list))"
 
     return (matched=matched, unmatched=unmatched_list)
 end
@@ -1006,7 +1006,7 @@ function manual_match!(db::DuckDB.DB, transfer_id::Integer, registration_id::Int
 
         # Only process if actually changing the registration
         if old_registration_id != registration_id
-            @info "Re-matching transfer from registration $old_registration_id to $registration_id" transfer_id=transfer_id
+            @info "Re-matching transfer #$(transfer_id) from registration $(old_registration_id) to $(registration_id)"
 
             # Reverse the old financial transaction
             log_financial_transaction!(db, old_registration_id, "adjustment", -amount;
@@ -1060,7 +1060,7 @@ function manual_match!(db::DuckDB.DB, transfer_id::Integer, registration_id::Int
             end
         end
 
-    @info "Manual match created" transfer_id=transfer_id registration_id=registration_id
+    @info "Manual match created: transfer #$(transfer_id) → registration #$(registration_id)"
 end
 
 """
