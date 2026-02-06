@@ -10,7 +10,7 @@ function cmd_init(; db_path::String="events.duckdb")
 
     db = init_project(db_path)
     DBInterface.close!(db)
-    @info "Project initialized" db_path
+    @info "Project initialized: $(db_path)"
     return 0
 end
 
@@ -34,7 +34,7 @@ function cmd_create_event_config(db::DuckDB.DB, event_id::String;
     output_path = joinpath(events_dir, "$event_id.toml")
     mkpath(events_dir)
     generate_event_config_template(event_id, output_path; db=db)
-    @info "Created event config" path=output_path
+    @info "Created event config: $(output_path)"
     return 0
 end
 
@@ -43,7 +43,7 @@ Sync event config files to database.
 """
 function cmd_sync_config(db::DuckDB.DB; events_dir::String="events")
     updated = sync_event_configs_to_db!(db, events_dir)
-    @info "Synced configs" updated=length(updated)
+    @info "Synced $(length(updated)) event config(s) to database"
     return 0
 end
 
@@ -55,7 +55,7 @@ function cmd_recalculate_costs(db::DuckDB.DB, event_id::String;
     strict::Bool=false,
     dry_run::Bool=false)
     recalculate_costs!(db, event_id; events_dir=events_dir, strict=strict, dry_run=dry_run)
-    @info "Recalculated costs" event_id=event_id
+    @info "Recalculated costs for $(event_id)"
     return 0
 end
 

@@ -75,7 +75,7 @@ function ensure_default_templates(templates_dir::AbstractString)
     end
 
     if !isempty(created)
-        @info "Created default templates" templates=created directory=templates_dir
+        @info "Created default templates: $(join(created, ", ")) in $(templates_dir)"
     end
     return created
 end
@@ -530,7 +530,7 @@ function send_via_smtp(cfg::EmailConfig, to::String, subject::String, body::Stri
         @debug "SMTP response" response=resp
 
         if resp.code == 250 || resp.code == 0  # 250 = success, 0 = success in some versions
-            @info "Email sent successfully" to=actual_to subject=subject
+            @info "Email sent: $(actual_to) \"$(subject)\""
             return true
         else
             @error "SMTP error" to=actual_to code=resp.code message=resp.message
@@ -648,7 +648,7 @@ function queue_email!(cfg::EmailConfig, db::DuckDB.DB, registration_id::Integer;
     """, [registration_id, template_name, remaining_f])
 
     if !isempty(collect(existing))
-        @info "Email already queued with same balance" registration_id=registration_id remaining=remaining_f
+        @info "Email already queued: registration_id=$(registration_id) remaining=$(remaining_f)"
         return nothing
     end
 
@@ -673,7 +673,7 @@ function queue_email!(cfg::EmailConfig, db::DuckDB.DB, registration_id::Integer;
     result = DBInterface.execute(db, "SELECT currval('email_queue_id_seq')")
     queue_id = first(collect(result))[1]
 
-    @info "Email queued" queue_id=queue_id registration_id=registration_id email_to=email_to reason=reason
+    @info "Email queued: #$(queue_id) reg=$(registration_id) to=$(email_to) reason=\"$(reason)\""
 
     return queue_id
 end
@@ -721,7 +721,7 @@ function queue_payment_confirmation!(cfg::EmailConfig, db::DuckDB.DB, registrati
     """, [registration_id, amount_f])
 
     if !isempty(collect(existing))
-        @info "Payment confirmation already queued recently" registration_id=registration_id amount=amount_f
+        @info "Payment confirmation already queued: reg=$(registration_id) amount=$(amount_f)"
         return nothing
     end
 
@@ -764,7 +764,7 @@ function queue_payment_confirmation!(cfg::EmailConfig, db::DuckDB.DB, registrati
     result = DBInterface.execute(db, "SELECT currval('email_queue_id_seq')")
     queue_id = first(collect(result))[1]
 
-    @info "Payment confirmation queued" queue_id=queue_id registration_id=registration_id amount=amount_f
+    @info "Payment confirmation queued: #$(queue_id) reg=$(registration_id) amount=$(amount_f)"
 
     return queue_id
 end
@@ -950,7 +950,7 @@ function mark_email!(db::DuckDB.DB, queue_id::Integer, status::String;
         end
     end
 
-    @info "Email queue entry updated" queue_id=queue_id status=status processed_by=processed_by
+    @info "Email queue entry updated: #$(queue_id) status=$(status) by=$(processed_by)"
 end
 
 export mark_email!

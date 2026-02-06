@@ -11,7 +11,7 @@ function cmd_import_bank_csv(db::DuckDB.DB, csv_file::String;
     result = import_bank_csv!(db, csv_file; delimiter=first(delimiter), decimal_comma=decimal_comma)
     
     if result.new > 0 || is_verbose()
-        @info "Imported transfers" new=result.new skipped=result.skipped
+        @info "Imported transfers: new=$(result.new) skipped=$(result.skipped)"
     end
     return 0
 end
@@ -25,7 +25,7 @@ function cmd_match_transfers(db::DuckDB.DB; event_id::Union{String,Nothing}=noth
     result = match_transfers!(db; event_id=event_id)
     
     if result.matched > 0 || is_verbose()
-        @info "Matched transfers" matched=result.matched unmatched=length(result.unmatched)
+        @info "Matched transfers: $(result.matched) matched, $(length(result.unmatched)) unmatched"
     end
     
     if !isempty(result.unmatched)
@@ -65,7 +65,7 @@ Caller must open db; run_cli opens it before calling.
 function cmd_manual_match(db::DuckDB.DB, transfer_id::Int, reference::String)
     @verbose_info "Matching transfer" transfer_id reference
     manual_match!(db, transfer_id, reference)
-    @info "Match created" transfer_id reference
+    @info "Match created: transfer #$(transfer_id) → $(reference)"
     return 0
 end
 
@@ -78,7 +78,7 @@ function cmd_grant_subsidy(db::DuckDB.DB, identifier::String, amount::Float64;
     granted_by::String="cli")
     @verbose_info "Granting subsidy" identifier amount reason
     grant_subsidy!(db, identifier, amount; reason=reason, granted_by=granted_by)
-    @info "Subsidy granted" identifier amount=amount
+    @info "Subsidy granted: $(identifier) €$(amount)"
     return 0
 end
 
@@ -147,7 +147,7 @@ function cmd_review_near_misses(db::DuckDB.DB; event_id::Union{String,Nothing}=n
             input = strip(lowercase(input))
             
             if input == "q" || input == "quit"
-                @info "Review stopped by user." matched=matched_count skipped=skipped_count remaining=length(near_misses)-idx
+                @info "Review stopped: matched=$(matched_count) skipped=$(skipped_count) remaining=$(length(near_misses)-idx)"
                 return 0
             elseif input == "s" || input == "skip" || isempty(input)
                 skipped_count += 1
@@ -176,7 +176,7 @@ function cmd_review_near_misses(db::DuckDB.DB; event_id::Union{String,Nothing}=n
     end
     
     println("=" ^ 80)
-    @info "Near-miss review complete" matched=matched_count skipped=skipped_count
+    @info "Near-miss review complete: matched=$(matched_count) skipped=$(skipped_count)"
     return 0
 end
 

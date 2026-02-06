@@ -42,7 +42,7 @@ function cmd_set_email_redirect(email::String; credentials_path::String="credent
         open(credentials_path, "w") do io
             TOML.print(io, config_dict)
         end
-        @info "Email redirect set successfully" redirect_to=email credentials_path=credentials_path
+        @info "Email redirect set: $(email) ($(credentials_path))"
         @warn "ALL emails will now be sent to $email instead of actual recipients"
         return 0
     catch e
@@ -57,7 +57,7 @@ Emails will be sent to actual recipients.
 """
 function cmd_clear_email_redirect(; credentials_path::String="credentials.toml")
     if !isfile(credentials_path)
-        @warn "Credentials file does not exist" credentials_path=credentials_path
+        @warn "Credentials file does not exist: $(credentials_path)"
         return 0
     end
 
@@ -78,7 +78,7 @@ function cmd_clear_email_redirect(; credentials_path::String="credentials.toml")
         open(credentials_path, "w") do io
             TOML.print(io, config_dict)
         end
-        @info "Email redirect cleared successfully" credentials_path=credentials_path
+        @info "Email redirect cleared ($(credentials_path))"
         @info "Emails will now be sent to actual recipients"
         return 0
     catch e
@@ -92,7 +92,7 @@ Show current email redirect setting from credentials.toml.
 """
 function cmd_get_email_redirect(; credentials_path::String="credentials.toml")
     if !isfile(credentials_path)
-        @info "No credentials file found" credentials_path=credentials_path
+        @info "No credentials file found: $(credentials_path)"
         @info "Email redirect: not set"
         return 0
     end
@@ -105,7 +105,7 @@ function cmd_get_email_redirect(; credentials_path::String="credentials.toml")
         redirect_to = config_dict["smtp"]["redirect_to"]
         # Empty string is treated as "not set" (allows manual clearing in TOML)
         if !isempty(redirect_to)
-            @info "Email redirect: ACTIVE" redirect_to=redirect_to
+            @info "Email redirect ACTIVE: $(redirect_to)"
             @warn "ALL emails are being sent to $redirect_to instead of actual recipients"
         else
             @info "Email redirect: not set"

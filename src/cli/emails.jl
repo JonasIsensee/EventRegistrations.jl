@@ -15,7 +15,7 @@ function cmd_process_emails(db::DuckDB.DB, email_folder::String="emails";
 
     # Show concise summary
     if stats.new_registrations > 0 || stats.updates > 0 || is_verbose()
-        @info "Processed emails" new=stats.new_registrations updates=stats.updates
+        @info "Processed emails: new=$(stats.new_registrations) updates=$(stats.updates)"
     end
     
     if is_verbose()
@@ -59,7 +59,7 @@ port = 995  # optional, defaults to 995"""
     result = download_emails!(ctx.email; emails_dir, verbose=is_verbose())
 
     if result.new_count > 0 || is_verbose()
-        @info "Downloaded emails" new=result.new_count
+        @info "Downloaded emails: new=$(result.new_count)"
     end
     
     if is_verbose()
@@ -71,7 +71,7 @@ port = 995  # optional, defaults to 995"""
     end
 
     if result.error_count > 0
-        @warn "Download errors" new=result.new_count errors=result.error_count
+        @warn "Download errors: new=$(result.new_count) errors=$(result.error_count)"
         return 1
     end
     
