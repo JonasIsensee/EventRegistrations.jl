@@ -181,7 +181,7 @@ Then you can start a new REPL session in the playground directory if desired."""
     else
         # Create the directory if it doesn't exist
         mkpath(abs_target)
-        @info "Created playground directory" directory=abs_target
+        @info "Created playground directory: $(abs_target)"
     end
     
     # Change to target directory for initialization
@@ -189,7 +189,7 @@ Then you can start a new REPL session in the playground directory if desired."""
     cd(abs_target)
     
     try
-        @info "Initializing playground environment..." directory=abs_target
+        @info "Initializing playground environment: $(abs_target)"
         
         # Create directory structure
         mkpath("emails")
@@ -198,7 +198,7 @@ Then you can start a new REPL session in the playground directory if desired."""
         mkpath("bank_transfers")
         
         # Initialize database
-        @info "Creating database..." path=db_path
+        @info "Creating database: $(db_path)"
         db = init_project(db_path, ".")
         
         # Generate sample event config if events directory is empty
@@ -293,7 +293,7 @@ function cmd_playground_receive_submissions(;
         end
     end
     
-    @info "Generating sample submissions..." count=count event_id=event_id
+    @info "Generating $(count) sample submission(s) for $(event_id)"
     
     # Generate the base samples
     base_samples = generate_sample_emails(event_id)

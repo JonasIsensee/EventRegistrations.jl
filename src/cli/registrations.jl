@@ -19,12 +19,12 @@ function cmd_edit_registrations(db::DuckDB.DB; event_id::Union{String,Nothing}=n
             @error "No events with registrations found; specify --event-id"
             return 1
         end
-        @info "Using most recent event" event_id=local_event_id
+        @info "Using most recent event: $(local_event_id)"
     end
 
     columns, rows = get_registrations_for_edit(db, local_event_id; name=name, since=since)
     if isempty(rows)
-        @info "No registrations match the filter" event_id=local_event_id name=name since=since
+        @info "No registrations match the filter: event=$(local_event_id) name=$(name) since=$(since)"
         return 0
     end
 
@@ -115,7 +115,7 @@ function cmd_list_registrations(db::DuckDB.DB, event_id::Union{String,Nothing}=n
             @error "No events with registrations found"
             return 1
         end
-        @info "Using most recent event" event_id=local_event_id
+        @info "Using most recent event: $(local_event_id)"
     end
 
     # Parse since date if provided
@@ -144,7 +144,7 @@ function cmd_list_registrations(db::DuckDB.DB, event_id::Union{String,Nothing}=n
     table_data = get_registration_table_data(db, local_event_id)
 
     if table_data.total_registrations == 0
-        @info "No registrations found for event" event_id=local_event_id
+        @info "No registrations found for event: $(local_event_id)"
         return 0
     end
 
@@ -204,7 +204,7 @@ function cmd_delete_registration(db::DuckDB.DB, identifier::String;
     end
     try
         cancel_registration!(db, resolved.reg_id)
-        @info "✓ Registration cancelled" reference=resolved.reference_number
+        @info "Registration cancelled: $(resolved.reference_number)"
         return 0
     catch e
         @error "Failed to cancel registration" exception=(e, catch_backtrace())
@@ -250,7 +250,7 @@ Caller must open db; run_cli opens it before calling.
 function cmd_soft_delete_registration(db::DuckDB.DB, reference::String)
     try
         delete_registration!(db, reference)
-        @info "✓ Registration deleted" reference=reference
+        @info "Registration deleted: $(reference)"
         return 0
     catch e
         @error "Failed to delete registration" reference=reference exception=e
@@ -265,7 +265,7 @@ Caller must open db; run_cli opens it before calling.
 function cmd_restore_registration(db::DuckDB.DB, reference::String)
     try
         restore_registration!(db, reference)
-        @info "✓ Registration restored" reference=reference
+        @info "Registration restored: $(reference)"
         return 0
     catch e
         @error "Failed to restore registration" reference=reference exception=e
@@ -286,13 +286,13 @@ function cmd_list_deleted_registrations(db::DuckDB.DB, event_id::Union{String,No
             @error "No events with registrations found"
             return 1
         end
-        @info "Using most recent event" event_id=local_event_id
+        @info "Using most recent event: $(local_event_id)"
     end
 
     deleted = get_deleted_registrations(db, local_event_id)
 
     if isempty(deleted)
-        @info "No deleted registrations found for event" event_id=local_event_id
+        @info "No deleted registrations found for event: $(local_event_id)"
         return 0
     end
 

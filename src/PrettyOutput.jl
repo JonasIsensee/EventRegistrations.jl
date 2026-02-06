@@ -986,7 +986,7 @@ function export_registration_pdf(data::RegistrationTableData, output_path::Strin
         pdffile = joinpath(dir, "registration_report.pdf")
         if isfile(pdffile)
             cp(pdffile, output_path; force=true)
-            @info "PDF exported" path=output_path
+            @info "PDF exported: $(output_path)"
         else
             error("PDF generation failed")
         end
@@ -1024,7 +1024,7 @@ function export_registration_csv(data::RegistrationTableData, output_path::Strin
         end
     end
 
-    @info "CSV exported" path=output_path rows=length(rows_to_show)
+    @info "CSV exported: $(output_path) ($(length(rows_to_show)) rows)"
     return output_path
 end
 
@@ -1243,7 +1243,7 @@ function export_payment_pdf(data::PaymentTableData, output_path::String;
         pdffile = joinpath(dir, "payment_report.pdf")
         if isfile(pdffile)
             cp(pdffile, output_path; force=true)
-            @info "PDF exported" path=output_path
+            @info "PDF exported: $(output_path)"
         else
             error("PDF generation failed")
         end
@@ -1347,7 +1347,7 @@ function export_payment_xlsx(data::PaymentTableData, output_path::String;
     ]
 
     export_tables(ExportConfig(output_path=output_path, sheets=sheets))
-    @info "XLSX exported" path=output_path rows=row_count
+    @info "XLSX exported: $(output_path) ($(row_count) rows)"
     return output_path
 end
 
@@ -1422,7 +1422,7 @@ function export_registration_xlsx(data::RegistrationTableData, output_path::Stri
     ]
 
     export_tables(ExportConfig(output_path=output_path, sheets=sheets))
-    @info "XLSX exported" path=output_path rows=row_count
+    @info "XLSX exported: $(output_path) ($(row_count) rows)"
     return output_path
 end
 
@@ -1456,7 +1456,7 @@ function export_payment_csv(data::PaymentTableData, output_path::String;
         end
     end
 
-    @info "CSV exported" path=output_path rows=length(rows_to_show)
+    @info "CSV exported: $(output_path) ($(length(rows_to_show)) rows)"
     return output_path
 end
 

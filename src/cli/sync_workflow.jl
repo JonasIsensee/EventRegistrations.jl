@@ -20,7 +20,7 @@ function cmd_sync(db::DuckDB.DB;
     @verbose_info "[1/7] Syncing event configurations..." events_dir
     updated_events = sync_event_configs_to_db!(db, events_dir)
     if !isempty(updated_events) || is_verbose()
-        @info "Synced configs" updated=length(updated_events)
+        @info "Synced configs: updated=$(length(updated_events))"
     end
 
     ctx = load_app_config(; db_path, credentials_path,
@@ -33,9 +33,9 @@ function cmd_sync(db::DuckDB.DB;
         result = download_emails!(ctx.email; emails_dir, verbose=false)
         if result.new_count > 0 || is_verbose()
             if result.error_count == 0
-                @info "Downloaded emails" new=result.new_count
+                @info "Downloaded emails: new=$(result.new_count)"
             else
-                @warn "Downloaded with errors" new=result.new_count errors=result.error_count
+                @warn "Downloaded with errors: new=$(result.new_count) errors=$(result.error_count)"
             end
         end
     else
@@ -48,7 +48,7 @@ function cmd_sync(db::DuckDB.DB;
     sync_event_configs_to_db!(db, events_dir)
     
     if stats.new_registrations > 0 || stats.updates > 0 || is_verbose()
-        @info "Processed emails" new=stats.new_registrations updates=stats.updates
+        @info "Processed emails: new=$(stats.new_registrations) updates=$(stats.updates)"
     end
 
     # Step 4: Recalculate costs for changed events and NULL costs
@@ -73,7 +73,7 @@ function cmd_sync(db::DuckDB.DB;
         end
     end
     if recalc_count > 0 || is_verbose()
-        @info "Recalculated costs" events=recalc_count
+        @info "Recalculated costs: events=$(recalc_count)"
     end
 
 
@@ -94,7 +94,7 @@ function cmd_sync(db::DuckDB.DB;
         end
     end
     if import_count > 0 || is_verbose()
-        @info "Imported bank transfers" new=import_count
+        @info "Imported bank transfers: new=$(import_count)"
     end
 
     # Step 6: Match transfers
@@ -102,7 +102,7 @@ function cmd_sync(db::DuckDB.DB;
     if event_id !== nothing
         result = match_transfers!(db; event_id, email_cfg=ctx.email)
         if result.matched > 0 || is_verbose()
-            @info "Matched transfers" matched=result.matched
+            @info "Matched transfers: $(result.matched)"
         end
     else
         events = list_events(db)
@@ -113,7 +113,7 @@ function cmd_sync(db::DuckDB.DB;
             total_matched += result.matched
         end
         if total_matched > 0 || is_verbose()
-            @info "Matched transfers" matched=total_matched
+            @info "Matched transfers: $(total_matched)"
         end
     end
 
@@ -132,7 +132,7 @@ function cmd_sync(db::DuckDB.DB;
 
     total_queued = total_registration_emails + total_payment_emails
     if total_queued > 0
-        @info "Queued emails" total=total_queued
+        @info "Queued emails: $(total_queued)"
     elseif is_verbose()
         @info "No new emails to queue"
     end
@@ -199,9 +199,9 @@ function cmd_sync(db::DuckDB.DB;
             end
 
             if error_count > 0
-                @warn "Email sending errors" sent=sent_count errors=error_count
+                @warn "Email sending errors: sent=$(sent_count) errors=$(error_count)"
             else
-                @info "Sent emails" sent=sent_count
+                @info "Sent emails: $(sent_count)"
             end
         end
     end
@@ -229,7 +229,7 @@ function cmd_sync(db::DuckDB.DB;
             else
                 if export_format == "csv"
                     export_registration_detail_csv(detail_table, output_file)
-                    @info "Exported details" output=output_file
+                    @info "Exported details: $(output_file)"
 
                     # Upload if requested
                     if upload
@@ -238,7 +238,7 @@ function cmd_sync(db::DuckDB.DB;
                 elseif export_format == "terminal"
                     print_registration_detail_table(detail_table)
                 else
-                    @warn "Unsupported format" format=export_format
+                    @warn "Unsupported format: $(export_format)"
                 end
             end
         end
@@ -285,7 +285,7 @@ function cmd_sync(db::DuckDB.DB;
                     print_summary(table_data)
                 elseif export_format == "csv"
                     export_payment_csv(table_data, output_file; filter=payment_filter)
-                    @info "Exported payments" output=output_file
+                    @info "Exported payments: $(output_file)"
 
                     # Upload if requested
                     if upload
@@ -295,14 +295,14 @@ function cmd_sync(db::DuckDB.DB;
                     print_payment_table(table_data; filter=payment_filter)
                 elseif export_format == "pdf"
                     export_payment_pdf(table_data, output_file; filter=payment_filter)
-                    @info "Exported PDF" output=output_file
+                    @info "Exported PDF: $(output_file)"
 
                     # Upload if requested
                     if upload
                         upload_export_to_webdav(ctx, output_file)
                     end
                 else
-                    @warn "Unsupported format" format=export_format
+                    @warn "Unsupported format: $(export_format)"
                 end
             end
         end
@@ -336,14 +336,14 @@ function cmd_sync(db::DuckDB.DB;
             result = export_combined_xlsx(db, target_event, output_file; events_dir)
 
             if result == 0
-                @info "Exported workbook" output=output_file
+                @info "Exported workbook: $(output_file)"
 
                 # Upload if requested
                 if upload
                     upload_export_to_webdav(ctx, output_file)
                 end
             else
-                @warn "Export failed" exit_code=result
+                @warn "Export failed: exit_code=$(result)"
             end
         end
     end

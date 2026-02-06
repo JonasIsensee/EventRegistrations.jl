@@ -81,7 +81,7 @@ eventreg mark-email $status --all       # Mark all pending emails"""
             marked_count += 1
         end
 
-        @info "Marked emails" count=marked_count status=status
+        @info "Marked $(marked_count) emails as $(status)"
         return 0
     else
         result = DBInterface.execute(db, """
@@ -110,7 +110,7 @@ eventreg mark-email $status --all       # Mark all pending emails"""
 
         mark_email!(db, id, status; processed_by="cli")
 
-        @info "Marked email" id=id status=status name="$first_name $last_name"
+        @info "Marked email #$(id) as $(status): $(first_name) $(last_name)"
         return 0
     end
 end
@@ -134,7 +134,7 @@ function cmd_send_emails(db::DuckDB.DB;
         @verbose_info "Sending email" id=id
         success = send_queued_email!(ctx.email, db, id)
         if success
-            @info "Email sent" id=id
+            @info "Email sent: #$(id)"
         else
             @error "Failed to send email" id=id
             return 1
@@ -157,10 +157,10 @@ function cmd_send_emails(db::DuckDB.DB;
         end
 
         if error_count > 0
-            @warn "Email sending errors" sent=sent_count errors=error_count
+            @warn "Email sending errors: sent=$(sent_count) errors=$(error_count)"
             return 1
         else
-            @info "Sent emails" sent=sent_count
+            @info "Sent $(sent_count) email(s)"
         end
     end
 
