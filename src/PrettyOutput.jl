@@ -15,6 +15,7 @@ using PrettyTables: PrettyTables, LatexCell, LatexHighlighter, TextHighlighter,
                     pretty_table
 using TableExport: ExportConfig, SheetConfig, SheetData, export_tables, ColumnConfig
 using Printf: Printf, @sprintf
+using TerminalPager: TerminalPager, pager
 
 # For PDF export
 import tectonic_jll
@@ -375,27 +376,30 @@ function format_money(value::Nothing; kwargs...)
 end
 
 """
-    _with_pager(f::Function, pager::Bool)
+    _with_pager(f::Function, use_pager::Bool)
 
-Internal helper function to optionally pipe output through a pager.
+Internal helper function to optionally display output through a pager.
 
-If `pager=true`, runs the function `f` with output redirected to `less -RS`,
-which supports color codes (R) and horizontal scrolling (S).
-Otherwise, runs `f` normally.
+If `use_pager=true`, captures the function output and displays it using TerminalPager,
+which supports ANSI color codes and horizontal/vertical scrolling.
+Otherwise, runs `f` normally with stdout.
+
+Uses TerminalPager.jl for cross-platform pager support (works on Windows, macOS, Linux)
+without requiring external commands like `less`.
 """
-function _with_pager(f::Function, pager::Bool)
-    if pager
-        # Use less with -R for color support and -S for horizontal scrolling
-        # The -X flag prevents clearing the screen on exit
-        # The -F flag exits if content fits on one screen
+function _with_pager(f::Function, use_pager::Bool)
+    if use_pager
+        # Capture output to a buffer, then display with TerminalPager
         try
-            cmd = pipeline(`less -RSX`)
-            open(cmd, "w") do io
-                f(io)
-            end
+            io = IOBuffer()
+            ioctx = IOContext(io, :color => true)
+            f(ioctx)
+            content = String(take!(io))
+            # Use TerminalPager to display the content with scrolling support
+            pager(content)
         catch e
             # If pager fails, fall back to normal output
-            @warn "Failed to open pager, using normal output" exception=e
+            @warn "Failed to use pager, using normal output" exception=e
             f(stdout)
         end
     else
