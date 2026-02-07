@@ -1962,8 +1962,128 @@ try
         println("  ✓ Registration table shows all $(registration_data.total_registrations) registrations without vertical truncation")
     end
 
-    @testset "26. REPL and dispatch_to_command" begin
-        println("\n=== Test 26: REPL and dispatch_to_command ===")
+    @testset "26. Config Summary and Cost Combinations" begin
+        println("\n=== Test 26: Config Summary and Cost Combinations ===")
+        
+        # Setup: Create a test event config with known cost rules
+        config_summary_test_path = joinpath(TEST_EVENTS_DIR, "config_summary_test.toml")
+        config_content = """
+        [event]
+        name = "Config Summary Test Event"
+
+        [aliases]
+        uebernachtung_fr = "Übernachtung Freitag"
+        uebernachtung_sa = "Übernachtung Samstag"
+        busfahrt = "Busfahrt"
+
+        [costs]
+        base = 10.0
+
+        [[costs.rules]]
+        field = "uebernachtung_fr"
+        value = "Ja"
+        cost = 25.0
+
+        [[costs.rules]]
+        field = "uebernachtung_sa"
+        value = "Ja"
+        cost = 25.0
+
+        [[costs.rules]]
+        field = "busfahrt"
+        value = "Ja"
+        cost = 10.0
+        """
+        write(config_summary_test_path, config_content)
+        
+        # Test 1: Generate config summary
+        summary = EventRegistrations.generate_config_summary("config_summary_test"; events_dir=TEST_EVENTS_DIR)
+        
+        @test summary.event_id == "config_summary_test"
+        @test summary.event_name == "Config Summary Test Event"
+        @test summary.base_cost == 10.0
+        @test length(summary.rules) == 3
+        println("  ✓ Config summary generated with correct base info")
+        
+        # Test 2: Field values extraction
+        @test haskey(summary.field_values, "Übernachtung Freitag")
+        @test haskey(summary.field_values, "Übernachtung Samstag")
+        @test haskey(summary.field_values, "Busfahrt")
+        @test "Ja" in summary.field_values["Übernachtung Freitag"]
+        @test "Nein" in summary.field_values["Übernachtung Freitag"]  # "Nein" is added as non-selected option
+        println("  ✓ Field values correctly extracted from rules")
+        
+        # Test 3: Cost combinations generated
+        @test !isempty(summary.combinations)
+        @test !isempty(summary.unique_costs)
+        
+        # Expected costs (base=10):
+        # - Base only: 10
+        # - + Fr overnight: 35 
+        # - + Sa overnight: 35
+        # - + Bus: 20
+        # - + Fr + Sa: 60
+        # - + Fr + Bus: 45
+        # - + Sa + Bus: 45
+        # - + Fr + Sa + Bus: 70
+        @test 10.0 in summary.unique_costs  # Base only
+        @test maximum(summary.unique_costs) == 70.0  # All options
+        println("  ✓ Cost combinations generated: $(length(summary.unique_costs)) unique costs")
+        println("    Range: $(minimum(summary.unique_costs)) € - $(maximum(summary.unique_costs)) €")
+        
+        # Test 4: Print config summary (just verify it doesn't crash)
+        io_buffer = IOBuffer()
+        EventRegistrations.print_config_summary(summary; io=io_buffer, verbose=true)
+        output = String(take!(io_buffer))
+        
+        @test occursin("config_summary_test", output)
+        @test occursin("Base Cost:", output)
+        @test occursin("COST RULES", output)
+        @test occursin("POSSIBLE COSTS", output)
+        println("  ✓ Config summary printed without errors")
+        
+        # Test 5: CLI command
+        orig_dir = pwd()
+        try
+            cd(TEST_DIR)
+            code = EventRegistrations.cmd_config_summary(db, "config_summary_test"; events_dir=TEST_EVENTS_DIR)
+            @test code == 0
+        finally
+            cd(orig_dir)
+        end
+        println("  ✓ cmd_config_summary CLI command works")
+        
+        # Test 6: dispatch_to_command for config-summary
+        orig_dir = pwd()
+        try
+            cd(TEST_DIR)
+            command, positional, options = EventRegistrations.parse_cli_args(["config-summary", "config_summary_test"])
+            code = EventRegistrations.dispatch_to_command(db, command, positional, options; 
+                db_path=TEST_DB_PATH, events_dir=TEST_EVENTS_DIR)
+            @test code == 0
+        finally
+            cd(orig_dir)
+        end
+        println("  ✓ dispatch_to_command: config-summary works")
+        
+        # Test 7: Non-existent config returns error
+        orig_dir = pwd()
+        try
+            cd(TEST_DIR)
+            code_err = EventRegistrations.cmd_config_summary(db, "nonexistent_event_xyz"; events_dir=TEST_EVENTS_DIR)
+            @test code_err == 1
+        finally
+            cd(orig_dir)
+        end
+        println("  ✓ Non-existent config returns error code 1")
+        
+        # Cleanup
+        rm(config_summary_test_path, force=true)
+        println("  ✓ All config summary tests passed")
+    end
+    
+    @testset "27. REPL and dispatch_to_command" begin
+        println("\n=== Test 27: REPL and dispatch_to_command ===")
 
         # parse_repl_line: split on spaces, respect quotes, preserve --key=value
         args = EventRegistrations.parse_repl_line("list-registrations --filter=unpaid")
