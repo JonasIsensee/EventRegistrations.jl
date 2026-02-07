@@ -826,10 +826,12 @@ function run_repl(; db_path::String="events.duckdb")
                             db_path=db_path, events_dir="events", 
                             credentials_path="credentials.toml", from_repl=true)
                     elseif command == "playground" && !isempty(positional) && positional[1] == "init"
+                        # In limited mode (no DB connected), allow playground init
                         cmd_playground_init(; 
                             playground_name=length(positional) >= 2 ? positional[2] : nothing,
                             db_path=db_path, events_dir="events", 
-                            force=get(options, :force, false), from_repl=true)
+                            force=get(options, :force, false), from_repl=true, 
+                            repl_has_db=false)
                     else
                         dispatch_to_command(db_ref[], command, positional, options; 
                             db_path=db_path, events_dir="events", 
