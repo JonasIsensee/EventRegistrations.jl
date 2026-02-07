@@ -1,6 +1,7 @@
 # Playground commands for testing and development
 
 using TOML
+using Random: randperm
 
 # =============================================================================
 # COMMON GERMAN NAMES FOR REALISTIC TEST DATA
@@ -142,7 +143,7 @@ function parse_event_config_fields(event_id::String; events_dir::String="events"
     
     if haskey(config, "aliases")
         for (alias, actual_name) in config["aliases"]
-            fields[string(actual_name)] = Dict(
+            fields[string(actual_name)] = Dict{String, Any}(
                 "alias" => string(alias),
                 "actual_name" => string(actual_name)
             )
@@ -158,7 +159,7 @@ function parse_event_config_fields(event_id::String; events_dir::String="events"
                 if haskey(config, "aliases") && haskey(config["aliases"], field_alias)
                     actual_name = string(config["aliases"][field_alias])
                     if !haskey(fields, actual_name)
-                        fields[actual_name] = Dict("alias" => field_alias, "actual_name" => actual_name)
+                        fields[actual_name] = Dict{String, Any}("alias" => field_alias, "actual_name" => actual_name)
                     end
                     # If the rule has a value, note it as a valid option
                     if haskey(rule, "value")
@@ -688,7 +689,7 @@ function cmd_playground_receive_submissions(;
     evt_list = length(target_events) == 1 ? target_events[1] : "$(length(target_events)) events"
     
     @info """
-✓ Generated $created sample submission emails for $evt_list!
+✓ Generated $created sample submission emails for $(evt_list)!
 
 Emails saved to: $(abspath(emails_dir))
 

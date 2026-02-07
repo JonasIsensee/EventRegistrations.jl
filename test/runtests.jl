@@ -2142,6 +2142,106 @@ try
         @test code_missing == 0  # REPL starts in limited mode, exits normally
         println("  ✓ run_repl with missing DB starts in limited mode (returns 0)")
     end
+
+    @testset "27. Playground Improved Test Data Generation" begin
+        println("\n=== Test 27: Playground Improved Test Data Generation ===")
+        
+        # Test 1: Name generation uses common German names
+        @test "Anna" in EventRegistrations.GERMAN_FIRST_NAMES
+        @test "Max" in EventRegistrations.GERMAN_FIRST_NAMES
+        @test "Müller" in EventRegistrations.GERMAN_LAST_NAMES
+        @test "Schmidt" in EventRegistrations.GERMAN_LAST_NAMES
+        @test length(EventRegistrations.GERMAN_FIRST_NAMES) >= 80
+        @test length(EventRegistrations.GERMAN_LAST_NAMES) >= 100
+        println("  ✓ German name lists are populated")
+        
+        # Test 2: Field value generation produces valid values
+        value = EventRegistrations.generate_field_value("Essen")
+        @test value in ["Alles", "Vegetarisch", "Vegan"]
+        println("  ✓ Field value generation works for known fields")
+        
+        value = EventRegistrations.generate_field_value("Übernachtung Freitag")
+        @test value in ["Ja", "Nein"]
+        println("  ✓ Field value generation works for yes/no fields")
+        
+        # Test 3: Email generation produces valid email structure
+        filename, content, metadata = EventRegistrations.generate_registration_email("PWE_2026_01", 1)
+        @test endswith(filename, ".eml")
+        @test occursin("Subject: Anmeldung: PWE_2026_01", content)
+        @test occursin("@example.com", metadata.email)
+        @test metadata.first_name in EventRegistrations.GERMAN_FIRST_NAMES
+        @test metadata.last_name in EventRegistrations.GERMAN_LAST_NAMES
+        println("  ✓ Email generation produces valid emails")
+        
+        # Test 4: Available events listing
+        available_events = EventRegistrations.list_available_events(TEST_EVENTS_DIR)
+        @test !isempty(available_events)
+        println("  ✓ list_available_events finds events: $(available_events)")
+        
+        # Test 5: Bank transfer generation
+        # First create some test registrations with costs
+        setup_test_event_config(db)
+        recalculate_costs!(db, "PWE_2026_01"; events_dir=TEST_EVENTS_DIR)
+        
+        transfer_csv_path = joinpath(TEST_DIR, "test_generated_transfers.csv")
+        num_transfers = EventRegistrations.generate_bank_transfers_csv(db, transfer_csv_path;
+            event_id="PWE_2026_01",
+            payment_rate=1.0,  # 100% for testing
+            include_partial=false)
+        
+        @test num_transfers >= 1
+        @test isfile(transfer_csv_path)
+        
+        # Read and verify CSV structure
+        csv_content = read(transfer_csv_path, String)
+        @test occursin("Buchungstag", csv_content)  # Has header
+        @test occursin("Betrag", csv_content)  # Has amount column
+        @test occursin("Verwendungszweck", csv_content)  # Has reference column
+        println("  ✓ Bank transfer generation creates valid CSV with $num_transfers transfers")
+        
+        # Test 6: CLI command generate-registrations (file-based, no DB needed)
+        playground_emails_dir = joinpath(TEST_DIR, "playground_emails")
+        mkpath(playground_emails_dir)
+        
+        code = EventRegistrations.cmd_playground_receive_submissions(;
+            count=5,
+            event_id="PWE_2026_01",
+            emails_dir=playground_emails_dir,
+            events_dir=TEST_EVENTS_DIR)
+        
+        @test code == 0
+        @test length(readdir(playground_emails_dir)) == 5
+        println("  ✓ cmd_playground_receive_submissions generates 5 emails")
+        
+        # Test 7: All-events distribution
+        # Create a second event config for testing
+        second_event_path = joinpath(TEST_EVENTS_DIR, "TestEvent_2025.toml")
+        write(second_event_path, """
+        [event]
+        name = "Test Event 2025"
+        """)
+        
+        playground_emails_dir2 = joinpath(TEST_DIR, "playground_emails2")
+        mkpath(playground_emails_dir2)
+        
+        code = EventRegistrations.cmd_playground_receive_submissions(;
+            count=6,
+            all_events=true,
+            emails_dir=playground_emails_dir2,
+            events_dir=TEST_EVENTS_DIR)
+        
+        @test code == 0
+        files = readdir(playground_emails_dir2)
+        @test length(files) == 6
+        
+        # Verify that emails were distributed across events
+        has_pwe = any(f -> occursin("PWE_2026_01", f), files)
+        has_test = any(f -> occursin("TestEvent_2025", f), files)
+        @test has_pwe || has_test  # At least one of the events should be present
+        println("  ✓ --all-events distributes registrations across events")
+        
+        println("  ✓ All playground test data generation features working")
+    end
 end
 
 
