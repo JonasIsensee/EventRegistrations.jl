@@ -116,3 +116,259 @@ function cmd_get_email_redirect(; credentials_path::String="credentials.toml")
     
     return 0
 end
+
+# =============================================================================
+# Event Config Editing Command
+# =============================================================================
+
+"""
+Format an EventConfig for display as a summary.
+"""
+function format_event_config_summary(cfg::Config.EventConfig)
+    lines = String[]
+    
+    push!(lines, "")
+    push!(lines, "=" ^ 60)
+    push!(lines, "Event Configuration Summary")
+    push!(lines, "=" ^ 60)
+    push!(lines, "")
+    push!(lines, "  Event ID:    $(cfg.event_id)")
+    push!(lines, "  Event Name:  $(cfg.name)")
+    push!(lines, "  Config Path: $(cfg.config_path)")
+    push!(lines, "")
+    push!(lines, "Cost Configuration:")
+    push!(lines, "  Base cost:       $(cfg.base_cost)")
+    push!(lines, "  Cost rules:      $(length(cfg.rules))")
+    push!(lines, "  Computed fields: $(length(cfg.computed_fields))")
+    
+    if !isempty(cfg.aliases)
+        push!(lines, "  Field aliases:   $(length(cfg.aliases))")
+    end
+    
+    # Show first few cost rules
+    if !isempty(cfg.rules)
+        push!(lines, "")
+        push!(lines, "Cost Rules Preview:")
+        for (i, rule) in enumerate(cfg.rules)
+            i > 5 && (push!(lines, "  ... and $(length(cfg.rules) - 5) more rules"); break)
+            field = get(rule, "field", "?")
+            cost = get(rule, "cost", 0.0)
+            if haskey(rule, "value")
+                push!(lines, "  [$i] $(field) = \"$(rule["value"])\" → $(cost)")
+            elseif haskey(rule, "pattern")
+                push!(lines, "  [$i] $(field) ~ /$(rule["pattern"])/ → $(cost)")
+            end
+        end
+    end
+    
+    # Show export configuration if present
+    if cfg.export_registration_columns !== nothing
+        push!(lines, "")
+        push!(lines, "Export Configuration:")
+        push!(lines, "  Registration columns: $(length(cfg.export_registration_columns))")
+    end
+    
+    push!(lines, "")
+    push!(lines, "=" ^ 60)
+    
+    return join(lines, "\n")
+end
+
+"""
+Open the user's preferred editor for a file.
+Returns the editor exit code.
+"""
+function open_editor(filepath::String)
+    editor = get(ENV, "EDITOR", get(ENV, "VISUAL", ""))
+    
+    if isempty(editor)
+        # Try common editors
+        for candidate in ["nano", "vim", "vi", "notepad"]
+            if Sys.which(candidate) !== nothing
+                editor = candidate
+                break
+            end
+        end
+    end
+    
+    if isempty(editor)
+        error("No editor found. Set the EDITOR environment variable.")
+    end
+    
+    # Run editor interactively
+    cmd = `$editor $filepath`
+    return run(cmd).exitcode
+end
+
+"""
+Prompt user for a yes/no/edit response.
+Returns :yes, :no, or :edit
+"""
+function prompt_yes_no_edit(prompt::String; default::Symbol=:no)
+    default_str = default == :yes ? "Y/n/e" : (default == :edit ? "y/n/E" : "y/N/e")
+    print(prompt, " [$default_str]: ")
+    flush(stdout)
+    
+    response = lowercase(strip(readline()))
+    
+    if isempty(response)
+        return default
+    elseif response in ["y", "yes"]
+        return :yes
+    elseif response in ["n", "no"]
+        return :no
+    elseif response in ["e", "edit"]
+        return :edit
+    else
+        return default
+    end
+end
+
+"""
+Try to parse a TOML file and load it as an EventConfig.
+Returns (success::Bool, config_or_error)
+"""
+function try_parse_event_config(filepath::String, event_id::String)
+    try
+        # First, try to parse as TOML
+        config_dict = TOML.parsefile(filepath)
+        
+        # Create a temporary directory structure to use load_event_config
+        # We need to write the file to a temp location with the right name
+        temp_dir = mktempdir()
+        temp_config_path = joinpath(temp_dir, "$(event_id).toml")
+        cp(filepath, temp_config_path)
+        
+        # Try to load as EventConfig
+        cfg = Config.load_event_config(event_id, temp_dir)
+        
+        # Clean up
+        rm(temp_dir; recursive=true)
+        
+        if cfg === nothing
+            return (false, "Failed to parse event configuration structure")
+        end
+        
+        return (true, cfg)
+    catch e
+        if e isa TOML.ParserError
+            return (false, "TOML syntax error: $(e.msg)")
+        else
+            return (false, "Parse error: $(sprint(showerror, e))")
+        end
+    end
+end
+
+"""
+Edit an event configuration file interactively.
+
+Opens the config file in the user's preferred editor (via \$EDITOR).
+On save, validates the config and shows a summary. If invalid, offers
+to re-edit or discard. If valid, offers to accept (overwrite original)
+and optionally sync to database.
+
+# Arguments
+- `event_id`: The event ID whose config to edit
+
+# Keyword Arguments
+- `events_dir`: Directory containing event config files (default: "events")
+- `db`: Optional database connection for syncing after edit
+
+# Returns
+- 0 on success, 1 on error
+"""
+function cmd_edit_event_config(event_id::String;
+        events_dir::String="events",
+        db::Union{DuckDB.DB, Nothing}=nothing)
+    
+    # Check if config file exists
+    config_path = joinpath(events_dir, "$(event_id).toml")
+    
+    if !isfile(config_path)
+        @error "Event config not found" path=config_path
+        @info "Use 'eventreg create-event-config $(event_id)' to create a new config"
+        return 1
+    end
+    
+    # Create a temporary copy for editing
+    temp_file = tempname() * ".toml"
+    cp(config_path, temp_file)
+    
+    try
+        while true
+            # Open editor
+            @info "Opening editor for event config: $(event_id)"
+            editor_code = open_editor(temp_file)
+            
+            if editor_code != 0
+                @warn "Editor exited with non-zero status" code=editor_code
+            end
+            
+            # Check if file was modified (or just always parse)
+            original_content = read(config_path, String)
+            edited_content = read(temp_file, String)
+            
+            if original_content == edited_content
+                @info "No changes detected"
+                return 0
+            end
+            
+            # Try to parse the edited config
+            success, result = try_parse_event_config(temp_file, event_id)
+            
+            if !success
+                # Parse failed - offer to re-edit or discard
+                println()
+                println("❌ Configuration Error:")
+                println("   $(result)")
+                println()
+                
+                response = prompt_yes_no_edit("Re-edit the file?"; default=:edit)
+                
+                if response == :edit
+                    continue  # Loop back to editor
+                else
+                    @info "Discarding changes"
+                    return 0
+                end
+            end
+            
+            # Parse succeeded - show summary
+            cfg = result
+            println(format_event_config_summary(cfg))
+            
+            # Ask to accept changes
+            response = prompt_yes_no_edit("Accept changes and overwrite original config?"; default=:no)
+            
+            if response == :edit
+                continue  # Loop back to editor
+            elseif response == :no
+                @info "Discarding changes"
+                return 0
+            end
+            
+            # Accept: overwrite original file
+            cp(temp_file, config_path; force=true)
+            @info "Config saved: $(config_path)"
+            
+            # Ask to sync if we have a database connection
+            if db !== nothing
+                sync_response = prompt_user_bool("Sync config to database and recalculate costs?"; default=true)
+                
+                if sync_response
+                    @info "Syncing configuration..."
+                    sync_event_configs_to_db!(db, events_dir)
+                    recalculate_costs!(db, event_id; events_dir=events_dir)
+                    @info "Config synced and costs recalculated"
+                end
+            else
+                @info "Run 'eventreg sync-config && eventreg recalculate-costs $(event_id)' to apply changes"
+            end
+            
+            return 0
+        end
+    finally
+        # Clean up temp file
+        isfile(temp_file) && rm(temp_file)
+    end
+end

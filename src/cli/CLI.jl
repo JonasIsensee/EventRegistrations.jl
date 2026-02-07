@@ -136,6 +136,7 @@ COMMANDS:
   process-emails [folder]        Process registration emails
   generate-field-config          Generate field configuration
   create-event-config <id>       Create event config template
+  edit-event-config <event-id>   Edit event config in external editor
   sync-config                    Sync config files to database
   recalculate-costs <event-id>   Recalculate costs after config changes
   list-registrations [event-id]  List registrations with filters
@@ -175,6 +176,9 @@ EMAIL MANAGEMENT:
     --event-id=<id>              Send only emails for specific event
 
 CONFIGURATION:
+  edit-event-config <event-id>   Edit event config interactively
+    Opens config in \$EDITOR, validates on save, shows summary.
+    If invalid: re-edit or discard. If valid: accept and optionally sync.
   set-email-redirect <email>     Redirect ALL emails to test address (for testing)
   get-email-redirect             Show current email redirect setting
   clear-email-redirect           Remove email redirect (send to actual recipients)
@@ -236,6 +240,7 @@ EXAMPLES:
   eventreg config-summary PWE_2026_01 --verbose   # with field values and aliases
   eventreg validate-config PWE_2026_01 --verbose
   eventreg recalculate-costs PWE_2026_01 --dry-run --check-sync
+  eventreg edit-event-config PWE_2026_01   # edit config interactively
   eventreg import-bank-csv bank_transfers/january.csv
   eventreg match-transfers --event-id=PWE_2026_01
   eventreg list-registrations --filter=unpaid              # list unpaid registrations
@@ -325,7 +330,7 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
     from_repl::Bool=false)
     # Set global verbosity flag based on command-line options
     set_verbose!(get(options, :verbose, false))
-    
+
     try
         if command == "init"
             return cmd_init(; db_path=db_path)
@@ -344,6 +349,9 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
         elseif command == "recalculate-costs"
             isempty(positional) && (cli_err("event-id required"); return 1)
             return cmd_recalculate_costs(db, positional[1]; events_dir=events_dir, strict=get(options, :strict, false), dry_run=get(options, :dry_run, false))
+        elseif command == "edit-event-config"
+            isempty(positional) && (cli_err("event-id required"); return 1)
+            return cmd_edit_event_config(positional[1]; events_dir=events_dir, db=db)
         elseif command == "list-registrations"
             event_id = length(positional) >= 1 ? positional[1] : nothing
             return cmd_list_registrations(db, event_id; filter=get(options, :filter, "all"), name=get(options, :name, nothing), email=get(options, :email, nothing), since=get(options, :since, nothing), pager=get(options, :pager, false))
@@ -572,7 +580,7 @@ EventRegistrations REPL — database connected. Same commands as CLI (without th
 # Available commands for completion (must match dispatch_to_command)
 const REPL_COMMANDS = [
     "init", "sync", "process-emails", "download-emails", "generate-field-config",
-    "create-event-config", "sync-config", "recalculate-costs", "list-registrations",
+    "create-event-config", "edit-event-config", "sync-config", "recalculate-costs", "list-registrations",
     "edit-registrations", "event-overview", "status", "config-summary",
     "import-bank-csv", "match-transfers",
     "list-unmatched", "review-near-misses", "manual-match", "grant-subsidy",
@@ -725,7 +733,7 @@ Generate the REPL banner with database path and playground indicator.
 function repl_banner(db_path::AbstractString, is_playground_mode::Bool, hascolor::Bool)
     db_folder = dirname(abspath(db_path))
     db_folder = isempty(db_folder) ? pwd() : db_folder
-    
+
     if is_playground_mode
         # Colored playground indicator
         if hascolor
@@ -743,7 +751,7 @@ function repl_banner(db_path::AbstractString, is_playground_mode::Bool, hascolor
 $(playground_line)
 EventRegistrations REPL — database connected.
   Database folder: $(db_folder)
-  
+
 Same commands as CLI (without the eventreg prefix).
   list-registrations, grant-subsidy <ref> <amount>, exit, etc. Type help for full usage.
 """
@@ -751,7 +759,7 @@ Same commands as CLI (without the eventreg prefix).
         banner = """
 EventRegistrations REPL — database connected.
   Database folder: $(db_folder)
-  
+
 Same commands as CLI (without the eventreg prefix).
   list-registrations, grant-subsidy <ref> <amount>, exit, etc. Type help for full usage.
 """
@@ -776,11 +784,11 @@ created, the full REPL experience becomes available.
 """
 function run_repl(; db_path::String="events.duckdb")
     db_path = get(ENV, "EVENTREG_DB_PATH", db_path)
-    
+
     # Track database connection state
     db_exists = isfile(db_path)
     db_ref = Ref{Union{DuckDB.DB, Nothing}}(nothing)
-    
+
     # Show appropriate banner based on DB state
     if db_exists
         db_ref[] = init_database(db_path)
@@ -789,17 +797,17 @@ function run_repl(; db_path::String="events.duckdb")
         print_db_missing_warning(db_path)
         println(REPL_BANNER_NO_DB)
     end
-    
+
     try
         term = REPL.Terminals.TTYTerminal(get(ENV, "TERM", "dumb"), stdin, stdout, stderr)
         hascolor = REPL.Terminals.hascolor(term)
-        
+
         # Check if this is a playground database
         is_playground_mode = is_playground(db_ref[])
-        
+
         # Print dynamic banner with database path and playground indicator
         println(repl_banner(db_path, is_playground_mode, hascolor))
-        
+
         # Use different prompt and color for playground mode
         if is_playground_mode
             prompt_text = REPL_PROMPT_PLAYGROUND
@@ -887,18 +895,18 @@ function run_repl(; db_path::String="events.duckdb")
                         # sync can create the DB
                         db = init_project(db_path)
                         db_ref[] = db
-                        dispatch_to_command(db_ref[], command, positional, options; 
-                            db_path=db_path, events_dir="events", 
+                        dispatch_to_command(db_ref[], command, positional, options;
+                            db_path=db_path, events_dir="events",
                             credentials_path="credentials.toml", from_repl=true)
                     elseif command == "playground" && !isempty(positional) && positional[1] == "init"
                         # In limited mode (no DB connected), allow playground init
                         playground_name = length(positional) >= 2 ? positional[2] : nothing
-                        result = cmd_playground_init(; 
+                        result = cmd_playground_init(;
                             playground_name=playground_name,
-                            db_path=db_path, events_dir="events", 
-                            force=get(options, :force, false), from_repl=true, 
+                            db_path=db_path, events_dir="events",
+                            force=get(options, :force, false), from_repl=true,
                             repl_has_db=false)
-                        
+
                         # If successful and a playground name was given, change to that directory
                         if result == 0 && playground_name !== nothing
                             playground_dir = abspath(playground_name)
@@ -910,14 +918,14 @@ function run_repl(; db_path::String="events.duckdb")
                             end
                         end
                     else
-                        dispatch_to_command(db_ref[], command, positional, options; 
-                            db_path=db_path, events_dir="events", 
+                        dispatch_to_command(db_ref[], command, positional, options;
+                            db_path=db_path, events_dir="events",
                             credentials_path="credentials.toml", from_repl=true)
                     end
                 end
                 flush(stdout)
                 flush(stderr)
-                
+
                 # After init/sync/playground init, connect to the database if we haven't yet
                 if command in ["init", "sync"] || (command == "playground" && !isempty(positional) && positional[1] == "init")
                     if db_ref[] !== nothing
