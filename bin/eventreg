@@ -21,6 +21,47 @@ using Pkg
 pkg_dir = abspath(joinpath(@__DIR__, ".."))
 Pkg.activate(pkg_dir; io=devnull)
 
+# Check if instantiate is needed (Manifest.toml missing or out of sync)
+manifest_path = joinpath(pkg_dir, "Manifest.toml")
+project_path = joinpath(pkg_dir, "Project.toml")
+
+function needs_instantiate()
+    # If Manifest.toml doesn't exist, definitely need to instantiate
+    !isfile(manifest_path) && return true
+    
+    # If Manifest is older than Project.toml, may need to instantiate
+    if mtime(manifest_path) < mtime(project_path)
+        return true
+    end
+    
+    # Try to check if main dependency can be resolved
+    # This is a quick check - if DuckDB isn't available, we need to instantiate
+    try
+        # Just check if the package can be found in the manifest
+        manifest = Pkg.TOML.parsefile(manifest_path)
+        deps = get(manifest, "deps", Dict())
+        # Check for a core dependency
+        return !haskey(deps, "DuckDB")
+    catch
+        return true
+    end
+end
+
+if needs_instantiate()
+    printstyled("┌ ", color=:yellow, bold=true)
+    printstyled("First-time setup detected\n", color=:yellow)
+    printstyled("│ ", color=:yellow, bold=true)
+    println("Installing dependencies... (this may take a few minutes)")
+    printstyled("│ ", color=:yellow, bold=true)
+    println("This only needs to happen once.")
+    printstyled("└\n", color=:yellow, bold=true)
+    
+    Pkg.instantiate()
+    
+    printstyled("✓ ", color=:green, bold=true)
+    println("Dependencies installed successfully!\n")
+end
+
 # Load the EventRegistrations module
 push!(LOAD_PATH, joinpath(pkg_dir, "src"))
 using EventRegistrations

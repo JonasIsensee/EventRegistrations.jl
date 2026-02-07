@@ -665,6 +665,49 @@ function eventreg_parser(input::String)
     return input
 end
 
+"""Commands that can run without a database connection."""
+const NO_DB_COMMANDS = ["init", "sync", "playground", "help", "exit", "quit", "q"]
+
+"""Check if a command requires a database connection."""
+function command_requires_db(command::String, positional::Vector{String})
+    command in ["help", "exit", "quit", "q"] && return false
+    command == "init" && return false
+    command == "sync" && return false
+    # playground init doesn't need DB, but other playground subcommands do
+    if command == "playground"
+        subcommand = isempty(positional) ? nothing : positional[1]
+        return subcommand != "init"
+    end
+    return true
+end
+
+"""
+Print the database missing warning with colored output.
+"""
+function print_db_missing_warning(db_path::String)
+    printstyled("┌ ", color=:yellow, bold=true)
+    printstyled("Warning: ", color=:yellow, bold=true)
+    println("Database not found: $db_path")
+    printstyled("│ ", color=:yellow)
+    println("Most commands are unavailable until the database is initialized.")
+    printstyled("│ ", color=:yellow)
+    println("Available commands: init, sync, playground init")
+    printstyled("│ ", color=:yellow)
+    println()
+    printstyled("│ ", color=:yellow)
+    printstyled("Run ", color=:yellow)
+    printstyled("init", color=:cyan, bold=true)
+    printstyled(" or ", color=:yellow)
+    printstyled("sync", color=:cyan, bold=true)
+    printstyled(" to create the database.\n", color=:yellow)
+    printstyled("└\n", color=:yellow, bold=true)
+end
+
+const REPL_BANNER_NO_DB = """
+EventRegistrations REPL — database not connected. Run 'init' or 'sync' to create it.
+  Type 'help' for usage, or 'exit' / Ctrl-D to quit.
+"""
+
 """
 Run the interactive REPL using LineEdit (no ReplMaker).
 - TAB completion for commands and options (EventRegCompletionProvider)
@@ -675,17 +718,28 @@ Uses the same pattern as run_repl_linedit in repl.jl: one Prompt, one run_interf
 on_done parses and dispatches with a single DB connection. ReplMaker was removed
 because it is designed for "parse then eval as Julia"; we only parse CLI lines and
 dispatch to our own commands, so plain LineEdit is the right fit.
+
+When the database doesn't exist, the REPL starts in a limited mode where only
+init, sync, and playground init commands are available. Once the database is
+created, the full REPL experience becomes available.
 """
 function run_repl(; db_path::String="events.duckdb")
     db_path = get(ENV, "EVENTREG_DB_PATH", db_path)
-    if !isfile(db_path)
-        cli_err("Database not found: $db_path. Run 'eventreg init' or 'eventreg sync' first (outside REPL).")
-        return 1
-    end
-    db_ref = Ref(init_database(db_path))
-    try
+    
+    # Track database connection state
+    db_exists = isfile(db_path)
+    db_ref = Ref{Union{DuckDB.DB, Nothing}}(nothing)
+    
+    # Show appropriate banner based on DB state
+    if db_exists
+        db_ref[] = init_database(db_path)
         println(REPL_BANNER)
-
+    else
+        print_db_missing_warning(db_path)
+        println(REPL_BANNER_NO_DB)
+    end
+    
+    try
         term = REPL.Terminals.TTYTerminal(get(ENV, "TERM", "dumb"), stdin, stdout, stderr)
         hascolor = REPL.Terminals.hascolor(term)
         prefix = hascolor ? Base.text_colors[:blue] : ""
@@ -746,15 +800,57 @@ function run_repl(; db_path::String="events.duckdb")
                 return
             end
 
+            # Check if this command requires a database connection
+            if db_ref[] === nothing && command_requires_db(command, positional)
+                printstyled("Error: ", color=:red, bold=true)
+                println("Command '$command' requires a database connection.")
+                printstyled("Run ", color=:yellow)
+                printstyled("init", color=:cyan, bold=true)
+                printstyled(" or ", color=:yellow)
+                printstyled("sync", color=:cyan, bold=true)
+                printstyled(" first to create the database.\n", color=:yellow)
+                flush(stdout)
+                return
+            end
+
             try
                 with_cli_logger() do
-                    dispatch_to_command(db_ref[], command, positional, options; db_path=db_path, events_dir="events", credentials_path="credentials.toml", from_repl=true)
+                    # For commands that don't need DB, pass a dummy or handle specially
+                    if command == "init"
+                        cmd_init(; db_path=db_path)
+                    elseif command == "sync" && db_ref[] === nothing
+                        # sync can create the DB
+                        db = init_project(db_path)
+                        db_ref[] = db
+                        dispatch_to_command(db_ref[], command, positional, options; 
+                            db_path=db_path, events_dir="events", 
+                            credentials_path="credentials.toml", from_repl=true)
+                    elseif command == "playground" && !isempty(positional) && positional[1] == "init"
+                        cmd_playground_init(; 
+                            playground_name=length(positional) >= 2 ? positional[2] : nothing,
+                            db_path=db_path, events_dir="events", 
+                            force=get(options, :force, false), from_repl=true)
+                    else
+                        dispatch_to_command(db_ref[], command, positional, options; 
+                            db_path=db_path, events_dir="events", 
+                            credentials_path="credentials.toml", from_repl=true)
+                    end
                 end
                 flush(stdout)
                 flush(stderr)
-                if command == "init"
-                    DBInterface.close!(db_ref[])
-                    db_ref[] = init_database(db_path)
+                
+                # After init/sync/playground init, connect to the database if we haven't yet
+                if command in ["init", "sync"] || (command == "playground" && !isempty(positional) && positional[1] == "init")
+                    if db_ref[] !== nothing
+                        DBInterface.close!(db_ref[])
+                    end
+                    if isfile(db_path)
+                        db_ref[] = init_database(db_path)
+                        println()
+                        printstyled("✓ ", color=:green, bold=true)
+                        println("Database connected. All commands are now available.")
+                        println()
+                    end
                 end
             catch e
                 if e isa InterruptException
@@ -774,7 +870,9 @@ function run_repl(; db_path::String="events.duckdb")
             e isa EOFError || rethrow()
         end
     finally
-        DBInterface.close!(db_ref[])
+        if db_ref[] !== nothing
+            DBInterface.close!(db_ref[])
+        end
     end
     return 0
 end
