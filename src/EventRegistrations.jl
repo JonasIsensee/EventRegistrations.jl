@@ -88,6 +88,48 @@ function with_transaction(f::Function, db::DuckDB.DB)
 end
 export with_transaction
 
+# =============================================================================
+# SETTINGS HELPER FUNCTIONS
+# =============================================================================
+
+"""
+    set_setting!(db::DuckDB.DB, key::AbstractString, value::AbstractString)
+
+Set a database setting in the settings table. Creates or updates the value.
+"""
+function set_setting!(db::DuckDB.DB, key::AbstractString, value::AbstractString)
+    # Use INSERT OR REPLACE pattern via DELETE + INSERT (DuckDB-compatible)
+    DBInterface.execute(db, "DELETE FROM settings WHERE key = ?", [key])
+    DBInterface.execute(db, """
+        INSERT INTO settings (key, value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+    """, [key, value])
+end
+export set_setting!
+
+"""
+    get_setting(db::DuckDB.DB, key::AbstractString; default::Union{String,Nothing}=nothing)
+
+Get a database setting. Returns the default if the key doesn't exist.
+"""
+function get_setting(db::DuckDB.DB, key::AbstractString; default::Union{String,Nothing}=nothing)
+    result = DBInterface.execute(db, "SELECT value FROM settings WHERE key = ?", [key])
+    rows = collect(result)
+    return isempty(rows) ? default : rows[1][1]
+end
+export get_setting
+
+"""
+    is_playground(db::DuckDB.DB) -> Bool
+
+Check if this database is a playground (test/demo environment).
+"""
+function is_playground(db::DuckDB.DB)
+    val = get_setting(db, "is_playground"; default="false")
+    return lowercase(val) in ("true", "1", "yes")
+end
+export is_playground
+
 """
 Log a financial transaction to the immutable ledger.
 """

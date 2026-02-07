@@ -201,6 +201,9 @@ Then you can start a new REPL session in the playground directory if desired."""
         @info "Creating database: $(db_path)"
         db = init_project(db_path, ".")
         
+        # Mark this database as a playground
+        set_setting!(db, "is_playground", "true")
+        
         # Generate sample event config if events directory is empty
         event_configs = filter(f -> endswith(f, ".toml"), readdir(events_dir))
         if isempty(event_configs)
