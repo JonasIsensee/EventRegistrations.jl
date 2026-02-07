@@ -2014,12 +2014,13 @@ try
             println("  ✓ dispatch_to_command: grant-subsidy applied with single db connection")
         end
 
-        # run_repl when DB does not exist returns 1
+        # run_repl when DB does not exist starts in limited mode (returns 0 after normal exit)
+        # This is the new behavior: REPL allows init/sync/playground init commands even without DB
         nonexistent = joinpath(TEST_DIR, "nonexistent.duckdb")
         @test !isfile(nonexistent)
         code_missing = EventRegistrations.run_repl(; db_path=nonexistent)
-        @test code_missing == 1
-        println("  ✓ run_repl with missing DB returns 1")
+        @test code_missing == 0  # REPL starts in limited mode, exits normally
+        println("  ✓ run_repl with missing DB starts in limited mode (returns 0)")
     end
 end
 
