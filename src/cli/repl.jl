@@ -21,6 +21,11 @@ const REPL_COMMANDS = [
     "validate-config", "playground",
 ]
 
+# Subcommands for commands that have them (e.g., playground init, playground receive-submissions)
+const REPL_SUBCOMMANDS = Dict{String, Vector{String}}(
+    "playground" => ["init", "receive-submissions"],
+)
+
 # Common options for completion
 const REPL_OPTIONS = [
     "--help", "-h", "--db-path", "--config-dir", "--verbose", "--strict",
@@ -42,20 +47,38 @@ function LineEdit.complete_line(c::EventRegCompletionProvider, s::LineEdit.Promp
     full = LineEdit.input_string(s)
     pos = LineEdit.position(LineEdit.buffer(s))
     prefix = pos > 0 ? full[1:prevind(full, pos + 1)] : ""
-    parts = split(prefix, r"\s+"; limit=2, keepempty=true)
-    prefix_word = isempty(parts) ? "" : String(parts[end])
+    # Split into all parts to detect command + subcommand positions
+    all_parts = split(prefix, r"\s+"; keepempty=true)
+    prefix_word = isempty(all_parts) ? "" : String(all_parts[end])
     completions = LineEdit.NamedCompletion[]
 
-    if length(parts) == 1
+    if length(all_parts) == 1
         # Completing command (first word)
         for cmd in REPL_COMMANDS
             if startswith(cmd, prefix_word) && cmd != prefix_word
                 push!(completions, LineEdit.NamedCompletion(cmd, cmd))
             end
         end
-    end
-    if length(parts) >= 2
-        # Completing option or positional (after command)
+    elseif length(all_parts) == 2
+        # Could be completing a subcommand or option
+        cmd = String(all_parts[1])
+        if haskey(REPL_SUBCOMMANDS, cmd) && !startswith(prefix_word, "-")
+            # Completing subcommand for a command that has them
+            for subcmd in REPL_SUBCOMMANDS[cmd]
+                if startswith(subcmd, prefix_word) && subcmd != prefix_word
+                    push!(completions, LineEdit.NamedCompletion(subcmd, subcmd))
+                end
+            end
+        else
+            # Completing option
+            for opt in REPL_OPTIONS
+                if startswith(opt, prefix_word) && opt != prefix_word
+                    push!(completions, LineEdit.NamedCompletion(opt, opt))
+                end
+            end
+        end
+    else
+        # Completing option or positional (after command/subcommand)
         for opt in REPL_OPTIONS
             if startswith(opt, prefix_word) && opt != prefix_word
                 push!(completions, LineEdit.NamedCompletion(opt, opt))
