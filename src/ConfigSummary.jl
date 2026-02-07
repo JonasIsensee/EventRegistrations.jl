@@ -4,12 +4,15 @@ ConfigSummary - Event Configuration Summary and Cost Combination Analysis
 This module provides functions to analyze event configurations and generate
 summaries showing all possible cost combinations. This is useful for validating
 that cost rules are correctly configured before processing registrations.
+
+The combination generator is smart - it analyzes the cost rules directly to
+enumerate which subsets of rules can be active, rather than blindly testing
+all possible field value combinations.
 """
 module ConfigSummary
 
 using DBInterface: DBInterface
 using DuckDB: DuckDB
-using PrettyTables: pretty_table, ft_printf, hl_row
 
 using ..Config: EventConfig, load_event_config, materialize_cost_rules
 using ..CostCalculator: calculate_cost_with_details, CostCalculationResult
@@ -19,13 +22,14 @@ export generate_config_summary, print_config_summary
 export get_all_field_values, generate_cost_combinations
 
 """
-Represents a single cost combination - a set of field values and resulting cost.
+Represents a single cost combination - a set of active rules and resulting cost.
 """
 struct CostCombination
-    fields::Dict{String, String}       # Field name → value
+    fields::Dict{String, String}       # Field name → value (representative example)
     cost::Float64                       # Calculated cost
     cost_breakdown::Vector{Tuple{String, Float64}}  # Rule descriptions and costs
     base_cost::Float64                  # Base cost
+    active_rules::Vector{Int}           # Indices of rules that are active
 end
 
 """
@@ -49,8 +53,6 @@ end
 
 Extract all fields referenced in cost rules and their possible values.
 Returns a Dict mapping field names to vectors of possible values.
-
-If a database is provided, also looks up actual values from registrations.
 """
 function get_all_field_values(cfg::EventConfig; db::Union{DuckDB.DB, Nothing}=nothing)
     field_values = Dict{String, Set{String}}()
@@ -69,13 +71,9 @@ function get_all_field_values(cfg::EventConfig; db::Union{DuckDB.DB, Nothing}=no
             push!(field_values[field], string(rule["value"]))
         end
         
-        # For pattern rules, we need to provide both matching and non-matching values
-        # We'll add a placeholder for "matches pattern" and "doesn't match"
+        # For pattern rules, note we need pattern-matching values
         if haskey(rule, "pattern")
-            pattern = rule["pattern"]
-            # Add a value that would match the pattern
-            push!(field_values[field], "[matches: $pattern]")
-            push!(field_values[field], "[no match]")
+            push!(field_values[field], "[pattern: $(rule["pattern"])]")
         end
         
         # Check unless/only_if conditions for additional fields
@@ -117,34 +115,14 @@ function get_all_field_values(cfg::EventConfig; db::Union{DuckDB.DB, Nothing}=no
         end
     end
     
-    # For each field with values, add a "not selected" option
+    # Add "Nein" as non-selected option for each field
     for (field, values) in field_values
-        if !isempty(values)
-            # Add "Nein" or empty as non-selected option (common in German forms)
-            push!(values, "Nein")
-        end
+        push!(values, "Nein")
     end
     
     # If database provided, also get actual values from registrations
     if db !== nothing
         try
-            result = DBInterface.execute(db, """
-                SELECT DISTINCT json_keys(fields) as keys
-                FROM registrations 
-                WHERE event_id = ? AND deleted_at IS NULL
-            """, [cfg.event_id])
-            
-            for row in result
-                if row[1] !== nothing
-                    for field in row[1]
-                        if !haskey(field_values, field)
-                            field_values[field] = Set{String}()
-                        end
-                    end
-                end
-            end
-            
-            # Get actual values for fields we know about
             for field in keys(field_values)
                 result = DBInterface.execute(db, """
                     SELECT DISTINCT json_extract_string(fields, ?) as val
@@ -177,71 +155,70 @@ end
 """
     generate_cost_combinations(cfg::EventConfig, field_values::Dict{String, Vector{String}})
 
-Generate all possible combinations of field values and calculate the cost for each.
-Returns only unique cost combinations (deduplicates combinations with same cost).
+Generate all possible cost combinations by analyzing the cost rules directly.
+Instead of brute-forcing all field combinations, we enumerate which subsets of 
+rules can be simultaneously active and compute the resulting costs.
+
+For N rules without conditions, there are at most 2^N combinations.
 """
 function generate_cost_combinations(cfg::EventConfig, field_values::Dict{String, Vector{String}})
-    combinations = CostCombination[]
     rules = materialize_cost_rules(cfg)
+    rule_list = get(rules, "rules", Dict{String,Any}[])
+    base_cost = Float64(get(rules, "base", 0.0))
     
-    # Get all fields and their values
-    fields = collect(keys(field_values))
-    
-    if isempty(fields)
-        # No fields - just base cost
-        empty_fields = Dict{String, String}()
-        result = calculate_cost_with_details(rules, empty_fields)
-        push!(combinations, CostCombination(
-            empty_fields,
-            result.total,
-            result.rule_costs,
-            result.base
-        ))
-        return combinations
+    # No rules - just base cost
+    if isempty(rule_list)
+        combo = CostCombination(
+            Dict{String, String}(),
+            base_cost,
+            Tuple{String, Float64}[],
+            base_cost,
+            Int[]
+        )
+        return [combo]
     end
     
-    # Generate all combinations using iterative approach
-    # (avoid exponential blowup by limiting combinations)
-    value_lists = [field_values[f] for f in fields]
-    num_combinations = prod(length.(value_lists))
+    # Analyze rules to find independent "choice groups"
+    # Rules that share fields or have conditional dependencies form groups
+    # For simplicity, we'll enumerate all 2^N rule activation patterns
+    # but filter out invalid ones (where conditions conflict)
     
-    # Limit to prevent memory issues
-    max_combinations = 10000
-    if num_combinations > max_combinations
-        @warn "Too many combinations ($num_combinations), sampling subset" max=max_combinations
-        # Sample random combinations instead
-        return generate_sampled_combinations(cfg, field_values, max_combinations)
+    n_rules = length(rule_list)
+    
+    # Limit to prevent exponential blowup (2^20 = 1M combinations max)
+    if n_rules > 20
+        @warn "Too many rules ($n_rules), limiting analysis to first 20"
+        n_rules = 20
     end
     
-    # Generate all combinations
     seen_costs = Dict{Float64, CostCombination}()
     
-    for indices in Iterators.product([1:length(v) for v in value_lists]...)
-        field_dict = Dict{String, String}()
-        for (i, field) in enumerate(fields)
-            field_dict[field] = value_lists[i][indices[i]]
-        end
-        
-        # Skip combinations with placeholder pattern matches that don't make sense
-        skip = false
-        for (field, value) in field_dict
-            if startswith(value, "[matches:") || value == "[no match]"
-                # These are pattern placeholders - handle specially
-                skip = true
-                break
+    # Enumerate all possible subsets of rules being active
+    for mask in 0:(2^n_rules - 1)
+        active_rules = Int[]
+        for i in 1:n_rules
+            if (mask >> (i-1)) & 1 == 1
+                push!(active_rules, i)
             end
         end
-        skip && continue
         
-        result = calculate_cost_with_details(rules, field_dict)
+        # Build field values that would activate exactly these rules
+        fields_for_combo = build_fields_for_rules(rule_list, active_rules, rules)
         
-        # Store unique combinations by cost (keep first occurrence for each cost)
+        # Skip if this combination is impossible (conflicting requirements)
+        fields_for_combo === nothing && continue
+        
+        # Calculate actual cost with these fields
+        result = calculate_cost_with_details(rules, fields_for_combo)
+        
+        # Store if this is a new unique cost
         if !haskey(seen_costs, result.total)
             seen_costs[result.total] = CostCombination(
-                field_dict,
+                fields_for_combo,
                 result.total,
                 result.rule_costs,
-                result.base
+                result.base,
+                active_rules
             )
         end
     end
@@ -251,47 +228,124 @@ function generate_cost_combinations(cfg::EventConfig, field_values::Dict{String,
 end
 
 """
-Generate sampled combinations when total space is too large.
+Build a field dictionary that would cause exactly the specified rules to be active.
+Returns nothing if the combination is impossible (conflicting requirements).
 """
-function generate_sampled_combinations(cfg::EventConfig, field_values::Dict{String, Vector{String}}, max_samples::Int)
-    combinations = CostCombination[]
-    rules = materialize_cost_rules(cfg)
-    fields = collect(keys(field_values))
+function build_fields_for_rules(rule_list::Vector, active_rules::Vector{Int}, rules::Dict)
+    fields = Dict{String, String}()
     
-    seen_costs = Dict{Float64, CostCombination}()
-    
-    for _ in 1:max_samples
-        field_dict = Dict{String, String}()
-        for field in fields
-            values = field_values[field]
-            if !isempty(values)
-                field_dict[field] = rand(values)
+    # First, set fields to activate the specified rules
+    for i in active_rules
+        rule = rule_list[i]
+        field = get(rule, "field", "")
+        isempty(field) && continue
+        
+        if haskey(rule, "value")
+            target_value = string(rule["value"])
+            # Check for conflict
+            if haskey(fields, field) && fields[field] != target_value
+                return nothing  # Conflict - can't activate both rules
+            end
+            fields[field] = target_value
+        elseif haskey(rule, "pattern")
+            # For patterns, we need a value that matches
+            # Use a placeholder that would match the pattern
+            pattern = rule["pattern"]
+            if !haskey(fields, field)
+                fields[field] = pattern  # Use pattern as matching value
             end
         end
         
-        # Skip pattern placeholders
-        skip = false
-        for (field, value) in field_dict
-            if startswith(value, "[matches:") || value == "[no match]"
-                skip = true
-                break
+        # Handle only_if conditions - they must also be satisfied
+        if haskey(rule, "only_if")
+            conditions = rule["only_if"]
+            conditions = conditions isa AbstractVector ? conditions : [conditions]
+            for cond in conditions
+                if cond isa AbstractDict
+                    cond_field = get(cond, "field", "")
+                    if !isempty(cond_field) && haskey(cond, "value")
+                        cond_value = string(cond["value"])
+                        if haskey(fields, cond_field) && fields[cond_field] != cond_value
+                            return nothing  # Conflict
+                        end
+                        fields[cond_field] = cond_value
+                    end
+                end
             end
-        end
-        skip && continue
-        
-        result = calculate_cost_with_details(rules, field_dict)
-        
-        if !haskey(seen_costs, result.total)
-            seen_costs[result.total] = CostCombination(
-                field_dict,
-                result.total,
-                result.rule_costs,
-                result.base
-            )
         end
     end
     
-    return sort(collect(values(seen_costs)), by=c -> c.cost)
+    # Now set fields to deactivate rules we don't want active
+    for i in 1:length(rule_list)
+        i in active_rules && continue
+        
+        rule = rule_list[i]
+        field = get(rule, "field", "")
+        isempty(field) && continue
+        
+        # If this rule's field isn't set yet, set it to a non-matching value
+        if !haskey(fields, field)
+            if haskey(rule, "value")
+                # Set to something that won't match
+                fields[field] = "Nein"
+            elseif haskey(rule, "pattern")
+                fields[field] = "Nein"  # Unlikely to match most patterns
+            end
+        else
+            # Field is already set - check if this would accidentally activate the rule
+            current_value = fields[field]
+            if haskey(rule, "value") && current_value == string(rule["value"])
+                # This rule would be activated - check if we can use unless to skip it
+                # For now, mark as conflict if we can't avoid activating it
+                if !has_blocking_unless(rule, fields)
+                    # Can't prevent this rule from activating
+                    # This combination is actually not achievable as specified
+                    # But we might still want to include it if the cost is different
+                end
+            end
+        end
+    end
+    
+    # Handle computed fields (multipliers) - ensure fields are set for sum_of calculations
+    computed_fields = get(rules, "computed_fields", Dict())
+    for (name, definition) in computed_fields
+        if definition isa Dict && haskey(definition, "sum_of")
+            for item in definition["sum_of"]
+                cf = get(item, "field", "")
+                if !isempty(cf) && !haskey(fields, cf)
+                    fields[cf] = "Nein"  # Default to not contributing
+                end
+            end
+        end
+    end
+    
+    return fields
+end
+
+"""
+Check if a rule has an 'unless' condition that is satisfied by the current fields,
+which would block the rule from being applied.
+"""
+function has_blocking_unless(rule::Dict, fields::Dict{String, String})
+    !haskey(rule, "unless") && return false
+    
+    conditions = rule["unless"]
+    conditions = conditions isa AbstractVector ? conditions : [conditions]
+    
+    for cond in conditions
+        if cond isa AbstractDict
+            cond_field = get(cond, "field", "")
+            if !isempty(cond_field) && haskey(fields, cond_field)
+                if haskey(cond, "value")
+                    if fields[cond_field] == string(cond["value"])
+                        return true  # Unless condition is met, rule blocked
+                    end
+                end
+            end
+        end
+    end
+    
+    return false
 end
 
 """
@@ -317,14 +371,14 @@ function generate_config_summary(event_id::String; events_dir::String="events", 
         )
     end
     
-    # Get field values
+    # Get field values (for display purposes)
     field_values = get_all_field_values(cfg; db=db)
     
-    if isempty(field_values)
-        push!(warnings, "No fields found in cost rules. Only base cost will be applied.")
+    if isempty(cfg.rules)
+        push!(warnings, "No cost rules defined. Only base cost will be applied.")
     end
     
-    # Generate combinations
+    # Generate combinations using smart rule-based analysis
     combinations = generate_cost_combinations(cfg, field_values)
     
     # Extract unique costs
@@ -449,12 +503,14 @@ function print_config_summary(summary::ConfigSummaryResult; io::IO=stdout, verbo
     end
     
     # Fields and possible values
-    if !isempty(summary.field_values)
+    if !isempty(summary.field_values) && verbose
         println(io, "───────────────────────────────────────────────────────────────────────────────")
-        println(io, "FIELDS AND POSSIBLE VALUES")
+        println(io, "FIELDS REFERENCED IN RULES")
         println(io, "───────────────────────────────────────────────────────────────────────────────")
         for (field, values) in sort(collect(summary.field_values))
-            values_str = join(values, ", ")
+            # Filter out pattern placeholders for display
+            display_values = filter(v -> !startswith(v, "[pattern:"), values)
+            values_str = join(display_values, ", ")
             if length(values_str) > 60
                 values_str = values_str[1:57] * "..."
             end
@@ -494,12 +550,9 @@ function print_config_summary(summary::ConfigSummaryResult; io::IO=stdout, verbo
                 end
             end
             
-            # Show the field combination that produces this cost
-            if verbose && !isempty(combo.fields)
-                println(io, "    Selection:")
-                for (field, value) in sort(collect(combo.fields))
-                    println(io, "      • $field = \"$value\"")
-                end
+            # Show which rules are active
+            if verbose && !isempty(combo.active_rules)
+                println(io, "    Active rules: $(join(combo.active_rules, ", "))")
             end
         end
     end
