@@ -214,8 +214,14 @@ EXPORTS:
 PLAYGROUND (Testing & Development):
   playground init [name]           Initialize playground environment
     --force                        Initialize even if directory is not empty
-  playground receive-submissions [count]  Generate sample submission emails
+  playground generate-registrations [count]  Generate sample registration emails
     --event-id=<id>              Use specific event ID for samples
+    --all-events                 Distribute across all available events
+  playground receive-submissions [count]  (alias for generate-registrations)
+  playground generate-bank-transfers      Generate bank transfer CSV for testing
+    --event-id=<id>              Generate transfers for specific event
+    --payment-rate=<0.0-1.0>     Fraction of registrations to pay (default: 0.7)
+    --output=<path>              Custom output file path
 
 COMMON OPTIONS:
   --db-path=<path>              Database file (default: events.duckdb)
@@ -271,8 +277,11 @@ EXAMPLES:
   eventreg export-combined --upload                        # export and upload to WebDAV
   eventreg playground init                                 # create playground in current dir
   eventreg playground init mytest                          # create playground in ./mytest
-  eventreg playground receive-submissions                  # generate 3 sample emails
-  eventreg playground receive-submissions 10               # generate 10 sample emails
+  eventreg playground generate-registrations               # generate 10 sample emails
+  eventreg playground generate-registrations 50            # generate 50 sample emails
+  eventreg playground generate-registrations 100 --all-events  # distribute across all events
+  eventreg playground generate-bank-transfers              # generate bank transfer CSV
+  eventreg playground generate-bank-transfers --payment-rate=0.9  # 90% payment rate
 
 REPL MODE:
   Run eventreg with no arguments to enter REPL mode. The database is connected
@@ -423,16 +432,29 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
             # Playground commands are subcommands
             subcommand = length(positional) >= 1 ? positional[1] : nothing
             if subcommand === nothing
-                cli_err("Playground subcommand required. Available: init, receive-submissions")
+                cli_err("Playground subcommand required. Available: init, generate-registrations, receive-submissions, generate-bank-transfers")
                 return 1
             elseif subcommand == "init"
                 playground_name = length(positional) >= 2 ? positional[2] : nothing
                 return cmd_playground_init(; playground_name=playground_name, db_path=db_path, events_dir=events_dir, force=get(options, :force, false), from_repl=from_repl)
-            elseif subcommand == "receive-submissions"
-                count = length(positional) >= 2 ? parse(Int, positional[2]) : 3
-                return cmd_playground_receive_submissions(; count=count, event_id=get(options, :event_id, nothing), emails_dir="emails")
+            elseif subcommand in ["receive-submissions", "generate-registrations"]
+                count = length(positional) >= 2 ? parse(Int, positional[2]) : 10
+                return cmd_playground_receive_submissions(; 
+                    count=count, 
+                    event_id=get(options, :event_id, nothing), 
+                    all_events=get(options, :all_events, false),
+                    emails_dir="emails",
+                    events_dir=events_dir)
+            elseif subcommand == "generate-bank-transfers"
+                payment_rate_str = get(options, :payment_rate, "0.7")
+                payment_rate = parse(Float64, payment_rate_str)
+                return cmd_playground_generate_bank_transfers(db;
+                    event_id=get(options, :event_id, nothing),
+                    output=get(options, :output, nothing),
+                    payment_rate=payment_rate,
+                    bank_dir="bank_transfers")
             else
-                cli_err("Unknown playground subcommand '$subcommand'. Available: init, receive-submissions")
+                cli_err("Unknown playground subcommand '$subcommand'. Available: init, generate-registrations, receive-submissions, generate-bank-transfers")
                 return 1
             end
         else
@@ -484,14 +506,21 @@ function run_cli(args::Vector{String})
                 return cmd_clear_email_redirect(; credentials_path)
             end
             if command == "playground"
-                # playground init doesn't need a DB connection (it creates one)
-                # but receive-submissions needs to check if we're in a playground
+                # playground init and generate-registrations don't need a DB connection
                 subcommand = length(positional) >= 1 ? positional[1] : nothing
                 if subcommand == "init"
                     playground_name = length(positional) >= 2 ? positional[2] : nothing
                     return cmd_playground_init(; playground_name=playground_name, db_path=db_path, events_dir=events_dir, force=get(options, :force, false))
+                elseif subcommand in ["receive-submissions", "generate-registrations"]
+                    count = length(positional) >= 2 ? parse(Int, positional[2]) : 10
+                    return cmd_playground_receive_submissions(; 
+                        count=count, 
+                        event_id=get(options, :event_id, nothing), 
+                        all_events=get(options, :all_events, false),
+                        emails_dir="emails",
+                        events_dir=events_dir)
                 end
-                # For other playground subcommands, fall through to regular DB handling
+                # For other playground subcommands (generate-bank-transfers), fall through to regular DB handling
             end
             # Sync can create the DB; all other commands require it to exist
             if command == "sync"
@@ -598,7 +627,7 @@ const REPL_OPTIONS = [
     "--output=", "--details", "--summary-only", "--upload", "--yes", "--id=",
     "--all", "--email-type=", "--delimiter=", "--decimal-comma", "--reason=",
     "--granted-by=", "--send-emails", "--export-details", "--export-payments",
-    "--export-combined"
+    "--export-combined", "--all-events", "--payment-rate=", "--force"
 ]
 
 # Filter values for completion
