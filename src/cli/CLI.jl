@@ -126,6 +126,8 @@ USAGE:
 
 COMMANDS:
   init                           Initialize new project
+  config-summary <event-id>      Show event configuration summary with cost combinations
+    --verbose                    Show detailed field values and aliases
   sync                           Full sync workflow (download, process, match, queue emails)
     --send-emails[="opts"]       Send queued emails after sync (optional: pass sub-options)
     --export-details[="opts"]    Export registration details after sync (optional: pass sub-options)
@@ -230,6 +232,8 @@ EXAMPLES:
   eventreg sync --export-combined="--upload"              # export and upload to WebDAV
   eventreg process-emails emails/
   eventreg status
+  eventreg config-summary PWE_2026_01              # show cost combinations
+  eventreg config-summary PWE_2026_01 --verbose   # with field values and aliases
   eventreg validate-config PWE_2026_01 --verbose
   eventreg recalculate-costs PWE_2026_01 --dry-run --check-sync
   eventreg import-bank-csv bank_transfers/january.csv
@@ -351,6 +355,9 @@ function dispatch_to_command(db::DuckDB.DB, command::String, positional::Vector{
             return cmd_event_overview(db, positional[1])
         elseif command == "status"
             return cmd_status(db; db_path=db_path)
+        elseif command == "config-summary"
+            isempty(positional) && (cli_err("event-id required"); return 1)
+            return cmd_config_summary(db, positional[1]; events_dir=events_dir, verbose=get(options, :verbose, false))
         elseif command == "import-bank-csv"
             isempty(positional) && (cli_err("csv-file required"); return 1)
             return cmd_import_bank_csv(db, positional[1]; delimiter=get(options, :delimiter, ";"), decimal_comma=get(options, :decimal_comma, true))
@@ -563,7 +570,8 @@ EventRegistrations REPL — database connected. Same commands as CLI (without th
 const REPL_COMMANDS = [
     "init", "sync", "process-emails", "download-emails", "generate-field-config",
     "create-event-config", "sync-config", "recalculate-costs", "list-registrations",
-    "edit-registrations", "event-overview", "status", "import-bank-csv", "match-transfers",
+    "edit-registrations", "event-overview", "status", "config-summary",
+    "import-bank-csv", "match-transfers",
     "list-unmatched", "review-near-misses", "manual-match", "grant-subsidy",
     "delete-registration", "restore-registration", "list-deleted-registrations",
     "export-payment-status", "export-registrations", "export-combined",

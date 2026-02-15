@@ -1,4 +1,4 @@
-# Project initialization and status commands
+# Project initialization, status, and configuration summary commands
 
 """
 Initialize a new project in the current directory.
@@ -184,5 +184,25 @@ function cmd_status(db::DuckDB.DB; db_path::String="events.duckdb")
         end
         @info join(lines, "\n")
     end
+    return 0
+end
+
+"""
+Show event configuration summary including all possible cost combinations.
+Useful for validating cost configuration before processing registrations.
+"""
+function cmd_config_summary(db::DuckDB.DB, event_id::String;
+    events_dir::String="events",
+    verbose::Bool=false)
+    
+    summary = generate_config_summary(event_id; events_dir=events_dir, db=db)
+    
+    if !isempty(summary.warnings) && any(w -> startswith(w, "Event configuration not found"), summary.warnings)
+        cli_err("Event configuration not found: $(event_id).toml")
+        cli_err("Create it with: eventreg create-event-config $event_id")
+        return 1
+    end
+    
+    print_config_summary(summary; verbose=verbose)
     return 0
 end
