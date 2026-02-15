@@ -1,4 +1,4 @@
-#!/usr/bin/env julia
+#!/usr/bin/env -S julia
 
 """
 EventRegistrations CLI (legacy wrapper)
@@ -55,7 +55,7 @@ if needs_instantiate()
     printstyled("│ ", color=:yellow, bold=true)
     println("This only needs to happen once.")
     printstyled("└\n", color=:yellow, bold=true)
-    
+    Pkg.resolve()
     Pkg.instantiate()
     
     printstyled("✓ ", color=:green, bold=true)

@@ -562,6 +562,10 @@ end
 
 const REPL_PROMPT = "eventreg> "
 const REPL_PROMPT_PLAYGROUND = "playground> "
+const REPL_BANNER = """
+EventRegistrations REPL — database connected. Same commands as CLI (without the eventreg prefix).
+  list-registrations, grant-subsidy <ref> <amount>, exit, etc. Type help for full usage.
+"""
 
 # Note: REPL_BANNER is now a function to allow dynamic content (see repl_banner below)
 

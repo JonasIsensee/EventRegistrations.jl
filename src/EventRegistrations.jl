@@ -128,6 +128,7 @@ function is_playground(db::DuckDB.DB)
     val = get_setting(db, "is_playground"; default="false")
     return lowercase(val) in ("true", "1", "yes")
 end
+is_playground(::Nothing) = false
 export is_playground
 
 """
