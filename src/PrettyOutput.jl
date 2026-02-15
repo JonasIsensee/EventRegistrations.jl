@@ -386,13 +386,18 @@ Otherwise, runs `f` normally with stdout.
 
 Uses TerminalPager.jl for cross-platform pager support (works on Windows, macOS, Linux)
 without requiring external commands like `less`.
+
+IMPORTANT: When capturing to a buffer, we set a very large displaysize to prevent
+PrettyTables from truncating columns. The pager handles horizontal scrolling.
 """
 function _with_pager(f::Function, use_pager::Bool)
     if use_pager
         # Capture output to a buffer, then display with TerminalPager
         try
             io = IOBuffer()
-            ioctx = IOContext(io, :color => true)
+            # Set a very large displaysize to prevent PrettyTables from truncating columns
+            # The pager will handle horizontal scrolling for wide tables
+            ioctx = IOContext(io, :color => true, :displaysize => (10000, 10000))
             f(ioctx)
             content = String(take!(io))
             # Use TerminalPager to display the content with scrolling support
@@ -492,6 +497,7 @@ function print_payment_table(data::PaymentTableData;
         println(output_io)
 
         # Print table with PrettyTables 3.x API
+        # Note: fit_table_in_display_* = false prevents any column/row cropping
         pretty_table(output_io, table_data;
             column_labels = ["Reference", "Name", "Cost", "Paid", "Subsidy", "Remaining", "Status"],
             alignment = [:l, :l, :r, :r, :r, :r, :l],
@@ -499,7 +505,9 @@ function print_payment_table(data::PaymentTableData;
                            hl_remaining_negative, hl_remaining_positive],
             maximum_number_of_columns = -1,
             maximum_number_of_rows = -1,
-            vertical_crop_mode = :none
+            vertical_crop_mode = :none,
+            fit_table_in_display_horizontally = false,
+            fit_table_in_display_vertically = false
         )
 
         # Print summary
@@ -798,6 +806,7 @@ function print_registration_table(data::RegistrationTableData;
         println(output_io)
 
         # Print table with PrettyTables
+        # Note: fit_table_in_display_* = false prevents any column/row cropping
         pretty_table(output_io, table_data;
             column_labels = ["Reference", "Name", "Email", "Registered", "Cost", "Remaining", "Status"],
             alignment = [:l, :l, :l, :l, :r, :r, :l],
@@ -805,6 +814,8 @@ function print_registration_table(data::RegistrationTableData;
             maximum_number_of_columns = -1,
             maximum_number_of_rows = -1,
             vertical_crop_mode = :none,
+            fit_table_in_display_horizontally = false,
+            fit_table_in_display_vertically = false
         )
 
         # Print summary
