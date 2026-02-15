@@ -148,11 +148,13 @@ function cmd_playground_init(;
     db_path::String="events.duckdb",
     events_dir::String="events",
     force::Bool=false,
-    from_repl::Bool=false)
+    from_repl::Bool=false,
+    repl_has_db::Bool=true)
     
-    # Prevent playground init from REPL mode due to DuckDB connection issues
-    if from_repl
-        @error """playground init cannot be run from REPL mode.
+    # Prevent playground init from REPL mode when a database is already connected
+    # However, allow it when REPL started without a database (limited mode)
+    if from_repl && repl_has_db
+        @error """playground init cannot be run from REPL mode when a database is connected.
         
 DuckDB does not support switching between different database connections reliably.
 Running 'playground init' from REPL would create a new database but the REPL

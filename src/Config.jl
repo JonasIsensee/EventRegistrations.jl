@@ -350,6 +350,9 @@ function get_registration_detail_columns(event_id::AbstractString,
     return isnothing(cfg) ? nothing : cfg.export_registration_columns
 end
 
+# Handle Nothing argument by delegating to the single-argument version (uses default "events")
+get_registration_detail_columns(event_id::AbstractString, ::Nothing) = get_registration_detail_columns(event_id)
+
 """
 Generate a template event config file with UNIFIED aliases and cost rules.
 

@@ -166,6 +166,7 @@ include("ConfirmationEmails.jl")
 include("BankTransfers.jl")
 include("PrettyOutput.jl")
 include("WebDAV.jl")
+include("ConfigSummary.jl")
 
 # Re-export from Schema
 using .Schema: init_database
@@ -265,6 +266,14 @@ using .EmailDownload: download_emails!
 # Re-export from WebDAV
 using .WebDAV: upload_via_webdav
 export upload_via_webdav
+
+# Re-export from ConfigSummary
+using .ConfigSummary: ConfigSummaryResult, CostCombination
+using .ConfigSummary: generate_config_summary, print_config_summary
+using .ConfigSummary: get_all_field_values, generate_cost_combinations
+export ConfigSummaryResult, CostCombination
+export generate_config_summary, print_config_summary
+export get_all_field_values, generate_cost_combinations
 
 # ============================================================================
 # HIGH-LEVEL CONVENIENCE FUNCTIONS
