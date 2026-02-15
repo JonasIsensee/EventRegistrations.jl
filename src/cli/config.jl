@@ -225,6 +225,46 @@ function prompt_yes_no_edit(prompt::String; default::Symbol=:no)
 end
 
 """
+Format a TOML.ParserError into a helpful error message with line/column info.
+"""
+function format_toml_error(e::TOML.ParserError, filepath::String)
+    lines = String[]
+    
+    # Build error description
+    error_type = string(e.type)
+    push!(lines, "TOML syntax error: $error_type")
+    push!(lines, "  File: $filepath")
+    push!(lines, "  Line: $(e.line), Column: $(e.column)")
+    
+    # Show the problematic line if we can read the file
+    if isfile(filepath)
+        try
+            file_lines = readlines(filepath)
+            if 1 <= e.line <= length(file_lines)
+                problematic_line = file_lines[e.line]
+                push!(lines, "")
+                push!(lines, "  $(e.line) | $problematic_line")
+                # Add a caret pointing to the column
+                if e.column > 0
+                    spaces = " " ^ (length(string(e.line)) + 3 + e.column - 1)
+                    push!(lines, "$spaces^")
+                end
+            end
+        catch
+            # Ignore errors reading the file
+        end
+    end
+    
+    # Add hint about the data if available
+    if e.data !== nothing && !isempty(string(e.data))
+        push!(lines, "")
+        push!(lines, "  Near: $(e.data)")
+    end
+    
+    return join(lines, "\n")
+end
+
+"""
 Try to parse a TOML file and load it as an EventConfig.
 Returns (success::Bool, config_or_error)
 """
@@ -252,7 +292,7 @@ function try_parse_event_config(filepath::String, event_id::String)
         return (true, cfg)
     catch e
         if e isa TOML.ParserError
-            return (false, "TOML syntax error: $(e.msg)")
+            return (false, format_toml_error(e, filepath))
         else
             return (false, "Parse error: $(sprint(showerror, e))")
         end
