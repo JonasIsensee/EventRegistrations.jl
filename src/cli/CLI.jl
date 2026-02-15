@@ -827,11 +827,23 @@ function run_repl(; db_path::String="events.duckdb")
                             credentials_path="credentials.toml", from_repl=true)
                     elseif command == "playground" && !isempty(positional) && positional[1] == "init"
                         # In limited mode (no DB connected), allow playground init
-                        cmd_playground_init(; 
-                            playground_name=length(positional) >= 2 ? positional[2] : nothing,
+                        playground_name = length(positional) >= 2 ? positional[2] : nothing
+                        result = cmd_playground_init(; 
+                            playground_name=playground_name,
                             db_path=db_path, events_dir="events", 
                             force=get(options, :force, false), from_repl=true, 
                             repl_has_db=false)
+                        
+                        # If successful and a playground name was given, change to that directory
+                        if result == 0 && playground_name !== nothing
+                            playground_dir = abspath(playground_name)
+                            if isdir(playground_dir)
+                                cd(playground_dir)
+                                db_path = "events.duckdb"  # Reset to default in new directory
+                                printstyled("📁 ", color=:blue)
+                                println("Changed to playground directory: $playground_dir")
+                            end
+                        end
                     else
                         dispatch_to_command(db_ref[], command, positional, options; 
                             db_path=db_path, events_dir="events", 
