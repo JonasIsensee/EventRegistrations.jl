@@ -242,6 +242,18 @@ function init_database(db_path::AbstractString="events.duckdb")
         )
     """)
 
+    # =========================================================================
+    # SETTINGS TABLE
+    # Key-value store for database-level settings (e.g., is_playground)
+    # =========================================================================
+    DBInterface.execute(db, """
+        CREATE TABLE IF NOT EXISTS settings (
+            key VARCHAR PRIMARY KEY,
+            value VARCHAR NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # Create sequences
     for seq in ["registration_id_seq", "submission_id_seq", "subsidy_id_seq",
                 "transfer_id_seq", "match_id_seq", "email_id_seq", "transaction_id_seq",

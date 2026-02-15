@@ -561,10 +561,9 @@ end
 # =============================================================================
 
 const REPL_PROMPT = "eventreg> "
-const REPL_BANNER = """
-EventRegistrations REPL — database connected. Same commands as CLI (without the eventreg prefix).
-  list-registrations, grant-subsidy <ref> <amount>, exit, etc. Type help for full usage.
-"""
+const REPL_PROMPT_PLAYGROUND = "playground> "
+
+# Note: REPL_BANNER is now a function to allow dynamic content (see repl_banner below)
 
 # Available commands for completion (must match dispatch_to_command)
 const REPL_COMMANDS = [
@@ -717,6 +716,46 @@ EventRegistrations REPL — database not connected. Run 'init' or 'sync' to crea
 """
 
 """
+Generate the REPL banner with database path and playground indicator.
+"""
+function repl_banner(db_path::AbstractString, is_playground_mode::Bool, hascolor::Bool)
+    db_folder = dirname(abspath(db_path))
+    db_folder = isempty(db_folder) ? pwd() : db_folder
+    
+    if is_playground_mode
+        # Colored playground indicator
+        if hascolor
+            playground_line = "$(Base.text_colors[:magenta])$(Base.text_colors[:bold])┌────────────────────────────────────────┐$(Base.text_colors[:normal])\n" *
+                             "$(Base.text_colors[:magenta])$(Base.text_colors[:bold])│         🎮  PLAYGROUND MODE  🎮        │$(Base.text_colors[:normal])\n" *
+                             "$(Base.text_colors[:magenta])$(Base.text_colors[:bold])│   This is a test/demo environment.     │$(Base.text_colors[:normal])\n" *
+                             "$(Base.text_colors[:magenta])$(Base.text_colors[:bold])└────────────────────────────────────────┘$(Base.text_colors[:normal])\n"
+        else
+            playground_line = "┌────────────────────────────────────────┐\n" *
+                             "│         PLAYGROUND MODE                │\n" *
+                             "│   This is a test/demo environment.     │\n" *
+                             "└────────────────────────────────────────┘\n"
+        end
+        banner = """
+$(playground_line)
+EventRegistrations REPL — database connected.
+  Database folder: $(db_folder)
+  
+Same commands as CLI (without the eventreg prefix).
+  list-registrations, grant-subsidy <ref> <amount>, exit, etc. Type help for full usage.
+"""
+    else
+        banner = """
+EventRegistrations REPL — database connected.
+  Database folder: $(db_folder)
+  
+Same commands as CLI (without the eventreg prefix).
+  list-registrations, grant-subsidy <ref> <amount>, exit, etc. Type help for full usage.
+"""
+    end
+    return banner
+end
+
+"""
 Run the interactive REPL using LineEdit (no ReplMaker).
 - TAB completion for commands and options (EventRegCompletionProvider)
 - History navigation with arrow keys
@@ -750,11 +789,25 @@ function run_repl(; db_path::String="events.duckdb")
     try
         term = REPL.Terminals.TTYTerminal(get(ENV, "TERM", "dumb"), stdin, stdout, stderr)
         hascolor = REPL.Terminals.hascolor(term)
-        prefix = hascolor ? Base.text_colors[:blue] : ""
+        
+        # Check if this is a playground database
+        is_playground_mode = is_playground(db_ref[])
+        
+        # Print dynamic banner with database path and playground indicator
+        println(repl_banner(db_path, is_playground_mode, hascolor))
+        
+        # Use different prompt and color for playground mode
+        if is_playground_mode
+            prompt_text = REPL_PROMPT_PLAYGROUND
+            prefix = hascolor ? Base.text_colors[:magenta] : ""
+        else
+            prompt_text = REPL_PROMPT
+            prefix = hascolor ? Base.text_colors[:blue] : ""
+        end
         suffix = hascolor ? Base.text_colors[:normal] : ""
 
         panel = LineEdit.Prompt(
-            REPL_PROMPT;
+            prompt_text;
             prompt_prefix = prefix,
             prompt_suffix = suffix,
             complete = EventRegCompletionProvider(),
