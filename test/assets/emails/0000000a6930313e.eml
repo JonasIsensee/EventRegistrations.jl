@@ -1,0 +1,116 @@
+Return-Path: <>
+X-Spam-Checker-Version: SpamAssassin 3.4.2 (2018-09-13) on
+	mailhost.example.com
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.7 required=5.0 tests=AWL,BAYES_00,NO_RELAYS,
+	URIBL_BLOCKED autolearn=ham autolearn_force=no version=3.4.2
+X-Spam-DCC: : 
+X-Original-To: events@example.com
+Delivered-To: inbox@mailhost.example.com
+Received: by mailhost.example.com (Postfix)
+	id C5C4756EA6F9; Thu,  4 Dec 2025 22:57:57 +0100 (CET)
+Date: Thu,  4 Dec 2025 22:57:57 +0100 (CET)
+From: MAILER-DAEMON@mailhost.example.com (Mail Delivery System)
+Subject: Undelivered Mail Returned to Sender
+To: events@example.com
+Auto-Submitted: auto-replied
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status;
+	boundary="D932656EA60B.1764885477/mailhost.example.com"
+Content-Transfer-Encoding: 8bit
+Message-Id: <20251204215757.C5C4756EA6F9@mailhost.example.com>
+X-Alfa-Virus: check-delete
+X-Alfa-Spam: check
+
+This is a MIME-encapsulated message.
+
+--D932656EA60B.1764885477/mailhost.example.com
+Content-Description: Notification
+Content-Type: text/plain; charset=us-ascii
+
+This is the mail system at host mailhost.example.com.
+
+I'm sorry to have to inform you that your message could not
+be delivered to one or more recipients. It's attached below.
+
+For further assistance, please send mail to postmaster.
+
+If you do so, please include this problem report. You can
+delete your own text from the attached returned message.
+
+                   The mail system
+
+<user-c@example.local>: host mx01.mailgate.example.com[46.243.95.179] said:
+    550 Subject contains invalid characters. (in reply to end of DATA command)
+
+--D932656EA60B.1764885477/mailhost.example.com
+Content-Description: Delivery report
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mailhost.example.com
+X-Postfix-Queue-ID: D932656EA60B
+X-Postfix-Sender: rfc822; events@example.com
+Arrival-Date: Thu,  4 Dec 2025 22:57:56 +0100 (CET)
+
+Final-Recipient: rfc822; user-c@example.local
+Original-Recipient: rfc822;user-c@example.local
+Action: failed
+Status: 5.0.0
+Remote-MTA: dns; mx01.mailgate.example.com
+Diagnostic-Code: smtp; 550 Subject contains invalid characters.
+
+--D932656EA60B.1764885477/mailhost.example.com
+Content-Description: Undelivered Message
+Content-Type: message/rfc822
+Content-Transfer-Encoding: 8bit
+
+Return-Path: <events@example.com>
+X-SecureMailgate-Identity: web261p34;mailhost.example.com
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+	d=example.com; s=cloudpit; t=1764885476;
+	bh=JlwpeHWcyuil9rsNxJSKLJihxEpvYPBBWh6xE+LwJxU=;
+	h=From:To:Subject:From;
+	b=MuFCOPl2xQjCtoPberKrITgtZ6b4xkdDTp0MoyirxBa2qToDprT6uy42pyIlhp2CV
+	 jHtwWZiiIqXjUibfnvUeTwgSlm6aXKqJWraE8EH9T0tIcopGnu00vH+8OWM4GnZKEi
+	 SJ+rAsNSYk1xjug+JrhF7aOCaM9tyxJ7cjmbDWZg=
+Received: from feb07775243a (ip5f5ab860.dynamic.kabel-deutschland.de [95.90.184.96])
+	by mailhost.example.com (Postfix) with ESMTPA id D932656EA60B
+	for <user-c@example.local>; Thu,  4 Dec 2025 22:57:56 +0100 (CET)
+From: Event Registration System <events@example.com>
+To: user-c@example.local
+Subject: Anmeldebestätigung: Probenwochenende Januar 2026 - PWE_2026_01_003
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Liebe/r TestFirst6,
+
+vielen Dank für deine Anmeldung zum Probenwochenende Januar 2026!
+
+Hier sind deine Anmeldedaten:
+
+Referenznummer: PWE_2026_01_003
+Zu zahlen: 140.0 €
+
+Bitte überweise den Betrag auf folgendes Konto:
+Unimusik Göttingen e.V.
+IBAN: DE12 3456 7890 1234 5678 90
+Sparkasse Göttingen
+Verwendungszweck: [Ihre Referenznummer]
+
+Verwendungszweck: PWE_2026_01_003
+
+WICHTIG: Bitte gib unbedingt die Referenznummer als Verwendungszweck an,
+damit wir deine Zahlung zuordnen können.
+
+For questions contact events@example.com
+
+Bei Fragen kannst du dich gerne an uns wenden.
+
+Viele Grüße,
+Event Registration System
+
+
+
+--D932656EA60B.1764885477/mailhost.example.com--
+

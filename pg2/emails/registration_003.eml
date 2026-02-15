@@ -1,0 +1,36 @@
+From: no-reply@form-service.example.com
+To: recipient@example.com
+Subject: Anmeldung: PWE_2026_01
+Date: Fri, 06 Feb 2026 12:24:32 +0100
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+
+<!DOCTYPE html>
+<html>
+<head>
+    <style type="text/css">
+        table { font-family: Arial, sans-serif; font-size: 10pt; }
+        td, th { border: 1px solid #BBBBBB; padding: 5px 15px 5px 5px; vertical-align: top; }
+        .label { font-weight: bold; }
+        th { background-color: #f0f0f0; }
+    </style>
+</head>
+<body>
+<table style="border-collapse:collapse;">
+    <tr><th colspan="2">Anmeldung: PWE_2026_01</th></tr>
+    <tr><td class="label">Vorname</td><td>Sample3</td></tr>
+    <tr><td class="label">Nachname</td><td>SampleLast3</td></tr>
+    <tr><td class="label">E-Mail</td><td>sample3@example.com</td></tr>
+    <tr><td class="label">Stimmgruppe</td><td>Viola</td></tr>
+    <tr><td class="label">Essen</td><td>Alles</td></tr>
+    <tr><td class="label">Lebensmittelunvertr&auml;glichkeiten / Allergien</td><td></td></tr>
+    <tr><td class="label">&Uuml;bernachtung Freitag</td><td>Nein</td></tr>
+    <tr><td class="label">&Uuml;bernachtung Samstag</td><td>Nein</td></tr>
+    <tr><td class="label">Busfahrt Hinweg (10&euro;)</td><td>Nein</td></tr>
+    <tr><td class="label">Busfahrt R&uuml;ckweg (10&euro;)</td><td>Nein</td></tr>
+    <tr><td class="label">Wie m&ouml;chte ich &uuml;bernachten?</td><td></td></tr>
+    <tr><td class="label">Belegungswunsch f&uuml;r das Zimmer</td><td></td></tr>
+    <tr><td class="label">Sonstiges:</td><td></td></tr>
+</table>
+</body>
+</html>

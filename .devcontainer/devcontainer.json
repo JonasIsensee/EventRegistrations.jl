@@ -1,0 +1,27 @@
+{
+"name": "EventRegistrations.jl Dev Container",
+"image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+
+"features": {
+"ghcr.io/devcontainers/features/common-utils:2": {
+"installZsh": true,
+"installOhMyZsh": true,
+"upgradePackages": true
+}
+},
+
+"postCreateCommand": "bash .devcontainer/setup.sh",
+
+"customizations": {
+"vscode": {
+"extensions": [
+"julialang.language-julia"
+],
+"settings": {
+"julia.executablePath": "/home/vscode/.juliaup/bin/julia"
+}
+}
+},
+
+"remoteUser": "vscode"
+}

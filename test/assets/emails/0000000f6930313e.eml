@@ -1,0 +1,38 @@
+Return-Path: <events@example.com>
+X-Spam-Checker-Version: SpamAssassin 3.4.2 (2018-09-13) on
+	mailhost.example.com
+X-Spam-Level: 
+X-Spam-Status: No, score=0.5 required=5.0 tests=ALL_TRUSTED,BAYES_00,
+	DKIM_SIGNED,DKIM_VALID,DKIM_VALID_AU,DKIM_VALID_EF,MISSING_DATE,
+	MISSING_MID,URIBL_BLOCKED autolearn=no autolearn_force=no version=3.4.2
+X-Spam-DCC: : 
+X-Original-To: events@example.com
+Delivered-To: inbox@mailhost.example.com
+X-SecureMailgate-Identity: web261p34;mailhost.example.com
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+	d=example.com; s=cloudpit; t=1764886113;
+	bh=CXFOaWCzIDUMrVwM+KDrUP155GOL7jFDr54sAVhR2ww=;
+	h=From:To:Subject:From;
+	b=NPKQxnfTnsBzTShViu2z5wrCejzwpGJYnXKYdHyUkspPLoj4sCoPOwiox8EMCZhBl
+	 7C8aMbomFYfI8QVZY0B4OnYAcyfolQ06iaS+PYVUvev9/lmiUMRLn0HDnr4CW5bpqV
+	 DJ2Ky73FwEq+VF6NF6T7r3ugoYQqOWQKI5oIJmNI=
+Received: from 76ea2cd7726c (ip5f5ab860.dynamic.kabel-deutschland.de [95.90.184.96])
+	by mailhost.example.com (Postfix) with ESMTPA id B2F0A56EA60B
+	for <events@example.com>; Thu,  4 Dec 2025 23:08:33 +0100 (CET)
+From: Event Registration System <events@example.com>
+To: events@example.com
+Subject: Test - EventRegistrations System
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+X-Alfa-Virus: check-delete
+X-Alfa-Spam: check
+
+This is a test email from the EventRegistrations system.
+
+If you receive this, the email sending is working correctly.
+
+Time sent: 2025-12-04T14:08:32.851
+
+---
+EventRegistrations v1.0.0
+

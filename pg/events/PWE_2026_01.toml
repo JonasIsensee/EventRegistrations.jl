@@ -1,0 +1,227 @@
+# Event Configuration: PWE_2026_01
+# Generated on 2025-12-12 23:30
+#
+# This is a UNIFIED event configuration file containing:
+#   - [aliases]: Field name mappings (short name → actual form field)
+#   - [costs]: Cost calculation rules using the aliases defined above
+#
+# After editing, run: eventreg sync-config && eventreg recalculate-costs PWE_2026_01
+
+[event]
+name = "PWE Orchester WiSe2526"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FIELD ALIASES
+# Maps short, easy-to-use names to actual field names from form submissions.
+# Use these aliases (left side) in the cost rules below.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+[aliases]
+# Values: Ja
+abendessen_freitag_e = "Abendessen Freitag (enhalten in Übernachtung Fr, sonst +10€)"
+
+# Values: Ja
+abendessen_samstag_e = "Abendessen Samstag (enhalten in Übernachtung Sa, sonst +10€)"
+
+# Values: 
+belegungswunsch = "Belegungswunsch"
+
+# Values: unimusik@jonasisensee.de
+email = "E-Mail"
+
+# Values: Vegetarisch
+essen = "Essen"
+
+# Values: Ja
+fruehstueck_samstag = "Frühstück Samstag (enhalten in Übernachtung Fr, sonst +8€)"
+
+# Values: Ja
+fruehstueck_sonntag = "Frühstück Sonntag (enhalten in Übernachtung Sa, sonst +8€)"
+
+# Values: 
+lebensmittelunvertra = "Lebensmittelunverträglichkeiten / Allergien"
+
+# Values: Ja
+mittag_sonntag_enhal = "Mittagessen Sonntag (enhalten in Übernachtung Sa, sonst +10€)"
+
+# Values: Ja
+mittagessen_samstag = "Mittagessen Samstag (enhalten in Übernachtung Fr, sonst +10€)"
+
+# Values: Isensee
+nachname = "Nachname"
+
+# Values: Das ist eine Testanmeldung. Ich möchte nicht wirklich mitkommen.
+sonstiges_hier_kanns = "Sonstiges: Hier kannst du zum Beispiel Mitfahrgelegenheiten anbieten"
+
+# Values: Bass
+stimme = "Stimmgruppe"
+
+# Values: Mehrbettzimmer
+unterbringung = "Unterbringung"
+
+# Values: Jonas
+vorname = "Vorname"
+
+# Values: Ja
+uebernachtung_fr = "Übernachtung Freitag (46€ inkl. Vollpension)"
+
+# Values: Ja
+uebernachtung_sa = "Übernachtung Samstag (46€ ink. Vollpension)"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COST RULES
+# Define how costs are calculated for each registration.
+# Use the alias names defined above (not the full field names).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+[costs]
+# Base cost that everyone pays
+base = 0.0
+
+# Cost rules - each rule adds to the total when conditions match
+# Uncomment and modify as needed
+[[costs.rules]]
+field = "uebernachtung_fr" # A comment
+value = "Ja"
+cost = 46.0
+
+[[costs.rules]]
+field = "uebernachtung_sa"
+value = "Ja"
+cost = 46.0
+
+[[costs.rules]]
+field = "abendessen_freitag_e"  # → "Abendessen Freitag (enhalten in Übernachtung Fr, sonst +10€)"
+value = "Ja"
+cost = 10.0
+unless = { field = "uebernachtung_fr", value = "Ja" }
+
+[[costs.rules]]
+field = "abendessen_samstag_e"  # → "Abendessen Samstag (enhalten in Übernachtung Sa, sonst +10€)"
+value = "Ja"
+cost = 10.0
+unless = { field = "uebernachtung_sa", value = "Ja" }
+
+[[costs.rules]]
+field = "fruehstueck_samstag"  # → "Frühstück Samstag (enhalten in Übernachtung Fr, sonst +8€)"
+value = "Ja"
+cost = 8.0
+unless = { field = "uebernachtung_fr", value = "Ja" }
+
+[[costs.rules]]
+field = "fruehstueck_sonntag"  # → "Frühstück Sonntag (enhalten in Übernachtung Sa, sonst +8€)"
+value = "Ja"
+cost = 8.0
+unless = { field = "uebernachtung_sa", value = "Ja" }
+
+[[costs.rules]]
+field = "mittag_sonntag_enhal"  # → "Mittag Sonntag (enhalten in Übernachtung Sa, sonst +10€)"
+value = "Ja"
+cost = 10.0
+unless = { field = "uebernachtung_sa", value = "Ja" }
+
+[[costs.rules]]
+field = "mittagessen_samstag"
+value = "Ja"
+cost = 10.0
+unless = { field = "uebernachtung_fr", value = "Ja" }
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# ADVANCED: Computed fields for multipliers
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# Use computed fields to create multipliers, e.g., for per-night costs:
+#
+ [costs.computed_fields.nights]
+sum_of = [
+     { field = "uebernachtung_fr", value = "Ja", count = 1 },
+     { field = "uebernachtung_sa", value = "Ja", count = 1 },
+ ]
+#
+# Then use in a rule with multiply_by:
+[[costs.rules]]
+field = "unterbringung"
+pattern = "Einzelzimmer"
+cost = 8.0
+multiply_by = "nights"  # 10€ per night for single room
+
+# ───────────────────────────────────────────────────────────────────────────────
+# ADVANCED: Bundled options (conditional rules)
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# Use 'unless' and 'only_if' to create conditional cost rules:
+#
+# EXAMPLE: Overnight stay includes meals, but meals can be booked separately
+#
+# # Overnight includes meals (50€ total)
+# [[costs.rules]]
+# field = "uebernachtung_fr"
+# value = "Ja"
+# cost = 50.0
+#
+# # Dinner charged separately (15€) UNLESS staying overnight
+# [[costs.rules]]
+# field = "abendessen_fr"
+# value = "Ja"
+# cost = 15.0
+# unless = { field = "uebernachtung_fr", value = "Ja" }
+#
+# # Breakfast (10€) UNLESS staying overnight Friday OR Saturday
+# [[costs.rules]]
+# field = "fruehstueck_sa"
+# value = "Ja"
+# cost = 10.0
+# unless = [
+#     { field = "uebernachtung_fr", value = "Ja" },
+#     { field = "uebernachtung_sa", value = "Ja" }
+# ]
+#
+# EXAMPLE: Discount only for specific groups
+#
+# # Student discount ONLY IF both student AND member
+# [[costs.rules]]
+# field = "rabatt_student"
+# value = "Ja"
+# cost = -10.0
+# only_if = [
+#     { field = "student", value = "Ja" },
+#     { field = "mitglied", value = "Ja" }
+# ]
+#
+# Both 'unless' and 'only_if' support:
+#   - Single condition: unless = { field = "X", value = "Y" }
+#   - Multiple conditions: unless = [{ ... }, { ... }]
+#   - Pattern matching: unless = { field = "X", pattern = "regex" }
+#
+# Logic:
+#   - 'unless': Skip rule if ANY condition matches (OR logic)
+#   - 'only_if': Skip rule unless ALL conditions match (AND logic)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# REGISTRATION DETAIL EXPORT
+# Controls the column order for 'eventreg export-registration-details'.
+# Only the columns listed here are exported; add or remove entries as needed.
+# Form field aliases are resolved automatically to actual field names.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+[export.registration_details]
+columns = [
+    "vorname",
+    "nachname",
+    "stimme",  # → Stimmgruppe
+    "uebernachtung_fr",  # → Übernachtung Freitag (46€ inkl. Vollpension)
+    "uebernachtung_sa",  # → Übernachtung Samstag (46€ ink. Vollpension)
+    "abendessen_freitag_e",  # → Abendessen Freitag (enhalten in Übernachtung Fr, sonst +10€)
+    "fruehstueck_samstag",  # → Frühstück Samstag (enhalten in Übernachtung Fr, sonst +8€)
+    "mittagessen_samstag",  # → Mittagessen Samstag (enhalten in Übernachtung Fr, sonst +10€)
+    "abendessen_samstag_e",  # → Abendessen Samstag (enhalten in Übernachtung Sa, sonst +10€)
+    "fruehstueck_sonntag",  # → Frühstück Sonntag (enhalten in Übernachtung Sa, sonst +8€)
+    "mittag_sonntag_enhal",  # → Mittag Sonntag (enhalten in Übernachtung Sa, sonst +10€)
+    "essen",  # → Essen
+    "unterbringung",  # → Unterbringung
+    "belegungswunsch",  # → Belegungswunsch
+    "lebensmittelunvertra",  # → Lebensmittelunverträglichkeiten / Allergien
+    "sonstiges_hier_kanns",  # → Sonstiges: Hier kannst du zum Beispiel Mitfahrgelegenheiten anbieten
+    "email",  # → E-Mail
+]

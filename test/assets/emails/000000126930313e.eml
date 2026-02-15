@@ -1,0 +1,111 @@
+Return-Path: <no-reply@form-service.example.com>
+X-Spam-Checker-Version: SpamAssassin 3.4.2 (2018-09-13) on
+	mailhost.example.com
+X-Spam-Level: 
+X-Spam-Status: No, score=-4.4 required=5.0 tests=AWL,BAYES_00,DKIM_SIGNED,
+	DKIM_VALID,DKIM_VALID_EF,HTML_MESSAGE,RCVD_IN_DNSWL_BLOCKED,
+	RCVD_IN_MSPIKE_H2,RCVD_IN_RP_CERTIFIED,RCVD_IN_RP_RNBL,RCVD_IN_RP_SAFE,
+	SPF_HELO_PASS,SPF_PASS,URIBL_BLOCKED autolearn=ham autolearn_force=no
+	version=3.4.2
+X-Spam-DCC: : 
+X-Original-To: events@example.com
+Delivered-To: inbox@mailhost.example.com
+Received-SPF: Pass (mailfrom) identity=mailfrom; client-ip=5.148.169.160; helo=gate.form-service.example.com; envelope-from=no-reply@form-service.example.com; receiver=<UNKNOWN> 
+Received: from gate.form-service.example.com (gate.form-service.example.com [5.148.169.160])
+	by mailhost.example.com (Postfix) with ESMTPS id 21A3356ED8C1
+	for <events@example.com>; Sat,  6 Dec 2025 21:21:14 +0100 (CET)
+DKIM-Signature: a=rsa-sha256; b=a4pqfaas30i7EDtbMoU+WbyJ4nI19b7mVGaEzmrUZUCf2pEyFi1PpYlI2qf7V5r2pwtLWIPeGB+Q647ttVvlcK4dTm9wJaLXJi7dFVi4vkz4JVTgzcsuEwulFUb9Th+bgPx0n8rILK7S/OpnN/lIpPtHhN3nPjxDqCE3/wiU3KQTGM/9oktl4h9DXbjSPC6T68pg4vrsIfeEuLtL9y6mA9dOzq5yZzGqDBibO65Jt5VT1cg83PGQZrruhK+iscJlIxMSmiJ6uOuyda3DVuWzR4/duUKy6LRNaftWZJVf08/cbB5gJbZRbLm+p0Gbj6LntHsAAF2wG0aSQcn6GUDsBA==; s=cd0; c=relaxed/relaxed; d=clubdesk.com; v=1; bh=ricMz+qEZfGL4pyzDBW3br3T/kaqmF3Pclhsgo6m38E=; h=from:to:subject:date:message-id:mime-version:content-language;
+Received: from prod-www-1.prod_default (EHLO 0.0.0.0) ([10.20.0.5])
+          by 1e43cb5efc6e (JAMES SMTP Server ) with ESMTP ID 993530502
+          for <events@example.com>;
+          Sat, 06 Dec 2025 21:20:45 +0100 (CET)
+Date: Sat, 6 Dec 2025 21:20:45 +0100 (CET)
+From: no-reply@form-service.example.com
+To: events@example.com
+Message-ID: <68570142.70536.1765052445638@4b2c236d719a>
+Subject: Anmeldung: PWE_2026_01
+MIME-Version: 1.0
+Content-Type: multipart/alternative; 
+	boundary="----=_Part_70534_1121095373.1765052445628"
+X-ClubDesk-Cluster-ID: 1765052445628_275787
+X-Alfa-Virus: check-delete
+X-Alfa-Spam: check
+
+------=_Part_70534_1121095373.1765052445628
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Vorname:=09Muk:
+Nachname:=09Muk:
+E-Mail:=09user5b@example.local:
+Stimmgruppe:=09irgendwas:
+Essen:=09Vegan:
+Lebensmittelunvertr=C3=A4glichkeiten / Allergien:=09:
+=C3=9Cbernachtung Freitag:=09Ja:
+=C3=9Cbernachtung Samstag:=09Ja:
+Busfahrt Hinweg (10=E2=82=AC):=09Ja:
+Busfahrt R=C3=BCckweg (10=E2=82=AC):=09Ja:
+Wie m=C3=B6chte ich =C3=BCbernachten?:=09Mehrbettzimmer:
+Belegungswunsch f=C3=BCr das Zimmer:=09:
+Sonstiges::=09:
+
+
+------=_Part_70534_1121095373.1765052445628
+Content-Type: multipart/related; 
+	boundary="----=_Part_70535_395844628.1765052445628"
+
+------=_Part_70535_395844628.1765052445628
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+<html>
+<head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <style type="text/css" media="screen">
+        table {
+            font-family: Arial, sans-serif;
+            font-size: 10pt;
+        }
+
+        td, th {
+            border: 1px solid #BBBBBB;
+            padding: 5px 15px 5px 5px;
+            vertical-align: top;
+        }
+
+        .caption {
+            text-align: center;
+            border: none;
+            color: #BBBBBB;
+            font-size: 8pt;
+        }
+
+        .label {
+            font-weight: bold;
+        }
+
+        th {
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+
+<table style="border-collapse:collapse;">
+    <tr>
+        <th colspan="2">Anmeldung: PWE_2026_01</th>
+    </tr>
+    <tr><td class="label">Vorname</td><td>TestFirst5</td></tr><tr><td class="label">Nachname</td><td>TestFirst5</td></tr><tr><td class="label">E-Mail</td><td>user5b@example.local</td></tr><tr><td class="label">Stimmgruppe</td><td>irgendwas</td></tr><tr><td class="label">Essen</td><td>Vegan</td></tr><tr><td class="label">Lebensmittelunvertr&auml;glichkeiten / Allergien</td><td></td></tr><tr><td class="label">&Uuml;bernachtung Freitag</td><td>Ja</td></tr><tr><td class="label">&Uuml;bernachtung Samstag</td><td>Ja</td></tr><tr><td class="label">Busfahrt Hinweg (10&euro;)</td><td>Ja</td></tr><tr><td class="label">Busfahrt R&uuml;ckweg (10&euro;)</td><td>Ja</td></tr><tr><td class="label">Wie m&ouml;chte ich &uuml;bernachten?</td><td>Mehrbettzimmer</td></tr><tr><td class="label">Belegungswunsch f&uuml;r das Zimmer</td><td></td></tr><tr><td class="label">Sonstiges:</td><td></td></tr>
+    <tr>
+        <td class="caption" colspan="2">form-service.example.com</td>
+    </tr>
+</table>
+
+</body>
+</html>
+
+
+------=_Part_70535_395844628.1765052445628--
+
+------=_Part_70534_1121095373.1765052445628--
+
