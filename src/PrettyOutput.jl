@@ -497,15 +497,13 @@ function print_payment_table(data::PaymentTableData;
         println(output_io)
 
         # Print table with PrettyTables 3.x API
-        # Note: fit_table_in_display_* = false prevents any column/row cropping
+        # fit_table_in_display_* = false prevents display-size-based cropping,
+        # allowing the pager to handle scrolling for wide/tall tables
         pretty_table(output_io, table_data;
             column_labels = ["Reference", "Name", "Cost", "Paid", "Subsidy", "Remaining", "Status"],
             alignment = [:l, :l, :r, :r, :r, :r, :l],
             highlighters = [hl_paid, hl_overpaid, hl_partial, hl_unpaid, hl_noconfig,
                            hl_remaining_negative, hl_remaining_positive],
-            maximum_number_of_columns = -1,
-            maximum_number_of_rows = -1,
-            vertical_crop_mode = :none,
             fit_table_in_display_horizontally = false,
             fit_table_in_display_vertically = false
         )
@@ -806,14 +804,12 @@ function print_registration_table(data::RegistrationTableData;
         println(output_io)
 
         # Print table with PrettyTables
-        # Note: fit_table_in_display_* = false prevents any column/row cropping
+        # fit_table_in_display_* = false prevents display-size-based cropping,
+        # allowing the pager to handle scrolling for wide/tall tables
         pretty_table(output_io, table_data;
             column_labels = ["Reference", "Name", "Email", "Registered", "Cost", "Remaining", "Status"],
             alignment = [:l, :l, :l, :l, :r, :r, :l],
             highlighters = [hl_paid, hl_partial, hl_unpaid, hl_noconfig, hl_remaining_positive],
-            maximum_number_of_columns = -1,
-            maximum_number_of_rows = -1,
-            vertical_crop_mode = :none,
             fit_table_in_display_horizontally = false,
             fit_table_in_display_vertically = false
         )
