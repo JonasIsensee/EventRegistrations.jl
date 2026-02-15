@@ -376,40 +376,30 @@ function format_money(value::Nothing; kwargs...)
 end
 
 """
-    _with_pager(f::Function, use_pager::Bool)
+    _with_pager(f::Function)
 
-Internal helper function to optionally display output through a pager.
+Internal helper function to display output through a pager.
 
-If `use_pager=true`, captures the function output and displays it using TerminalPager,
+Captures the function output and displays it using TerminalPager,
 which supports ANSI color codes and horizontal/vertical scrolling.
-Otherwise, runs `f` normally with stdout.
 
 Uses TerminalPager.jl for cross-platform pager support (works on Windows, macOS, Linux)
 without requiring external commands like `less`.
 
-IMPORTANT: When capturing to a buffer, we set a very large displaysize to prevent
-PrettyTables from truncating columns. The pager handles horizontal scrolling.
+The function `f` receives an IOContext with:
+- `:color => true` for ANSI color support
+- `:displaysize => (10000, 10000)` to prevent PrettyTables from truncating
 """
-function _with_pager(f::Function, use_pager::Bool)
-    if use_pager
-        # Capture output to a buffer, then display with TerminalPager
-        try
-            io = IOBuffer()
-            # Set a very large displaysize to prevent PrettyTables from truncating columns
-            # The pager will handle horizontal scrolling for wide tables
-            ioctx = IOContext(io, :color => true, :displaysize => (10000, 10000))
-            f(ioctx)
-            content = String(take!(io))
-            # Use TerminalPager to display the content with scrolling support
-            pager(content)
-        catch e
-            # If pager fails, fall back to normal output
-            @warn "Failed to use pager, using normal output" exception=e
-            f(stdout)
-        end
-    else
-        f(stdout)
-    end
+function _with_pager(f::Function)
+    # Capture output to a buffer, then display with TerminalPager
+    io = IOBuffer()
+    # Set a very large displaysize to prevent PrettyTables from truncating columns
+    # The pager will handle horizontal scrolling for wide tables
+    ioctx = IOContext(io, :color => true, :displaysize => (10000, 10000))
+    f(ioctx)
+    content = String(take!(io))
+    # Use TerminalPager to display the content with scrolling support
+    pager(content)
 end
 
 """
@@ -432,7 +422,8 @@ function print_payment_table(data::PaymentTableData;
                              io::IO=stdout,
                              pager::Bool=false)
     # Define the actual printing logic
-    function _do_print(output_io::IO)
+    # disable_fit_to_display: when true, disables display-size-based cropping (for pager mode)
+    function _do_print(output_io::IO; disable_fit_to_display::Bool=false)
         rows_to_show = filter_payments(data, filter)
 
         if isempty(rows_to_show)
@@ -496,16 +487,16 @@ function print_payment_table(data::PaymentTableData;
         println(output_io, COLOR_HEADER("=" ^ length(title_str)))
         println(output_io)
 
-        # Print table with PrettyTables 3.x API
-        # fit_table_in_display_* = false prevents display-size-based cropping,
-        # allowing the pager to handle scrolling for wide/tall tables
+        # Print table with PrettyTables
+        # When disable_fit_to_display=true (pager mode), prevent display-size-based cropping
+        # so the pager can handle scrolling for wide/tall tables
         pretty_table(output_io, table_data;
             column_labels = ["Reference", "Name", "Cost", "Paid", "Subsidy", "Remaining", "Status"],
             alignment = [:l, :l, :r, :r, :r, :r, :l],
             highlighters = [hl_paid, hl_overpaid, hl_partial, hl_unpaid, hl_noconfig,
                            hl_remaining_negative, hl_remaining_positive],
-            fit_table_in_display_horizontally = false,
-            fit_table_in_display_vertically = false
+            fit_table_in_display_horizontally = !disable_fit_to_display,
+            fit_table_in_display_vertically = !disable_fit_to_display
         )
 
         # Print summary
@@ -515,7 +506,7 @@ function print_payment_table(data::PaymentTableData;
 
     # Use pager if requested and io is stdout
     if pager && io === stdout
-        _with_pager(_do_print, true)
+        _with_pager(io -> _do_print(io; disable_fit_to_display=true))
     else
         _do_print(io)
     end
@@ -746,7 +737,8 @@ function print_registration_table(data::RegistrationTableData;
     actual_truncate_email = truncate_email === nothing ? !pager : truncate_email
 
     # Define the actual printing logic
-    function _do_print(output_io::IO)
+    # disable_fit_to_display: when true, disables display-size-based cropping (for pager mode)
+    function _do_print(output_io::IO; disable_fit_to_display::Bool=false)
         rows_to_show = filter_registrations(data, filter)
 
         if isempty(rows_to_show)
@@ -804,14 +796,14 @@ function print_registration_table(data::RegistrationTableData;
         println(output_io)
 
         # Print table with PrettyTables
-        # fit_table_in_display_* = false prevents display-size-based cropping,
-        # allowing the pager to handle scrolling for wide/tall tables
+        # When disable_fit_to_display=true (pager mode), prevent display-size-based cropping
+        # so the pager can handle scrolling for wide/tall tables
         pretty_table(output_io, table_data;
             column_labels = ["Reference", "Name", "Email", "Registered", "Cost", "Remaining", "Status"],
             alignment = [:l, :l, :l, :l, :r, :r, :l],
             highlighters = [hl_paid, hl_partial, hl_unpaid, hl_noconfig, hl_remaining_positive],
-            fit_table_in_display_horizontally = false,
-            fit_table_in_display_vertically = false
+            fit_table_in_display_horizontally = !disable_fit_to_display,
+            fit_table_in_display_vertically = !disable_fit_to_display
         )
 
         # Print summary
@@ -821,7 +813,7 @@ function print_registration_table(data::RegistrationTableData;
 
     # Use pager if requested and io is stdout
     if pager && io === stdout
-        _with_pager(_do_print, true)
+        _with_pager(io -> _do_print(io; disable_fit_to_display=true))
     else
         _do_print(io)
     end
