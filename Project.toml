@@ -31,11 +31,12 @@ TableExport = "d40d089f-2874-4e7a-b862-5b61c18daa50"
 TerminalPager = "0c614874-6106-40ed-a7c2-2f1cd0bff883"
 tectonic_jll = "d7dd28d6-a5e6-559c-9131-7eb760cdacc5"
 
-[sources]
-TableExport = {url = "https://github.com/JonasIsensee/TableExport.jl"}
+[sources.TableExport]
+url = "https://github.com/JonasIsensee/TableExport.jl"
 
 [compat]
 Crayons = "4.1.1"
+DelimitedFiles = "1"
 DuckDB = "1"
 HTTP = "1"
 JSON = "0.2, 1"
