@@ -36,6 +36,7 @@ TableExport = {url = "https://github.com/JonasIsensee/TableExport.jl"}
 
 [compat]
 Crayons = "4.1.1"
+DBInterface = "2.6.1"
 DuckDB = "1"
 HTTP = "1"
 JSON = "0.2, 1"
