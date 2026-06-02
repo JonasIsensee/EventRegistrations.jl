@@ -19,6 +19,7 @@ using ..EventRegistrations: EmailConfig
 export generate_email_content
 export preview_email
 export ensure_default_templates
+export format_verwendungszweck
 
 export load_template
 export ensure_default_templates, escape_html
@@ -142,6 +143,16 @@ function format_iban(iban::AbstractString)
 end
 
 """
+Format the Verwendungszweck string for bank transfers and QR codes.
+Format: "<event_name> - <first_name> <last_name> - <ref_without_underscores>"
+Example: "PWE Chor Brahms - Max Mustermann - PWE202602001"
+"""
+function format_verwendungszweck(event_name::String, first_name::String, last_name::String, reference_number::String)
+    ref_clean = replace(reference_number, "_" => "")
+    return "$(event_name) - $(first_name) $(last_name) - $(ref_clean)"
+end
+
+"""
 Prepare bank details text for a specific reference number.
 Replaces placeholders and falls back to structured data when needed.
 """
@@ -203,7 +214,7 @@ function generate_sepa_qr_payload(; amount::Float64, reference::String, recipien
         "EUR" * formatted_amount,
         "",
         reference[1:min(end, 35)],
-        remittance[1:min(end, 70)]
+        remittance[1:min(end, 140)]
     ]
     return join(lines, "\n")
 end
@@ -222,7 +233,7 @@ end
 """
 Generate a payment QR HTML block if configuration allows it.
 """
-function maybe_generate_payment_qr(cfg::EmailConfig, amount::Float64, reference::String)
+function maybe_generate_payment_qr(cfg::EmailConfig, amount::Float64, reference::String, verwendungszweck::String="")
     if !cfg.qr_enabled
         @debug "QR code disabled in configuration" reference=reference
         return nothing
@@ -244,13 +255,16 @@ function maybe_generate_payment_qr(cfg::EmailConfig, amount::Float64, reference:
     end
 
     try
+        qr_remittance = isempty(verwendungszweck) ?
+            (isempty(cfg.qr_message) ? cfg.bank_name : cfg.qr_message) :
+            verwendungszweck
         payload = generate_sepa_qr_payload(
             amount = amount,
             reference = string(strip(reference)),
             recipient = cfg.account_name,
             iban = cfg.iban,
             bic = cfg.bic,
-            remittance = isempty(cfg.qr_message) ? cfg.bank_name : cfg.qr_message
+            remittance = qr_remittance
         )
 
         png_bytes = qr_payload_to_png(payload)
@@ -300,7 +314,8 @@ function generate_email_content(cfg::EmailConfig;
 
     fields_html = strip(format_registration_fields(registration_fields))
 
-    bank_details_text = prepare_bank_details(cfg, reference_number)
+    verwendungszweck = format_verwendungszweck(event_name, first_name, last_name, reference_number)
+    bank_details_text = prepare_bank_details(cfg, verwendungszweck)
     bank_details_html = isempty(strip(bank_details_text)) ? "" : replace(escape_html(bank_details_text), "\n" => "<br>")
 
     fallback_info = isempty(strip(cfg.additional_info)) ? "Bei Fragen erreichst du uns unter $(cfg.from_address)." : cfg.additional_info
@@ -323,7 +338,7 @@ function generate_email_content(cfg::EmailConfig;
         "sender_name" => cfg.from_name,
     )
 
-    qr_html = maybe_generate_payment_qr(cfg, to_float(remaining), reference_number)
+    qr_html = maybe_generate_payment_qr(cfg, to_float(remaining), reference_number, verwendungszweck)
     vars["qr_block"] = something(qr_html, "")
     merge!(vars, extra_vars)
 

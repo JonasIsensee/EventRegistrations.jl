@@ -1,6 +1,6 @@
 module ReferenceNumbers
 
-export generate_reference_number, parse_reference_number, extract_reference_candidates, extract_name_candidates
+export generate_reference_number, parse_reference_number, find_reference_in_text, extract_reference_candidates, extract_name_candidates
 
 """
 Generate a unique reference number for a person-event combination.
@@ -72,6 +72,14 @@ function find_reference_in_text(text::AbstractString)
     if m !== nothing
         prefix = replace(strip(m.captures[1]), r"\s+" => "_")
         return "$(prefix)_$(m.captures[2])"
+    end
+
+    # Pattern 4: Concatenated without separators (e.g. PWE202602001 -> PWE_2026_02_001)
+    # Matches: 2-6 uppercase letters + 4-digit year + 2-digit month/sequence + 3-digit ID
+    m = match(r"([A-Z]{2,6})(\d{4})(\d{2})(\d{3})\b", text_upper)
+    if m !== nothing
+        event_prefix, year, month, num = m.captures
+        return "$(event_prefix)_$(year)_$(month)_$(num)"
     end
 
     return nothing

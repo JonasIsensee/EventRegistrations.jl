@@ -606,6 +606,30 @@ try
         println("  ✓ Reference number extraction handles all formats")
     end
 
+    @testset "8b. format_verwendungszweck" begin
+        println("\n=== Test 8b: format_verwendungszweck ===")
+
+        @test format_verwendungszweck("PWE Chor Brahms", "Max", "Mustermann", "PWE_2026_02_001") ==
+              "PWE Chor Brahms - Max Mustermann - PWE202602001"
+        @test format_verwendungszweck("Workshop Weekend", "Anna", "Schmidt", "WS_2025_01_042") ==
+              "Workshop Weekend - Anna Schmidt - WS202501042"
+
+        println("  ✓ format_verwendungszweck formats correctly")
+    end
+
+    @testset "8c. find_reference_in_text no-underscore format" begin
+        println("\n=== Test 8c: find_reference_in_text no-underscore format ===")
+
+        using EventRegistrations.ReferenceNumbers
+
+        # Full Verwendungszweck string with concatenated reference
+        @test find_reference_in_text("PWE Chor Brahms - Max Mustermann - PWE202602001") == "PWE_2026_02_001"
+        # Just the concatenated reference alone
+        @test find_reference_in_text("PWE202601042") == "PWE_2026_01_042"
+
+        println("  ✓ find_reference_in_text handles no-underscore format")
+    end
+
     @testset "9. Name Extraction from Transfer Text" begin
         println("\n=== Test 9: Name Extraction ===")
 

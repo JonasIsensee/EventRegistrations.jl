@@ -257,11 +257,13 @@ using .ConfirmationEmails: preview_email
 using .ConfirmationEmails: queue_email!, queue_pending_emails!, get_pending_emails
 using .ConfirmationEmails: queue_payment_confirmation!
 using .ConfirmationEmails: count_pending_emails, mark_email!, send_queued_email!
+using .ConfirmationEmails: format_verwendungszweck
 
 export preview_email
 export queue_email!, queue_pending_emails!, get_pending_emails
 export queue_payment_confirmation!
 export count_pending_emails, mark_email!, send_queued_email!
+export format_verwendungszweck
 using .EmailDownload: download_emails!
 
 # Re-export from WebDAV
@@ -470,9 +472,16 @@ using PrecompileTools
         try
             list_events(db)
             get_registrations(db, "dummy")
+            # Precompile table data retrieval and pretty-printing
             io = IOBuffer()
             print_payment_table(get_payment_table_data(db, "PWE_2026_01"); io = io)
             print_registration_table(get_registration_table_data(db, "PWE_2026_01"); io = io)
+            # Precompile payment summary (handles missing event gracefully)
+            try
+                get_payment_summary(db, "test_event")
+            catch
+                # Expected to fail for non-existent event, but precompiles the path
+            end
         finally
             DBInterface.close!(db)
         end
