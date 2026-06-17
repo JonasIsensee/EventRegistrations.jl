@@ -75,8 +75,9 @@ function find_reference_in_text(text::AbstractString)
     end
 
     # Pattern 4: Concatenated without separators (e.g. PWE202602001 -> PWE_2026_02_001)
-    # Matches: 2-6 uppercase letters + 4-digit year + 2-digit month/sequence + 3-digit ID
-    m = match(r"([A-Z]{2,6})(\d{4})(\d{2})(\d{3})\b", text_upper)
+    # Matches: 2-10 uppercase letters + 4-digit year + 2-digit month/sequence + 3-digit ID
+    # Leading \b prevents mid-word matches; trailing \b ensures ID boundary
+    m = match(r"\b([A-Z]{2,10})(\d{4})(\d{2})(\d{3})\b", text_upper)
     if m !== nothing
         event_prefix, year, month, num = m.captures
         return "$(event_prefix)_$(year)_$(month)_$(num)"
@@ -141,7 +142,8 @@ function extract_reference_candidates(text::AbstractString)
     # Pattern 5: Concatenated format without separators
     # Matches: PWE202601007 -> PWE_2026_01_007
     # We look for: letters + 4-digit year + 2-digit month + 3-digit number
-    for m in eachmatch(r"([A-Z]{2,6})(\d{4})(\d{2})(\d{3})\b", text_upper)
+    # Leading \b prevents mid-word matches
+    for m in eachmatch(r"\b([A-Z]{2,10})(\d{4})(\d{2})(\d{3})\b", text_upper)
         event_prefix, year, month, num = m.captures
         ref = "$(event_prefix)_$(year)_$(month)_$(num)"
         if ref ∉ candidates
@@ -151,7 +153,7 @@ function extract_reference_candidates(text::AbstractString)
 
     # Pattern 6: Partial concatenation (e.g., PWE_202601007)
     # Matches patterns where event prefix is separated but rest is concatenated
-    for m in eachmatch(r"([A-Z]{2,6})_(\d{4})(\d{2})(\d{3})\b", text_upper)
+    for m in eachmatch(r"\b([A-Z]{2,10})_(\d{4})(\d{2})(\d{3})\b", text_upper)
         event_prefix, year, month, num = m.captures
         ref = "$(event_prefix)_$(year)_$(month)_$(num)"
         if ref ∉ candidates
