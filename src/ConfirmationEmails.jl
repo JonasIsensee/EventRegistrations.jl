@@ -260,7 +260,7 @@ function maybe_generate_payment_qr(cfg::EmailConfig, amount::Float64, reference:
             verwendungszweck
         payload = generate_sepa_qr_payload(
             amount = amount,
-            reference = string(strip(reference)),
+            reference = "",
             recipient = cfg.account_name,
             iban = cfg.iban,
             bic = cfg.bic,
@@ -336,6 +336,7 @@ function generate_email_content(cfg::EmailConfig;
         "bank_details" => bank_details_html,
         "additional_info" => info_html,
         "sender_name" => cfg.from_name,
+        "verwendungszweck" => escape_html(verwendungszweck),
     )
 
     qr_html = maybe_generate_payment_qr(cfg, to_float(remaining), reference_number, verwendungszweck)
