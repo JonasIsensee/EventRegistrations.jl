@@ -76,8 +76,9 @@ function find_reference_in_text(text::AbstractString)
 
     # Pattern 4: Concatenated without separators (e.g. PWE202602001 -> PWE_2026_02_001)
     # Matches: 2-10 uppercase letters + 4-digit year + 2-digit month/sequence + 3-digit ID
-    # Leading \b prevents mid-word matches; trailing \b ensures ID boundary
-    m = match(r"\b([A-Z]{2,10})(\d{4})(\d{2})(\d{3})\b", text_upper)
+    # First normalize non-ASCII uppercase chars to spaces so they don't get swallowed
+    text_norm = replace(text_upper, r"[ÜÖÄ]" => " ")
+    m = match(r"([A-Z]{2,10})(\d{4})(\d{2})(\d{3})\b", text_norm)
     if m !== nothing
         event_prefix, year, month, num = m.captures
         return "$(event_prefix)_$(year)_$(month)_$(num)"
@@ -141,9 +142,8 @@ function extract_reference_candidates(text::AbstractString)
 
     # Pattern 5: Concatenated format without separators
     # Matches: PWE202601007 -> PWE_2026_01_007
-    # We look for: letters + 4-digit year + 2-digit month + 3-digit number
-    # Leading \b prevents mid-word matches
-    for m in eachmatch(r"\b([A-Z]{2,10})(\d{4})(\d{2})(\d{3})\b", text_upper)
+    # (?<![A-Z]) prevents matching in the middle of a word (e.g., "DAMJANBÜKIPWE202602086")
+    for m in eachmatch(r"(?<![A-Z])([A-Z]{2,10})(\d{4})(\d{2})(\d{3})\b", text_upper)
         event_prefix, year, month, num = m.captures
         ref = "$(event_prefix)_$(year)_$(month)_$(num)"
         if ref ∉ candidates

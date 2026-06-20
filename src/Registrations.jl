@@ -615,10 +615,9 @@ Uses with_transaction for consistency.
 function cancel_registration!(db::DuckDB.DB, registration_id::Integer)
     with_transaction(db) do
         result = DBInterface.execute(db, """
-            UPDATE registrations SET status = 'cancelled', updated_at = ?
+            UPDATE registrations SET status = 'cancelled', deleted_at = ?, updated_at = ?
             WHERE id = ?
-        """, [now(), registration_id])
-        # DuckDB execute returns a result; check that a row was updated if needed
+        """, [now(), now(), registration_id])
     end
     @info "Cancelled registration: $(registration_id)"
 end
